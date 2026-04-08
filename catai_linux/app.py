@@ -1069,7 +1069,7 @@ def _draw_chat_bubble(ctx, text, cat_x, cat_y, cat_w, cat_h):
     line_h = font_size + 4
     pad = 12
     bw = 280
-    bh = pad * 2 + len(lines) * line_h + 30  # 30 for entry space hint
+    bh = pad * 2 + len(lines) * line_h + 34  # 30 entry + 4 padding
     bx = cat_x + cat_w / 2 - bw / 2
     by = cat_y - bh - 15
     if by < 0:
@@ -1583,7 +1583,8 @@ class SettingsWindow:
         self.current_scale = scale
         self.current_model = model
         if not self.window:
-            self.window = Gtk.Window(application=self.app)
+            self.window = Gtk.Window()
+            self.window.set_hide_on_close(True)  # keep alive when closed
             self.window.set_title("~ Cat Settings ~")
             set_always_on_top(self.window)
             self.window.set_default_size(340, 680)
@@ -2315,7 +2316,7 @@ class CatAIApp(Gtk.Application):
         line_h = 15  # font_size(11) + 4
         pad = 12
         bw = 280
-        bh = pad * 2 + len(lines) * line_h + 30
+        bh = pad * 2 + len(lines) * line_h + 34
         bx = cat.x + cat.display_w / 2 - bw / 2
         by = cat.y - bh - 15
         if by < 0:
