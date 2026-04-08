@@ -1050,8 +1050,35 @@ class CatInstance:
         self._toggle_chat()
 
     def _on_right_click(self, gesture, n_press, x, y):
-        if self._app:
-            self._app._open_settings()
+        if not self._app:
+            return
+        menu_win = Gtk.Window(application=self._app)
+        menu_win.set_decorated(False)
+        menu_win.set_resizable(False)
+        menu_win.add_css_class("bubble-body")
+        set_always_on_top(menu_win)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        box.set_margin_top(8)
+        box.set_margin_bottom(8)
+        box.set_margin_start(8)
+        box.set_margin_end(8)
+
+        btn_settings = Gtk.Button(label=L10n.s("settings"))
+        btn_settings.add_css_class("pixel-label-small")
+        btn_settings.connect("clicked", lambda b: (menu_win.set_visible(False), self._app._open_settings()))
+        box.append(btn_settings)
+
+        btn_quit = Gtk.Button(label=L10n.s("quit"))
+        btn_quit.add_css_class("pixel-label-small")
+        btn_quit.connect("clicked", lambda b: self._app.quit())
+        box.append(btn_quit)
+
+        menu_win.set_child(box)
+        menu_win.set_visible(True)
+        GLib.idle_add(lambda: move_window(menu_win, int(self.x + self.display_w), int(self.y)) or False)
+        # Auto-close after 5s
+        GLib.timeout_add(5000, lambda: menu_win.set_visible(False) or False)
 
     def _on_drag_begin(self, gesture, start_x, start_y):
         self.dragging = True
