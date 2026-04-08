@@ -20,7 +20,7 @@ import sys
 import threading
 import uuid
 import warnings
-warnings.filterwarnings("ignore", module="gi.overrides")
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="gi")
 
 log = logging.getLogger("catai")
 
@@ -1365,9 +1365,9 @@ class SettingsWindow:
             # Add Claude models if Claude Code is available
             if claude_available():
                 all_models.append(f"{CLAUDE_MODEL} (Claude)")
-            # Add Ollama models
-            ollama_models = fetch_ollama_models()
-            all_models.extend(ollama_models)
+            # Add Ollama models (only if Ollama is reachable)
+            if _ollama_available():
+                all_models.extend(fetch_ollama_models())
             def _update():
                 model_strings.splice(0, model_strings.get_n_items(),
                                      all_models if all_models else [L10n.s("no_ollama")])
