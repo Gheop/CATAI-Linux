@@ -984,6 +984,7 @@ class CatInstance:
         self.window.set_default_size(dw, dh)
         self.window.set_resizable(False)
         set_always_on_top(self.window)
+        set_notification_type(self.window)
 
         self.picture = Gtk.Picture()
         self.picture.set_can_shrink(False)
