@@ -1872,6 +1872,12 @@ class CatAIApp(Gtk.Application):
         self.chat_bubble = ChatBubbleController(self)
         self.chat_bubble.setup()
 
+        # Pre-create context menu and settings (hidden) so NOTIFICATION type
+        # is applied before user ever sees them (avoids GNOME "is ready" alert)
+        self._create_context_menu()
+        self._open_settings()
+        self.settings_ctrl.window.set_visible(False)
+
         # Create cat instances (no windows, just state)
         for i, cat_cfg in enumerate(self.cat_configs):
             self._create_instance(cat_cfg, i)
@@ -2001,41 +2007,42 @@ class CatAIApp(Gtk.Application):
             self.chat_bubble.hide()
             self.chat_bubble.show_for_cat(cat)
 
+    def _create_context_menu(self):
+        """Pre-create the right-click context menu (hidden)."""
+        menu = Gtk.Window(application=self)
+        menu.set_decorated(False)
+        menu.set_resizable(False)
+        menu.add_css_class("bubble-body")
+        set_always_on_top(menu)
+        set_notification_type(menu)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        box.set_margin_top(8)
+        box.set_margin_bottom(8)
+        box.set_margin_start(8)
+        box.set_margin_end(8)
+
+        btn_settings = Gtk.Button(label=L10n.s("settings"))
+        btn_settings.add_css_class("pixel-label-small")
+        btn_settings.connect("clicked", lambda b: (menu.set_visible(False), self._open_settings()))
+        box.append(btn_settings)
+
+        btn_quit = Gtk.Button(label=L10n.s("quit"))
+        btn_quit.add_css_class("pixel-label-small")
+        btn_quit.connect("clicked", lambda b: self.quit())
+        box.append(btn_quit)
+
+        menu.set_child(box)
+        self._context_menu = menu
+
     def _on_canvas_right_click(self, gesture, n_press, x, y):
         cat = self._find_cat_at(x, y)
         if not cat:
             return
         menu = self._context_menu
-        if menu and menu.get_visible():
+        if menu.get_visible():
             menu.set_visible(False)
             return
-        if not menu:
-            menu = Gtk.Window(application=self)
-            menu.set_decorated(False)
-            menu.set_resizable(False)
-            menu.add_css_class("bubble-body")
-            set_always_on_top(menu)
-            set_notification_type(menu)
-
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-            box.set_margin_top(8)
-            box.set_margin_bottom(8)
-            box.set_margin_start(8)
-            box.set_margin_end(8)
-
-            btn_settings = Gtk.Button(label=L10n.s("settings"))
-            btn_settings.add_css_class("pixel-label-small")
-            btn_settings.connect("clicked", lambda b: (menu.set_visible(False), self._open_settings()))
-            box.append(btn_settings)
-
-            btn_quit = Gtk.Button(label=L10n.s("quit"))
-            btn_quit.add_css_class("pixel-label-small")
-            btn_quit.connect("clicked", lambda b: self.quit())
-            box.append(btn_quit)
-
-            menu.set_child(box)
-            self._context_menu = menu
-
         menu.set_visible(True)
         GLib.idle_add(lambda: move_window(menu, int(cat.x + cat.display_w), int(cat.y)) or False)
 
