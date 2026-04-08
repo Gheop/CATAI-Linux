@@ -1473,6 +1473,7 @@ class SettingsWindow:
         if not self.window:
             self.window = Gtk.Window()
             self.window.set_title("~ Cat Settings ~")
+            set_notification_type(self.window)
             self.window.set_default_size(340, 680)
             self.window.set_resizable(False)
             self.window.add_css_class("settings-window")
@@ -1968,7 +1969,7 @@ class CatAIApp(Gtk.Application):
             self.chat_bubble.hide()
         else:
             self.chat_bubble.hide()
-            self.chat_bubble.show_for_cat(cat, self.screen_w, self.screen_h)
+            self.chat_bubble.show_for_cat(cat)
 
     def _on_canvas_right_click(self, gesture, n_press, x, y):
         cat = self._find_cat_at(x, y)
@@ -1979,7 +1980,7 @@ class CatAIApp(Gtk.Application):
             menu.set_visible(False)
             return
         if not menu:
-            menu = Gtk.Window(application=self)
+            menu = Gtk.Window()
             menu.set_decorated(False)
             menu.set_resizable(False)
             menu.add_css_class("bubble-body")
