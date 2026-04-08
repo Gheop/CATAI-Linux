@@ -1038,7 +1038,99 @@ def _draw_meow_bubble(ctx, text, cat_x, cat_y, cat_w):
     ctx.show_text(text)
 
 
+def _draw_chat_bubble(ctx, text, cat_x, cat_y, cat_w, cat_h):
+    """Draw a chat response bubble above a cat on the Cairo canvas."""
+    font_size = 11
+    ctx.select_font_face("monospace", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+    ctx.set_font_size(font_size)
+
+    # Word-wrap text to ~35 chars per line
+    max_chars = 35
+    words = text.split()
+    lines = []
+    line = ""
+    for w in words:
+        if len(line) + len(w) + 1 > max_chars:
+            if line:
+                lines.append(line)
+            line = w
+        else:
+            line = f"{line} {w}" if line else w
+    if line:
+        lines.append(line)
+    if not lines:
+        lines = [""]
+
+    # Limit visible lines
+    max_lines = 8
+    if len(lines) > max_lines:
+        lines = lines[-max_lines:]
+
+    line_h = font_size + 4
+    pad = 12
+    bw = 280
+    bh = pad * 2 + len(lines) * line_h + 30  # 30 for entry space hint
+    bx = cat_x + cat_w / 2 - bw / 2
+    by = cat_y - bh - 15
+    if by < 0:
+        by = cat_y + cat_h + 10
+
+    # Background
+    ctx.set_source_rgba(0.95, 0.9, 0.8, 0.95)
+    ctx.rectangle(bx, by, bw, bh)
+    ctx.fill()
+
+    # Border
+    px = 3
+    ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
+    ctx.rectangle(bx, by, bw, px); ctx.fill()
+    ctx.rectangle(bx, by + bh - px, bw, px); ctx.fill()
+    ctx.rectangle(bx, by, px, bh); ctx.fill()
+    ctx.rectangle(bx + bw - px, by, px, bh); ctx.fill()
+
+    # Text lines
+    ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
+    for i, ln in enumerate(lines):
+        ctx.move_to(bx + pad, by + pad + (i + 1) * line_h)
+        ctx.show_text(ln)
+
+    # Tail (small triangle pointing down)
+    tx = bx + bw / 2
+    ty = by + bh
+    ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
+    ctx.move_to(tx - 8, ty)
+    ctx.line_to(tx + 8, ty)
+    ctx.line_to(tx, ty + 10)
+    ctx.close_path()
+    ctx.fill()
+
+
 # ── Chat Bubble ────────────────────────────────────────────────────────────────
+
+def _draw_context_menu(ctx, mx, my, label_settings, label_quit):
+    """Draw a context menu on the canvas."""
+    bw, bh = 120, 50
+    pad = 8
+    ctx.set_source_rgba(0.95, 0.9, 0.8, 0.95)
+    ctx.rectangle(mx, my, bw, bh)
+    ctx.fill()
+    # Border
+    ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
+    ctx.set_line_width(2)
+    ctx.rectangle(mx, my, bw, bh)
+    ctx.stroke()
+    # Separator
+    ctx.move_to(mx + pad, my + 25)
+    ctx.line_to(mx + bw - pad, my + 25)
+    ctx.stroke()
+    # Text
+    ctx.select_font_face("monospace", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+    ctx.set_font_size(11)
+    ctx.move_to(mx + pad, my + 17)
+    ctx.show_text(label_settings)
+    ctx.move_to(mx + pad, my + 42)
+    ctx.show_text(label_quit)
+
 
 class ChatBubbleController:
     def __init__(self, app):
@@ -1224,6 +1316,9 @@ class CatInstance:
         self.meow_text = ""
         self.meow_visible = False
         self._meow_timer_id = None
+        # Chat bubble state (drawn on canvas, entry via overlay)
+        self.chat_visible = False
+        self.chat_response = ""
 
     def setup(self, app, meta, cat_dir, dw, dh, model, lang, start_x, screen_w, screen_h):
         self._app = app
@@ -1342,8 +1437,7 @@ class CatInstance:
             self.x = max(0, min(self.x, self.screen_w - self.display_w))
             self.y = max(0, min(self.y, self.screen_h - self.display_h))
             # Reposition chat bubble if visible for this cat
-            if self._app and self._app.chat_bubble and self._app.chat_bubble._active_cat is self:
-                self._app.chat_bubble.reposition()
+            pass  # chat bubble follows cat via canvas redraw
         elif self.state in ONE_SHOT_STATES:
             key = ANIM_KEYS.get(self.state)
             if key:
@@ -1356,7 +1450,7 @@ class CatInstance:
                     self.frame_index += 1
 
     def behavior_tick(self):
-        if self._app and self._app.chat_bubble and self._app.chat_bubble._active_cat is self and self._app.chat_bubble.is_visible:
+        if self.chat_visible:
             return
         if self.dragging:
             return
@@ -1387,19 +1481,12 @@ class CatInstance:
                 self.frame_index = 0
                 self.idle_ticks = 0
 
-    def _toggle_chat(self):
-        bubble = self._app.chat_bubble
-        if bubble._active_cat is self and bubble.is_visible:
-            bubble.hide()
-        else:
-            bubble.show_for_cat(self)
 
     def send_chat(self, text):
         if self.chat_backend.is_streaming:
             return
-        bubble = self._app.chat_bubble
-        bubble.set_response("...")
-        bubble.show_for_cat(self)
+        self.chat_response = "..."
+        self.chat_visible = True
         self.state = CatState.EATING
         self.frame_index = 0
 
@@ -1407,10 +1494,10 @@ class CatInstance:
         def on_token(token):
             nonlocal first_token
             if first_token:
-                bubble.set_response(token)
+                self.chat_response = token
                 first_token = False
             else:
-                bubble.append_response(token)
+                self.chat_response += token
             return False
 
         def on_done():
@@ -1422,7 +1509,7 @@ class CatInstance:
             return False
 
         def on_error(msg):
-            bubble.set_response(msg)
+            self.chat_response = msg
             self.state = CatState.IDLE
             self.frame_index = 0
             return False
@@ -1435,7 +1522,7 @@ class CatInstance:
             self.chat_backend.messages[0] = {"role": "system", "content": p}
 
     def _show_random_meow(self):
-        if self._app and self._app.chat_bubble and self._app.chat_bubble._active_cat is self and self._app.chat_bubble.is_visible:
+        if self.chat_visible:
             return
         self.meow_text = L10n.random_meow()
         self.meow_visible = True
@@ -1806,8 +1893,10 @@ class CatAIApp(Gtk.Application):
         self.screen_h = 1080
         self.selected_model = ""
         self.settings_ctrl = None
-        self.chat_bubble = None
-        self._context_menu = None
+        self._menu_visible = False
+        self._menu_x = 0
+        self._menu_y = 0
+        self._active_chat_cat = None
         self._menu_timer = None
         self._canvas_window = None
         self._canvas_area = None
@@ -1862,13 +1951,8 @@ class CatAIApp(Gtk.Application):
         # Create the single fullscreen transparent canvas window
         self._create_canvas()
 
-        # Create shared chat bubble
-        self.chat_bubble = ChatBubbleController(self)
-        self.chat_bubble.setup()
-
         # Pre-create context menu and settings (hidden) so NOTIFICATION type
         # is applied before user ever sees them (avoids GNOME "is ready" alert)
-        self._create_context_menu()
         self._open_settings()
         self.settings_ctrl.window.set_visible(False)
 
@@ -1901,11 +1985,26 @@ class CatAIApp(Gtk.Application):
         win.set_default_size(self.screen_w, self.screen_h)
         win.set_resizable(False)
 
+        overlay = Gtk.Overlay()
+
         area = Gtk.DrawingArea()
         area.set_content_width(self.screen_w)
         area.set_content_height(self.screen_h)
         area.set_draw_func(self._canvas_draw)
-        win.set_child(area)
+        overlay.set_child(area)
+
+        # Chat input entry (floating, positioned via margins)
+        self._chat_entry = Gtk.Entry()
+        self._chat_entry.set_placeholder_text(L10n.s("talk"))
+        self._chat_entry.add_css_class("pixel-entry")
+        self._chat_entry.set_visible(False)
+        self._chat_entry.set_halign(Gtk.Align.START)
+        self._chat_entry.set_valign(Gtk.Align.START)
+        self._chat_entry.set_size_request(260, -1)
+        self._chat_entry.connect("activate", self._on_chat_entry_activate)
+        overlay.add_overlay(self._chat_entry)
+
+        win.set_child(overlay)
 
         # Gesture controllers on the canvas
         # Right-click for context menu
@@ -1966,6 +2065,14 @@ class CatAIApp(Gtk.Application):
             if cat.meow_visible and cat.meow_text:
                 _draw_meow_bubble(ctx, cat.meow_text, cat.x, cat.y, cat.display_w)
 
+            # Draw chat response bubble if visible
+            if cat.chat_visible and cat.chat_response:
+                _draw_chat_bubble(ctx, cat.chat_response, cat.x, cat.y, cat.display_w, cat.display_h)
+
+        # Draw context menu if visible
+        if self._menu_visible:
+            _draw_context_menu(ctx, self._menu_x, self._menu_y, L10n.s("settings"), L10n.s("quit"))
+
     def _update_input_regions(self):
         """Update XShape input regions to only cover cat bounding rects."""
         if not self._canvas_xid:
@@ -1982,6 +2089,21 @@ class CatAIApp(Gtk.Application):
                 bx = cat.x + cat.display_w / 2 - text_w / 2
                 by = cat.y - 40
                 rects.append((bx, by, text_w, 24))
+            # Include chat bubble area if visible
+            if cat.chat_visible and cat.chat_response:
+                bw = 280
+                bh = 150  # approximate
+                bx = cat.x + cat.display_w / 2 - bw / 2
+                by = cat.y - bh - 15
+                if by < 0:
+                    by = cat.y + cat.display_h + 10
+                rects.append((bx, by, bw, bh))
+        # Include context menu if visible
+        if self._menu_visible:
+            rects.append((self._menu_x, self._menu_y, 120, 50))
+        # Include chat entry area
+        if self._chat_entry and self._chat_entry.get_visible():
+            rects.append((self._chat_entry.get_margin_start(), self._chat_entry.get_margin_top(), 260, 30))
         _update_input_shape(self._canvas_xid, rects)
 
     def _find_cat_at(self, x, y):
@@ -1996,56 +2118,67 @@ class CatAIApp(Gtk.Application):
 
     def _toggle_chat_for(self, cat):
         """Toggle chat bubble for a specific cat."""
-        if self.chat_bubble._active_cat is cat and self.chat_bubble.is_visible:
-            self.chat_bubble.hide()
+        if cat.chat_visible:
+            cat.chat_visible = False
+            self._chat_entry.set_visible(False)
+            self._active_chat_cat = None
         else:
-            self.chat_bubble.show_for_cat(cat)
+            # Close other chats
+            for c in self.cat_instances:
+                c.chat_visible = False
+            cat.chat_visible = True
+            if not cat.chat_response:
+                cat.chat_response = L10n.s("hi")
+            self._active_chat_cat = cat
+            # Position and show entry
+            entry_x = int(cat.x + cat.display_w / 2 - 130)
+            entry_y = int(cat.y - 80)
+            if entry_y < 0:
+                entry_y = int(cat.y + cat.display_h + 10)
+            self._chat_entry.set_margin_start(max(0, entry_x))
+            self._chat_entry.set_margin_top(max(0, entry_y))
+            self._chat_entry.set_visible(True)
+            self._chat_entry.grab_focus()
 
-    def _create_context_menu(self):
-        """Pre-create the right-click context menu (hidden)."""
-        menu = Gtk.Window(application=self)
-        menu.set_decorated(False)
-        menu.set_resizable(False)
-        menu.add_css_class("bubble-body")
-        set_always_on_top(menu)
-
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        box.set_margin_top(8)
-        box.set_margin_bottom(8)
-        box.set_margin_start(8)
-        box.set_margin_end(8)
-
-        btn_settings = Gtk.Button(label=L10n.s("settings"))
-        btn_settings.add_css_class("pixel-label-small")
-        btn_settings.connect("clicked", lambda b: (menu.set_visible(False), self._open_settings()))
-        box.append(btn_settings)
-
-        btn_quit = Gtk.Button(label=L10n.s("quit"))
-        btn_quit.add_css_class("pixel-label-small")
-        btn_quit.connect("clicked", lambda b: self.quit())
-        box.append(btn_quit)
-
-        menu.set_child(box)
-        self._context_menu = menu
+    def _on_chat_entry_activate(self, entry):
+        """User pressed Enter in the chat entry."""
+        text = entry.get_text().strip()
+        if not text or not self._active_chat_cat:
+            return
+        entry.set_text("")
+        cat = self._active_chat_cat
+        cat.send_chat(text)
 
     def _on_canvas_right_click(self, gesture, n_press, x, y):
         cat = self._find_cat_at(x, y)
         if not cat:
+            self._menu_visible = False
             return
-        menu = self._context_menu
-        if menu.get_visible():
-            menu.set_visible(False)
-            return
-        menu.set_visible(True)
-        GLib.idle_add(lambda: move_window(menu, int(cat.x + cat.display_w), int(cat.y)) or False)
+        if self._menu_visible:
+            # Click on "Réglages" zone?
+            if self._menu_x <= x <= self._menu_x + 120 and self._menu_y <= y <= self._menu_y + 25:
+                self._menu_visible = False
+                self._open_settings()
+                return
+            # Click on "Quitter" zone?
+            if self._menu_x <= x <= self._menu_x + 120 and self._menu_y + 25 <= y <= self._menu_y + 50:
+                self._menu_visible = False
+                self.quit()
+                return
+            self._menu_visible = False
+        else:
+            self._menu_visible = True
+            self._menu_x = int(cat.x + cat.display_w)
+            self._menu_y = int(cat.y)
+            # Auto-close after 5s
+            if getattr(self, '_menu_timer', None):
+                GLib.source_remove(self._menu_timer)
+            self._menu_timer = GLib.timeout_add(5000, self._close_menu)
 
-        def _auto_close_menu():
-            self._menu_timer = None
-            menu.set_visible(False)
-            return False
-        if self._menu_timer:
-            GLib.source_remove(self._menu_timer)
-        self._menu_timer = GLib.timeout_add(5000, _auto_close_menu)
+    def _close_menu(self):
+        self._menu_visible = False
+        self._menu_timer = None
+        return False
 
     def _on_canvas_drag_begin(self, gesture, start_x, start_y):
         cat = self._find_cat_at(start_x, start_y)
@@ -2093,11 +2226,7 @@ class CatAIApp(Gtk.Application):
         for cat in self.cat_instances:
             cat.cleanup()
         self.cat_instances.clear()
-        if self.chat_bubble and self.chat_bubble.window:
-            self.chat_bubble.hide()
-            unregister_window(self.chat_bubble.window)
-        if self._context_menu:
-            unregister_window(self._context_menu)
+        self._chat_entry.set_visible(False)
         if self._canvas_window:
             unregister_window(self._canvas_window)
         if self.settings_ctrl and self.settings_ctrl.window:
@@ -2183,8 +2312,10 @@ class CatAIApp(Gtk.Application):
             return
         cat = self.cat_instances[idx]
         # If chat bubble is showing for this cat, hide it
-        if self.chat_bubble and self.chat_bubble._active_cat is cat:
-            self.chat_bubble.hide()
+        if self._active_chat_cat is cat:
+            cat.chat_visible = False
+            self._chat_entry.set_visible(False)
+            self._active_chat_cat = None
         cat.cleanup()
         self.cat_instances.pop(idx)
         self.cat_configs = [c for c in self.cat_configs if c["color_id"] != color_id]
@@ -2217,8 +2348,8 @@ class CatAIApp(Gtk.Application):
         for cat in self.cat_instances:
             cat.update_system_prompt(lang)
         # Update chat bubble placeholder
-        if self.chat_bubble and self.chat_bubble._entry:
-            self.chat_bubble._entry.set_placeholder_text(L10n.s("talk"))
+        if self._chat_entry:
+            self._chat_entry.set_placeholder_text(L10n.s("talk"))
         if self.settings_ctrl:
             self.settings_ctrl.refresh()
 
