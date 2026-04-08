@@ -1,4 +1,4 @@
-.PHONY: run lint fix build
+.PHONY: run lint fix build e2e
 
 run:
 	python3 -m catai_linux
@@ -11,3 +11,6 @@ fix:
 
 build:
 	python3 -m build
+
+e2e:
+	python3 tests/e2e_test.py
