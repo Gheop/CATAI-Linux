@@ -2025,17 +2025,15 @@ class CatAIApp(Gtk.Application):
 
         set_always_on_top(win)
 
-        # We need the XID once realized, for XShape input passthrough
+        # Apply X11 hints and XShape as soon as window is realized
         def _on_realize(w):
-            def _apply():
-                _apply_xid_hints(w, above=True, notification=True)
-                xid = _get_xid(w)
-                if xid:
-                    self._canvas_xid = xid
-                    # Set initial empty input shape so clicks pass through
-                    _update_input_shape(xid, [])
-                return False
-            GLib.idle_add(_apply)
+            _apply_xid_hints(w, above=True, notification=True)
+            xid = _get_xid(w)
+            if xid:
+                self._canvas_xid = xid
+                _update_input_shape(xid, [])
+                flush_x11()
+                log.debug("Canvas XID=%d, XShape input passthrough active", xid)
         win.connect("realize", _on_realize)
 
         win.set_visible(True)
@@ -2130,15 +2128,24 @@ class CatAIApp(Gtk.Application):
             if not cat.chat_response:
                 cat.chat_response = L10n.s("hi")
             self._active_chat_cat = cat
-            # Position and show entry
-            entry_x = int(cat.x + cat.display_w / 2 - 130)
-            entry_y = int(cat.y - 80)
-            if entry_y < 0:
-                entry_y = int(cat.y + cat.display_h + 10)
-            self._chat_entry.set_margin_start(max(0, entry_x))
-            self._chat_entry.set_margin_top(max(0, entry_y))
+            self._position_chat_entry(cat)
             self._chat_entry.set_visible(True)
             self._chat_entry.grab_focus()
+
+    def _position_chat_entry(self, cat):
+        """Position the chat entry below the chat bubble, above the cat."""
+        bw = 280
+        words = cat.chat_response.split() if cat.chat_response else []
+        wrapped_lines = max(1, min(8, len(words) // 5 + 1))
+        bh = 24 + wrapped_lines * 15 + 30
+        bx = cat.x + cat.display_w / 2 - bw / 2
+        by = cat.y - bh - 15
+        if by < 30:
+            by = cat.y + cat.display_h + 10
+        entry_x = int(bx + 12)
+        entry_y = int(by + bh - 35)
+        self._chat_entry.set_margin_start(max(0, entry_x))
+        self._chat_entry.set_margin_top(max(0, entry_y))
 
     def _on_chat_entry_activate(self, entry):
         """User pressed Enter in the chat entry."""
@@ -2181,6 +2188,20 @@ class CatAIApp(Gtk.Application):
         return False
 
     def _on_canvas_drag_begin(self, gesture, start_x, start_y):
+        # Check menu click first
+        if self._menu_visible:
+            mx, my = self._menu_x, self._menu_y
+            if mx <= start_x <= mx + 120 and my <= start_y <= my + 50:
+                gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+                if start_y < my + 25:
+                    self._menu_visible = False
+                    self._open_settings()
+                else:
+                    self._menu_visible = False
+                    self.quit()
+                return
+            self._menu_visible = False
+
         cat = self._find_cat_at(start_x, start_y)
         if not cat:
             return
