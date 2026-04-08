@@ -12,11 +12,11 @@ Virtual desktop pet cats for Linux -- pixel art cats that roam your screen and c
 ## Install
 
 ```bash
-# System dependencies
+# System dependencies (GTK4 + Cairo, not available via pip)
 # Fedora:
-sudo dnf install python3-gobject python3-pillow
+sudo dnf install python3-gobject
 # Ubuntu/Debian:
-sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-4.0 python3-pil
+sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-4.0
 
 pip install catai-linux
 ```
