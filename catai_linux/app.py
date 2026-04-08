@@ -394,16 +394,17 @@ def move_window(window, x, y):
         _xlib.XMoveWindow(ctypes.c_void_p(_xdpy), xid, int(x), int(y))
         _xlib.XFlush(ctypes.c_void_p(_xdpy))
     else:
-        subprocess.run(["xdotool", "windowmove", str(xid), str(int(x)), str(int(y))],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
+        _run_x11(["xdotool", "windowmove", str(xid), str(int(x)), str(int(y))])
 
 
 def _run_x11(cmd):
-    """Run an X11 tool (wmctrl/xprop) with proper cleanup (no zombies)."""
-    try:
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
-    except Exception:
-        pass
+    """Run an X11 tool non-blocking in a background thread (no zombies, no main-thread block)."""
+    def _bg():
+        try:
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
+        except Exception:
+            pass
+    threading.Thread(target=_bg, daemon=True).start()
 
 
 _above_pending = []
@@ -504,10 +505,16 @@ def claude_available():
         _claude_available = _get_claude_api_key() is not None
     return _claude_available
 
+_ollama_models_cache = None
+
 def fetch_ollama_models():
+    global _ollama_models_cache
+    if _ollama_models_cache is not None:
+        return _ollama_models_cache
     try:
-        resp = httpx.get(f"{OLLAMA_URL}/api/tags", timeout=3)
-        return [m["name"] for m in resp.json().get("models", [])]
+        resp = httpx.get(f"{OLLAMA_URL}/api/tags", timeout=1)
+        _ollama_models_cache = [m["name"] for m in resp.json().get("models", [])]
+        return _ollama_models_cache
     except Exception as e:
         log.debug("Ollama unavailable: %s", e)
         return []
@@ -949,19 +956,8 @@ class MeowBubble:
         bx = max(0, int(cat_x + cat_w / 2 - text_w / 2))
         by = max(0, int(cat_y - 40))
         self.window.set_default_size(text_w, 32)
-        # Save focused window XID, show meow, then restore focus in background
-        focused = getattr(self, '_last_focused', None)
-        try:
-            r = subprocess.run(["xdotool", "getactivewindow"],
-                               capture_output=True, text=True, timeout=1)
-            focused = r.stdout.strip() if r.returncode == 0 else None
-        except Exception:
-            pass
         self.window.set_visible(True)
         GLib.idle_add(lambda: move_window(self.window, bx, by) or False)
-        if focused:
-            # Restore focus after a short delay (let WM process the meow window first)
-            GLib.timeout_add(50, lambda: _run_x11(["xdotool", "windowactivate", "--sync", focused]) or False)
         self._timer_id = GLib.timeout_add(random.randint(2000, 3000), self._auto_hide)
 
     def _auto_hide(self):
