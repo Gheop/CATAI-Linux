@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """CATAI-Linux — Virtual desktop pet cats for Linux (GNOME/Wayland)
 Port of https://github.com/wil-pe/CATAI (macOS) to GTK4.
-Uses XWayland for window positioning since GNOME doesn't support wlr-layer-shell.
+Single fullscreen transparent canvas with Cairo rendering.
 """
 
-# Force X11 backend for free window positioning on Wayland compositors
+# Force X11 backend — needed for XShape input passthrough + chat bubble positioning
 import os
 os.environ.setdefault("GDK_BACKEND", "x11")
 
+import cairo
 import ctypes
 import enum
 import gc
@@ -44,7 +45,7 @@ import httpx
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-RENDER_MS = 125        # 8 FPS (smoother on XWayland)
+RENDER_MS = 125        # 8 FPS
 BEHAVIOR_MS = 1000     # 1 Hz
 WALK_SPEED = 4
 MEM_MAX = 20
@@ -227,7 +228,6 @@ def is_autostart():
 def set_autostart(enabled):
     if enabled:
         os.makedirs(AUTOSTART_DIR, exist_ok=True)
-        # Use 'catai' command if available (pip install), else python3 + script
         catai_cmd = shutil.which("catai")
         exec_cmd = catai_cmd if catai_cmd else f'python3 "{os.path.abspath(__file__)}"'
         with open(AUTOSTART_FILE, "w") as f:
@@ -312,8 +312,25 @@ def tint_sprite(img, color_def):
     out.putdata(new_pixels)
     return out
 
+
+def pil_to_surface(img, target_w, target_h):
+    """Convert PIL Image to cairo.ImageSurface, scaled nearest-neighbor.
+    Returns (surface, data_ref) — data_ref MUST be kept alive while surface is used."""
+    if img.mode != "RGBA":
+        img = img.convert("RGBA")
+    scaled = img.resize((target_w, target_h), Image.NEAREST)
+    data = bytearray(scaled.tobytes())
+    # Swap RGBA -> BGRA for cairo ARGB32 (little-endian)
+    for i in range(0, len(data), 4):
+        data[i], data[i+2] = data[i+2], data[i]
+    surface = cairo.ImageSurface.create_for_data(
+        data, cairo.FORMAT_ARGB32, target_w, target_h, target_w * 4)
+    return surface, data  # caller must keep data alive
+
+
 def pil_to_texture(img, target_w, target_h):
-    """Convert PIL Image to Gdk.MemoryTexture, scaled nearest-neighbor."""
+    """Convert PIL Image to Gdk.MemoryTexture, scaled nearest-neighbor.
+    Still needed for settings window previews (Gtk.Picture)."""
     if img.mode != "RGBA":
         img = img.convert("RGBA")
     scaled = img.resize((target_w, target_h), Image.NEAREST)
@@ -321,6 +338,7 @@ def pil_to_texture(img, target_w, target_h):
     gbytes = GLib.Bytes.new(data)
     return Gdk.MemoryTexture.new(target_w, target_h, Gdk.MemoryFormat.R8G8B8A8,
                                   gbytes, target_w * 4)
+
 
 CACHE_DIR = os.path.expanduser("~/.cache/catai")
 
@@ -332,7 +350,6 @@ def _cache_path(path, color_id, size):
 
 def load_and_tint(path, color_def, cache_size=None):
     """Load a sprite PNG and apply color tinting. Uses disk cache if cache_size given."""
-    # Try disk cache first
     if cache_size:
         cp = _cache_path(path, color_def.id, cache_size)
         if os.path.exists(cp):
@@ -348,7 +365,6 @@ def load_and_tint(path, color_def, cache_size=None):
         src = Image.new("RGBA", (68, 68), (255, 0, 255, 128))
     tinted = tint_sprite(src, color_def)
 
-    # Save to disk cache
     if cache_size:
         cp = _cache_path(path, color_def.id, cache_size)
         try:
@@ -359,9 +375,8 @@ def load_and_tint(path, color_def, cache_size=None):
 
     return tinted
 
-# ── X11 Window Helpers ─────────────────────────────────────────────────────────
+# ── X11 Window Helpers (kept for chat bubble + context menu positioning) ──────
 
-# Cache of window XIDs (GTK window id -> X11 window id)
 _xid_cache = {}
 
 def _get_xid(window):
@@ -381,7 +396,7 @@ _xlib = None
 _xdpy = None
 
 def _init_xlib():
-    """Initialize Xlib for direct window moves (much faster than xdotool subprocess)."""
+    """Initialize Xlib for direct window moves."""
     global _xlib, _xdpy
     if _xlib is not None:
         return _xlib is not False
@@ -392,17 +407,14 @@ def _init_xlib():
         display = Gdk.Display.get_default()
         if isinstance(display, GdkX11.X11Display):
             xdpy_obj = display.get_xdisplay()
-            # Extract raw pointer: try hash() first (stable), fallback to repr parsing
             try:
                 _xdpy = hash(xdpy_obj)
-                # Validate: hash of ctypes-backed object IS the pointer on CPython
                 lib.XFlush(ctypes.c_void_p(_xdpy))
                 _xlib = lib
                 log.debug("Xlib initialized via hash(), pointer=%#x", _xdpy)
                 return True
             except (TypeError, OSError):
                 pass
-            # Fallback: parse repr string
             s = str(xdpy_obj)
             if "void at 0x" in s:
                 _xdpy = int(s.split("void at ")[1].rstrip(")>"), 16)
@@ -425,12 +437,12 @@ def move_window(window, x, y):
         return
     if _init_xlib() and _xdpy:
         _xlib.XMoveWindow(ctypes.c_void_p(_xdpy), xid, int(x), int(y))
-        _xlib_dirty = True  # flush once after all moves
+        _xlib_dirty = True
     else:
         _run_x11(["xdotool", "windowmove", str(xid), str(int(x)), str(int(y))])
 
 def flush_x11():
-    """Flush all pending X11 operations (call once per frame, not per window)."""
+    """Flush all pending X11 operations (call once per frame)."""
     global _xlib_dirty
     if _xlib_dirty and _xlib and _xdpy:
         _xlib.XFlush(ctypes.c_void_p(_xdpy))
@@ -448,7 +460,7 @@ def _run_x11(cmd):
 
 
 def _x11_set_property_atom(xid, prop_name, value_name):
-    """Set an X11 atom property directly via Xlib (no subprocess needed)."""
+    """Set an X11 atom property directly via Xlib."""
     if not (_init_xlib() and _xdpy):
         return False
     try:
@@ -468,20 +480,6 @@ def _x11_set_property_atom(xid, prop_name, value_name):
         return False
 
 
-def _x11_set_wm_hints_no_input(xid):
-    """Set WM_HINTS InputHint=False directly via Xlib."""
-    if not (_init_xlib() and _xdpy):
-        return False
-    try:
-        dpy = ctypes.c_void_p(_xdpy)
-        wm_hints = _xlib.XInternAtom(dpy, b"WM_HINTS", 0)
-        data = (ctypes.c_ulong * 9)(2, 0, 0, 0, 0, 0, 0, 0, 0)
-        _xlib.XChangeProperty(dpy, xid, wm_hints, wm_hints, 32, 0, data, 9)
-        return True
-    except Exception:
-        return False
-
-
 def _x11_set_above_skip_taskbar(xid):
     """Set _NET_WM_STATE_ABOVE + _NET_WM_STATE_SKIP_TASKBAR via X11 client message."""
     if not (_init_xlib() and _xdpy):
@@ -489,17 +487,14 @@ def _x11_set_above_skip_taskbar(xid):
     try:
         dpy = ctypes.c_void_p(_xdpy)
 
-        # Get atoms
         wm_state = _xlib.XInternAtom(dpy, b"_NET_WM_STATE", 0)
         above = _xlib.XInternAtom(dpy, b"_NET_WM_STATE_ABOVE", 0)
         skip = _xlib.XInternAtom(dpy, b"_NET_WM_STATE_SKIP_TASKBAR", 0)
 
-        # Get root window
         _xlib.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
         _xlib.XDefaultRootWindow.restype = ctypes.c_ulong
         root = _xlib.XDefaultRootWindow(dpy)
 
-        # Send client message: _NET_WM_STATE, _NET_WM_STATE_ADD(1), ABOVE
         class XClientMessageEvent(ctypes.Structure):
             _fields_ = [
                 ("type", ctypes.c_int), ("serial", ctypes.c_ulong),
@@ -513,7 +508,6 @@ def _x11_set_above_skip_taskbar(xid):
             ctypes.POINTER(XClientMessageEvent)]
         _xlib.XSendEvent.restype = ctypes.c_int
 
-        # SubstructureRedirect | SubstructureNotify
         mask = 0x00080000 | 0x00100000
 
         for atom in [above, skip]:
@@ -527,7 +521,7 @@ def _x11_set_above_skip_taskbar(xid):
             ev.data[0] = 1  # _NET_WM_STATE_ADD
             ev.data[1] = atom
             ev.data[2] = 0
-            ev.data[3] = 1  # source: application
+            ev.data[3] = 1
             ev.data[4] = 0
             _xlib.XSendEvent(dpy, root, 0, mask, ctypes.byref(ev))
 
@@ -539,11 +533,10 @@ def _x11_set_above_skip_taskbar(xid):
 
 _above_pending = []
 _applied = set()
-_no_focus_windows = []
 _notification_windows = []
 
 
-def _apply_xid_hints(window, above=False, no_focus=False, notification=False):
+def _apply_xid_hints(window, above=False, notification=False):
     """Apply X11 hints immediately if XID is available."""
     xid = _get_xid(window)
     if not xid:
@@ -554,34 +547,13 @@ def _apply_xid_hints(window, above=False, no_focus=False, notification=False):
             _run_x11(["wmctrl", "-i", "-r", str(xid), "-b", "add,above,skip_taskbar"])
         _applied.add(("above", wid))
     if notification and ("notif", wid) not in _applied:
-        # Set window type synchronously via Xlib (no delay = no GNOME notification)
         if not _x11_set_property_atom(xid, "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_NOTIFICATION"):
             _run_x11(["xprop", "-id", str(xid), "-f", "_NET_WM_WINDOW_TYPE", "32a",
                       "-set", "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_NOTIFICATION"])
         _applied.add(("notif", wid))
-    if no_focus and ("nofocus", wid) not in _applied:
-        if not _x11_set_wm_hints_no_input(xid):
-            _run_x11(["xprop", "-id", str(xid), "-f", "WM_HINTS", "32i",
-                      "-set", "WM_HINTS", "2, 0, 0, 0, 0, 0, 0, 0, 0"])
-        _applied.add(("nofocus", wid))
-    # Flush immediately so hints are applied before window is shown
     if _xlib and _xdpy:
         _xlib.XFlush(ctypes.c_void_p(_xdpy))
 
-
-def set_no_focus(window):
-    """Mark window as not accepting focus + NOTIFICATION type."""
-    _no_focus_windows.append(window)
-    _notification_windows.append(window)
-    _above_pending.append(window)
-    window.connect("realize", lambda w: GLib.idle_add(
-        lambda: _apply_xid_hints(w, above=True, no_focus=True, notification=True) or False))
-
-def set_notification_type(window):
-    """Mark window as NOTIFICATION type only."""
-    _notification_windows.append(window)
-    window.connect("realize", lambda w: GLib.idle_add(
-        lambda: _apply_xid_hints(w, notification=True) or False))
 
 def set_always_on_top(window):
     """Mark window for always-on-top + skip-taskbar."""
@@ -589,13 +561,19 @@ def set_always_on_top(window):
     window.connect("realize", lambda w: GLib.idle_add(
         lambda: _apply_xid_hints(w, above=True) or False))
 
+def set_notification_type(window):
+    """Mark window as NOTIFICATION type only."""
+    _notification_windows.append(window)
+    window.connect("realize", lambda w: GLib.idle_add(
+        lambda: _apply_xid_hints(w, notification=True) or False))
+
 def unregister_window(window):
     """Remove window from all global tracking lists and caches."""
     wid = id(window)
-    for lst in [_above_pending, _no_focus_windows, _notification_windows]:
+    for lst in [_above_pending, _notification_windows]:
         while window in lst:
             lst.remove(window)
-    for prefix in ["above", "notif", "nofocus"]:
+    for prefix in ["above", "notif"]:
         _applied.discard((prefix, wid))
     _xid_cache.pop(wid, None)
 
@@ -607,10 +585,71 @@ def _apply_above_all():
     for w in list(_notification_windows):
         if ("notif", id(w)) not in _applied:
             _apply_xid_hints(w, notification=True)
-    for w in list(_no_focus_windows):
-        if ("nofocus", id(w)) not in _applied:
-            _apply_xid_hints(w, no_focus=True)
     return True
+
+
+# ── XShape Input Passthrough ─────────────────────────────────────────────────
+
+_xext = None
+
+def _init_xext():
+    """Load libXext for XShape extension."""
+    global _xext
+    if _xext is not None:
+        return _xext is not False
+    try:
+        _xext = ctypes.cdll.LoadLibrary("libXext.so.6")
+        return True
+    except Exception as e:
+        log.debug("libXext unavailable: %s", e)
+        _xext = False
+        return False
+
+
+class XRectangle(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_short), ("y", ctypes.c_short),
+                ("width", ctypes.c_ushort), ("height", ctypes.c_ushort)]
+
+
+def _update_input_shape(window_xid, rects):
+    """Set the input shape of a window to only the given rectangles.
+    rects: list of (x, y, w, h) tuples.
+    If rects is empty, set a 1x1 rect at -1,-1 (effectively no input)."""
+    if not (_init_xlib() and _xdpy and _init_xext()):
+        return
+    try:
+        dpy = ctypes.c_void_p(_xdpy)
+        ShapeInput = 2  # XShape ShapeInput kind
+        ShapeSet = 0    # XShape ShapeSet operation
+        Unsorted = 0
+
+        _xext.XShapeCombineRectangles.argtypes = [
+            ctypes.c_void_p,   # display
+            ctypes.c_ulong,    # window
+            ctypes.c_int,      # dest_kind (ShapeInput=2)
+            ctypes.c_int,      # x_off
+            ctypes.c_int,      # y_off
+            ctypes.POINTER(XRectangle),  # rectangles
+            ctypes.c_int,      # n_rects
+            ctypes.c_int,      # op (ShapeSet=0)
+            ctypes.c_int,      # ordering
+        ]
+
+        if not rects:
+            # No cats visible — set tiny offscreen input region
+            arr = (XRectangle * 1)(XRectangle(-1, -1, 1, 1))
+            _xext.XShapeCombineRectangles(dpy, window_xid, ShapeInput, 0, 0, arr, 1, ShapeSet, Unsorted)
+        else:
+            n = len(rects)
+            arr = (XRectangle * n)()
+            for i, (rx, ry, rw, rh) in enumerate(rects):
+                arr[i].x = max(0, int(rx))
+                arr[i].y = max(0, int(ry))
+                arr[i].width = max(1, int(rw))
+                arr[i].height = max(1, int(rh))
+            _xext.XShapeCombineRectangles(dpy, window_xid, ShapeInput, 0, 0, arr, n, ShapeSet, Unsorted)
+    except Exception as e:
+        log.debug("XShape input update failed: %s", e)
 
 
 # ── Chat Backends ──────────────────────────────────────────────────────────────
@@ -625,7 +664,6 @@ def _get_claude_api_key():
 
 def _read_claude_oauth():
     try:
-        # Check file permissions aren't too open
         if os.path.exists(CLAUDE_CREDS):
             mode = os.stat(CLAUDE_CREDS).st_mode
             if mode & 0o077:
@@ -701,7 +739,6 @@ class ChatBackend:
         threading.Thread(target=_run, daemon=True).start()
 
     def _stream_chunks(self):
-        """Yield text chunks. Implemented by subclasses."""
         raise NotImplementedError
 
     def cancel(self):
@@ -740,7 +777,6 @@ class ClaudeChat(ChatBackend):
                 yield from stream.text_stream
         except Exception as e:
             if "401" in str(e) or "authentication" in str(e).lower():
-                # Try refreshing the token
                 log.warning("Auth failed, refreshing token...")
                 new_key = _read_claude_oauth()
                 if new_key:
@@ -748,7 +784,6 @@ class ClaudeChat(ChatBackend):
                     global _anthropic_client
                     _anthropic_client = anthropic.Anthropic(api_key=new_key)
                     self.client = _anthropic_client
-                    # Retry once
                     with self.client.messages.stream(
                         model=self.model, max_tokens=256,
                         system=system_prompt, messages=api_messages,
@@ -780,7 +815,6 @@ class OllamaChat(ChatBackend):
 _ollama_checked = None
 
 def _ollama_available():
-    """Check Ollama availability once (cached)."""
     global _ollama_checked
     if _ollama_checked is None:
         try:
@@ -796,7 +830,6 @@ def create_chat(model):
         log.debug("Using Claude API (%s)", model)
         return ClaudeChat(model)
     if not model.startswith("claude-") and _ollama_available():
-        # Verify the model actually exists in Ollama
         available = fetch_ollama_models()
         if available and model in available:
             log.debug("Using Ollama (%s)", model)
@@ -820,6 +853,9 @@ def create_chat(model):
 
 CSS = b"""
 .cat-window {
+    background: transparent;
+}
+.canvas-window {
     background: transparent;
 }
 .bubble-window {
@@ -930,6 +966,52 @@ def draw_pixel_tail(ctx, w, h, px=3):
         if bw > 0:
             ctx.rectangle(cx - bw/2, row * px, bw, px); ctx.fill()
 
+# ── Meow bubble drawing on canvas ────────────────────────────────────────────
+
+def _draw_meow_bubble(ctx, text, cat_x, cat_y, cat_w):
+    """Draw a meow speech bubble above a cat on the Cairo canvas."""
+    font_size = 11
+    ctx.select_font_face("monospace", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+    ctx.set_font_size(font_size)
+    extents = ctx.text_extents(text)
+    text_w = extents.width
+    pad_x = 12
+    bw = max(80, text_w + pad_x * 2)
+    bh = 24
+    bx = cat_x + cat_w / 2 - bw / 2
+    by = cat_y - 40
+
+    # Background
+    ctx.set_source_rgba(0.95, 0.9, 0.8, 1)
+    ctx.rectangle(bx, by, bw, bh)
+    ctx.fill()
+
+    # Border (2px)
+    px = 2
+    ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
+    ctx.rectangle(bx, by, bw, px); ctx.fill()
+    ctx.rectangle(bx, by + bh - px, bw, px); ctx.fill()
+    ctx.rectangle(bx, by, px, bh); ctx.fill()
+    ctx.rectangle(bx + bw - px, by, px, bh); ctx.fill()
+    # Inner border
+    i = px * 2
+    ctx.rectangle(bx + i, by + i, bw - i*2, px); ctx.fill()
+    ctx.rectangle(bx + i, by + bh - i - px, bw - i*2, px); ctx.fill()
+    ctx.rectangle(bx + i, by + i, px, bh - i*2); ctx.fill()
+    ctx.rectangle(bx + i + bw - i*2 - px, by + i, px, bh - i*2); ctx.fill()
+    # Corner cleanup
+    ctx.set_source_rgba(0.95, 0.9, 0.8, 1)
+    for cx, cy in [(bx, by), (bx + bw - px, by), (bx, by + bh - px), (bx + bw - px, by + bh - px)]:
+        ctx.rectangle(cx, cy, px, px); ctx.fill()
+
+    # Text
+    ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
+    tx = bx + (bw - text_w) / 2
+    ty = by + bh / 2 + font_size / 3
+    ctx.move_to(tx, ty)
+    ctx.show_text(text)
+
+
 # ── Chat Bubble ────────────────────────────────────────────────────────────────
 
 class ChatBubbleController:
@@ -943,7 +1025,8 @@ class ChatBubbleController:
         self.padding = 18
         self._entry = None
         self._response_label = None
-        self._cat_pos = (0, 0, 0, 0)  # cat_x, cat_y, cat_w, cat_h for repositioning
+        self._cat_pos = (0, 0, 0, 0)
+        self._active_cat = None  # which CatInstance this bubble is showing for
 
     def setup(self):
         self.window = Gtk.Window(application=self.app)
@@ -959,7 +1042,6 @@ class ChatBubbleController:
     def _build(self):
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 
-        # Bubble body
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         body.set_margin_start(self.padding)
         body.set_margin_end(self.padding)
@@ -967,7 +1049,6 @@ class ChatBubbleController:
         body.set_margin_bottom(self.padding)
         body.add_css_class("bubble-body")
 
-        # Close button
         close_btn = Gtk.Button(label="\u00d7")
         close_css = Gtk.CssProvider()
         close_css.load_from_data(b"button { background: transparent; color: #4d3319; min-width: 20px; min-height: 16px; font-size: 14px; padding: 0; border: none; }")
@@ -976,7 +1057,6 @@ class ChatBubbleController:
         close_btn.connect("clicked", lambda b: self._do_close())
         body.append(close_btn)
 
-        # Response in a scrollable area
         self._response_label = Gtk.Label(label=self.response_text)
         self._response_label.set_wrap(True)
         self._response_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
@@ -1001,7 +1081,6 @@ class ChatBubbleController:
 
         main_box.append(body)
 
-        # Tail pointing down, directly attached to body
         tail = Gtk.DrawingArea()
         tail.set_content_width(self.bubble_w)
         tail.set_content_height(self.tail_h)
@@ -1016,26 +1095,38 @@ class ChatBubbleController:
             entry.set_text("")
             self.on_send(text)
 
-    def show(self, cat_x, cat_y, cat_w, cat_h):
+    def show_for_cat(self, cat):
+        """Show the chat bubble for a specific cat instance."""
         was_visible = self.window.get_visible()
-        self._cat_pos = (cat_x, cat_y, cat_w, cat_h)
-        bx = int(cat_x + cat_w / 2 - self.bubble_w / 2)
+        old_cat = self._active_cat
+
+        # If switching cats, reset the response
+        if old_cat is not cat:
+            self._active_cat = cat
+            self.on_send = cat.send_chat
+            self.response_text = L10n.s("hi")
+            if self._response_label:
+                self._response_label.set_label(self.response_text)
+
+        self._cat_pos = (cat.x, cat.y, cat.display_w, cat.display_h)
+        bx = int(cat.x + cat.display_w / 2 - self.bubble_w / 2)
         self.window.set_visible(True)
-        # Reposition twice: immediately + after GTK relayouts (for reopened bubbles with content)
-        GLib.idle_add(self._move_above, bx, cat_y, cat_h)
-        GLib.timeout_add(100, self._move_above, bx, cat_y, cat_h)
+        GLib.idle_add(self._move_above, bx, cat.y, cat.display_h)
+        GLib.timeout_add(100, self._move_above, bx, cat.y, cat.display_h)
         if not was_visible:
             self._entry.grab_focus()
 
-    def reposition(self, cat_x, cat_y, cat_w, cat_h):
-        """Move bubble to follow cat, without stealing focus."""
-        if not self.is_visible:
+    def reposition(self):
+        """Move bubble to follow the active cat."""
+        cat = self._active_cat
+        if not self.is_visible or not cat:
             return
-        self._cat_pos = (cat_x, cat_y, cat_w, cat_h)
-        bx = int(cat_x + cat_w / 2 - self.bubble_w / 2)
-        GLib.idle_add(self._move_above, bx, cat_y, cat_h)
+        self._cat_pos = (cat.x, cat.y, cat.display_w, cat.display_h)
+        bx = int(cat.x + cat.display_w / 2 - self.bubble_w / 2)
+        GLib.idle_add(self._move_above, bx, cat.y, cat.display_h)
 
     def _do_close(self):
+        self._active_cat = None
         self.hide()
 
     def _move_above(self, bx, cat_y, cat_h):
@@ -1050,6 +1141,7 @@ class ChatBubbleController:
     def hide(self):
         if self.window:
             self.window.set_visible(False)
+        self._active_cat = None
 
     @property
     def is_visible(self):
@@ -1064,75 +1156,15 @@ class ChatBubbleController:
         self.response_text += token
         if self._response_label:
             self._response_label.set_label(self.response_text)
-            # Debounced auto-scroll + reposition (max once per 200ms)
             if self._scroll and not getattr(self, '_scroll_pending', False):
                 self._scroll_pending = True
                 def _do_scroll():
                     adj = self._scroll.get_vadjustment()
                     adj.set_value(adj.get_upper())
                     self._scroll_pending = False
-                    # Reposition bubble above cat as it grows
-                    cx, cy, cw, ch = self._cat_pos
-                    if cx or cy:
-                        bx = int(cx + cw / 2 - self.bubble_w / 2)
-                        self._move_above(bx, cy, ch)
+                    self.reposition()
                     return False
                 GLib.timeout_add(200, _do_scroll)
-
-
-# ── Meow Bubble ───────────────────────────────────────────────────────────────
-
-class MeowBubble:
-    def __init__(self, app):
-        self.app = app
-        self.window = None
-        self._label = None
-        self._timer_id = None
-
-    def setup(self):
-        self.window = Gtk.Window(application=self.app)
-        self.window.set_decorated(False)
-        self.window.add_css_class("meow-window")
-        self.window.set_resizable(False)
-        self.window.set_can_focus(False)
-        self.window.set_focusable(False)
-
-        overlay = Gtk.Overlay()
-        bg = Gtk.DrawingArea()
-        bg.set_content_width(120)
-        bg.set_content_height(32)
-        bg.set_draw_func(lambda a, ctx, w, h: draw_pixel_border(ctx, w, h, 2))
-        overlay.set_child(bg)
-
-        self._label = Gtk.Label(label="")
-        self._label.add_css_class("pixel-label-small")
-        overlay.add_overlay(self._label)
-        self.window.set_child(overlay)
-        set_no_focus(self.window)  # includes above + notification + no-focus
-
-    def show(self, text, cat_x, cat_y, cat_w, cat_h):
-        if self._timer_id:
-            GLib.source_remove(self._timer_id)
-        self._label.set_label(text)
-        text_w = max(80, len(text) * 9 + 24)
-        bx = max(0, int(cat_x + cat_w / 2 - text_w / 2))
-        by = max(0, int(cat_y - 40))
-        self.window.set_default_size(text_w, 32)
-        self.window.set_visible(True)
-        GLib.idle_add(lambda: move_window(self.window, bx, by) or False)
-        self._timer_id = GLib.timeout_add(random.randint(2000, 3000), self._auto_hide)
-
-    def _auto_hide(self):
-        self.window.set_visible(False)
-        self._timer_id = None
-        return False
-
-    def hide(self):
-        if self._timer_id:
-            GLib.source_remove(self._timer_id)
-            self._timer_id = None
-        if self.window:
-            self.window.set_visible(False)
 
 
 # ── Cat Instance ───────────────────────────────────────────────────────────────
@@ -1141,10 +1173,8 @@ class CatInstance:
     def __init__(self, config, color_def_obj):
         self.config = config
         self.color_def = color_def_obj
-        self.window = None
-        self.picture = None
-        self.rotations = {}      # dir_name -> PIL Image (unscaled)
-        self.animations = {}     # anim_name -> {dir_name -> [PIL Image]}
+        self.rotations = {}      # dir_name -> (cairo.ImageSurface, data_ref)
+        self.animations = {}     # anim_name -> {dir_name -> [(surface, data_ref)]}
         self.state = CatState.IDLE
         self.direction = "south"
         self.frame_index = 0
@@ -1161,13 +1191,14 @@ class CatInstance:
         self.drag_win_x = 0.0
         self.drag_win_y = 0.0
         self.mouse_moved = False
-        self.chat_bubble = None
-        self.meow_bubble = None
         self.chat_backend = None
         self.screen_w = 0
         self.screen_h = 0
         self._app = None
-        self._siblings = []
+        # Meow bubble state (drawn on canvas)
+        self.meow_text = ""
+        self.meow_visible = False
+        self._meow_timer_id = None
 
     def setup(self, app, meta, cat_dir, dw, dh, model, lang, start_x, screen_w, screen_h):
         self._app = app
@@ -1181,52 +1212,7 @@ class CatInstance:
         self.dest_y = self.y
 
         self.load_assets(meta, cat_dir)
-
-        self.window = Gtk.Window(application=app)
-        self.window.set_decorated(False)
-        self.window.add_css_class("cat-window")
-        self.window.set_default_size(dw, dh)
-        self.window.set_resizable(False)
-        set_always_on_top(self.window)
-        set_notification_type(self.window)
-
-        self.picture = Gtk.Picture()
-        self.picture.set_can_shrink(False)
-        self.picture.set_size_request(dw, dh)
-        self.picture.set_paintable(self._fallback_tex())
-        self.window.set_child(self.picture)
-
-        # Click
-        click = Gtk.GestureClick()
-        click.set_button(1)
-        click.connect("released", self._on_click)
-        self.window.add_controller(click)
-
-        # Right-click
-        rclick = Gtk.GestureClick()
-        rclick.set_button(3)
-        rclick.connect("released", self._on_right_click)
-        self.window.add_controller(rclick)
-
-        # Drag
-        drag = Gtk.GestureDrag()
-        drag.connect("drag-begin", self._on_drag_begin)
-        drag.connect("drag-update", self._on_drag_update)
-        drag.connect("drag-end", self._on_drag_end)
-        self.window.add_controller(drag)
-
-        # Chat
-        self.chat_bubble = ChatBubbleController(app)
-        self.chat_bubble.setup()
-        self.chat_bubble.on_send = self.send_chat
-
-        self.meow_bubble = MeowBubble(app)
-        self.meow_bubble.setup()
-
         self.setup_chat(model, lang)
-
-        self.window.set_visible(True)
-        GLib.idle_add(lambda: move_window(self.window, int(self.x), int(self.y)) or False)
 
     def setup_chat(self, model, lang):
         prompt = self.color_def.prompt(self.config["name"], lang)
@@ -1237,7 +1223,7 @@ class CatInstance:
             self.chat_backend.messages.extend(mem[1:])
 
     def load_assets(self, meta, cat_dir, lazy=True):
-        """Load sprites with disk cache. Rotations loaded immediately, animations lazy in background."""
+        """Load sprites as cairo.ImageSurface with disk cache."""
         dw, dh = self.display_w, self.display_h
         size = (dw, dh)
 
@@ -1245,7 +1231,7 @@ class CatInstance:
         self.rotations = {}
         for dir_name, rel_path in meta["frames"]["rotations"].items():
             pil = load_and_tint(os.path.join(cat_dir, rel_path), self.color_def, cache_size=size)
-            self.rotations[dir_name] = pil_to_texture(pil, dw, dh)
+            self.rotations[dir_name] = pil_to_surface(pil, dw, dh)
 
         # Load walking animation immediately (needed right away)
         self.animations = {}
@@ -1254,24 +1240,22 @@ class CatInstance:
             self.animations[walk_key] = {}
             for dir_name, frame_paths in meta["frames"]["animations"][walk_key].items():
                 self.animations[walk_key][dir_name] = [
-                    pil_to_texture(load_and_tint(os.path.join(cat_dir, p), self.color_def, cache_size=size), dw, dh)
+                    pil_to_surface(load_and_tint(os.path.join(cat_dir, p), self.color_def, cache_size=size), dw, dh)
                     for p in frame_paths
                 ]
 
         if lazy:
-            # Load remaining animations in background thread
             remaining = {k: v for k, v in meta["frames"]["animations"].items() if k != walk_key}
             if remaining:
                 threading.Thread(target=self._load_anims_bg, args=(remaining, cat_dir, size), daemon=True).start()
         else:
-            # Load all at once (used for scale change)
             for anim_name, dirs in meta["frames"]["animations"].items():
                 if anim_name == walk_key:
                     continue
                 self.animations[anim_name] = {}
                 for dir_name, frame_paths in dirs.items():
                     self.animations[anim_name][dir_name] = [
-                        pil_to_texture(load_and_tint(os.path.join(cat_dir, p), self.color_def, cache_size=size), dw, dh)
+                        pil_to_surface(load_and_tint(os.path.join(cat_dir, p), self.color_def, cache_size=size), dw, dh)
                         for p in frame_paths
                     ]
 
@@ -1282,26 +1266,27 @@ class CatInstance:
             anim_data = {}
             for dir_name, frame_paths in dirs.items():
                 anim_data[dir_name] = [
-                    pil_to_texture(load_and_tint(os.path.join(cat_dir, p), self.color_def, cache_size=size), dw, dh)
+                    pil_to_surface(load_and_tint(os.path.join(cat_dir, p), self.color_def, cache_size=size), dw, dh)
                     for p in frame_paths
                 ]
-            # Update on main thread to avoid race
             GLib.idle_add(lambda an=anim_name, ad=anim_data: self.animations.update({an: ad}) or False)
 
-    def _fallback_tex(self):
+    def _fallback_surface(self):
         return self.rotations.get(self.direction) or self.rotations.get("south") or next(iter(self.rotations.values()))
 
-    def _current_texture(self):
+    def _current_surface(self):
+        """Return (cairo.ImageSurface, data_ref) for the current frame."""
         if self.state in (CatState.IDLE, CatState.SLEEPING):
-            return self._fallback_tex()
+            return self._fallback_surface()
         key = ANIM_KEYS.get(self.state)
         if key:
             frames = self.animations.get(key, {}).get(self.direction, [])
             if frames:
                 return frames[self.frame_index % len(frames)]
-        return self._fallback_tex()
+        return self._fallback_surface()
 
     def render_tick(self):
+        """Update position/animation state. No window management needed."""
         if self.dragging:
             return
 
@@ -1317,7 +1302,6 @@ class CatInstance:
                 self.frame_index = 0
                 self.idle_ticks = 0
             else:
-                # Move proportionally on both axes
                 ratio = WALK_SPEED / dist
                 step_x = dx * ratio
                 step_y = dy * ratio
@@ -1332,9 +1316,9 @@ class CatInstance:
                 self.frame_index += 1
             self.x = max(0, min(self.x, self.screen_w - self.display_w))
             self.y = max(0, min(self.y, self.screen_h - self.display_h))
-            move_window(self.window, int(self.x), int(self.y))
-            if self.chat_bubble and self.chat_bubble.is_visible:
-                self.chat_bubble.reposition(self.x, self.y, self.display_w, self.display_h)
+            # Reposition chat bubble if visible for this cat
+            if self._app and self._app.chat_bubble and self._app.chat_bubble._active_cat is self:
+                self._app.chat_bubble.reposition()
         elif self.state in ONE_SHOT_STATES:
             key = ANIM_KEYS.get(self.state)
             if key:
@@ -1346,13 +1330,8 @@ class CatInstance:
                 else:
                     self.frame_index += 1
 
-        tex = self._current_texture()
-        if tex is not getattr(self, '_last_tex', None):
-            self._last_tex = tex
-            self.picture.set_paintable(tex)
-
     def behavior_tick(self):
-        if self.chat_bubble and self.chat_bubble.is_visible:
+        if self._app and self._app.chat_bubble and self._app.chat_bubble._active_cat is self and self._app.chat_bubble.is_visible:
             return
         if self.dragging:
             return
@@ -1383,94 +1362,19 @@ class CatInstance:
                 self.frame_index = 0
                 self.idle_ticks = 0
 
-    def _on_click(self, gesture, n_press, x, y):
-        if self.mouse_moved:
-            return
-        if n_press == 2:
-            # Double-click → open settings
-            if self._app:
-                self._app._open_settings()
-            return
-        for cat in self._siblings:
-            if cat is not self:
-                cat.chat_bubble.hide()
-        self._toggle_chat()
-
-    def _on_right_click(self, gesture, n_press, x, y):
-        if not self._app:
-            return
-        # Reuse a single shared menu window
-        menu = getattr(self._app, '_context_menu', None)
-        if menu and menu.get_visible():
-            menu.set_visible(False)
-            return
-        if not menu:
-            menu = Gtk.Window(application=self._app)
-            menu.set_decorated(False)
-            menu.set_resizable(False)
-            menu.add_css_class("bubble-body")
-            set_always_on_top(menu)
-            set_notification_type(menu)
-
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-            box.set_margin_top(8)
-            box.set_margin_bottom(8)
-            box.set_margin_start(8)
-            box.set_margin_end(8)
-
-            btn_settings = Gtk.Button(label=L10n.s("settings"))
-            btn_settings.add_css_class("pixel-label-small")
-            btn_settings.connect("clicked", lambda b: (menu.set_visible(False), self._app._open_settings()))
-            box.append(btn_settings)
-
-            btn_quit = Gtk.Button(label=L10n.s("quit"))
-            btn_quit.add_css_class("pixel-label-small")
-            btn_quit.connect("clicked", lambda b: self._app.quit())
-            box.append(btn_quit)
-
-            menu.set_child(box)
-            self._app._context_menu = menu
-
-        menu.set_visible(True)
-        GLib.idle_add(lambda: move_window(menu, int(self.x + self.display_w), int(self.y)) or False)
-        # Auto-close after 5s
-        def _auto_close_menu():
-            self._app._menu_timer = None
-            menu.set_visible(False)
-            return False
-        if getattr(self._app, '_menu_timer', None):
-            GLib.source_remove(self._app._menu_timer)
-        self._app._menu_timer = GLib.timeout_add(5000, _auto_close_menu)
-
-    def _on_drag_begin(self, gesture, start_x, start_y):
-        self.dragging = True
-        self.mouse_moved = False
-        self.drag_win_x = self.x
-        self.drag_win_y = self.y
-
-    def _on_drag_update(self, gesture, offset_x, offset_y):
-        if not self.dragging:
-            return
-        if abs(offset_x) > 3 or abs(offset_y) > 3:
-            self.mouse_moved = True
-        self.x = max(0, min(self.drag_win_x + offset_x, self.screen_w - self.display_w))
-        self.y = max(0, min(self.drag_win_y + offset_y, self.screen_h - self.display_h))
-        move_window(self.window, int(self.x), int(self.y))
-
-    def _on_drag_end(self, gesture, offset_x, offset_y):
-        self.dragging = False
-
     def _toggle_chat(self):
-        if self.chat_bubble.is_visible:
-            self.chat_bubble.hide()
+        bubble = self._app.chat_bubble
+        if bubble._active_cat is self and bubble.is_visible:
+            bubble.hide()
         else:
-            self.chat_bubble.show(self.x, self.y, self.display_w, self.display_h)
+            bubble.show_for_cat(self)
 
     def send_chat(self, text):
         if self.chat_backend.is_streaming:
             return
-        self.chat_bubble.set_response("...")
-        self.chat_bubble.show(self.x, self.y, self.display_w, self.display_h)
+        bubble = self._app.chat_bubble
+        bubble.set_response("...")
+        bubble.show_for_cat(self)
         self.state = CatState.EATING
         self.frame_index = 0
 
@@ -1478,10 +1382,10 @@ class CatInstance:
         def on_token(token):
             nonlocal first_token
             if first_token:
-                self.chat_bubble.set_response(token)
+                bubble.set_response(token)
                 first_token = False
             else:
-                self.chat_bubble.append_response(token)
+                bubble.append_response(token)
             return False
 
         def on_done():
@@ -1493,7 +1397,7 @@ class CatInstance:
             return False
 
         def on_error(msg):
-            self.chat_bubble.set_response(msg)
+            bubble.set_response(msg)
             self.state = CatState.IDLE
             self.frame_index = 0
             return False
@@ -1504,34 +1408,40 @@ class CatInstance:
         p = self.color_def.prompt(self.config["name"], lang)
         if self.chat_backend.messages:
             self.chat_backend.messages[0] = {"role": "system", "content": p}
-        if self.chat_bubble and self.chat_bubble._entry:
-            self.chat_bubble._entry.set_placeholder_text(L10n.s("talk"))
 
     def _show_random_meow(self):
-        if self.chat_bubble and self.chat_bubble.is_visible:
+        if self._app and self._app.chat_bubble and self._app.chat_bubble._active_cat is self and self._app.chat_bubble.is_visible:
             return
-        self.meow_bubble.show(L10n.random_meow(), self.x, self.y, self.display_w, self.display_h)
+        self.meow_text = L10n.random_meow()
+        self.meow_visible = True
+        if self._meow_timer_id:
+            GLib.source_remove(self._meow_timer_id)
+        self._meow_timer_id = GLib.timeout_add(random.randint(2000, 3000), self._hide_meow)
+
+    def _hide_meow(self):
+        self.meow_visible = False
+        self._meow_timer_id = None
+        return False
 
     def apply_scale(self, new_w, new_h, meta, cat_dir):
         self.display_w = new_w
         self.display_h = new_h
         self.load_assets(meta, cat_dir, lazy=False)
-        self.window.set_default_size(new_w, new_h)
-        self._last_tex = None
-        self.picture.set_paintable(self._current_texture())
-        move_window(self.window, int(self.x), int(self.y))
 
     def cleanup(self):
         if self.chat_backend:
             self.chat_backend.cancel()
-        self.chat_bubble.hide()
-        self.meow_bubble.hide()
-        self.window.set_visible(False)
-        # Remove from all global tracking to prevent leaks
-        for w in [self.window, self.chat_bubble.window, self.meow_bubble.window]:
-            unregister_window(w)
+        if self._meow_timer_id:
+            GLib.source_remove(self._meow_timer_id)
+            self._meow_timer_id = None
+        self.meow_visible = False
         self._app = None
         self.chat_backend = None
+
+    def hit_test(self, mx, my):
+        """Check if point (mx, my) is inside this cat's bounding rect."""
+        return (self.x <= mx <= self.x + self.display_w and
+                self.y <= my <= self.y + self.display_h)
 
 
 # ── Settings Window ────────────────────────────────────────────────────────────
@@ -1590,7 +1500,7 @@ class SettingsWindow:
         self._build()
 
     def _build(self):
-        self._stop_timers()  # clean up old animation timers and pictures
+        self._stop_timers()
         configs = self.get_configs() if self.get_configs else []
         active_ids = {c["color_id"] for c in configs}
 
@@ -1628,16 +1538,15 @@ class SettingsWindow:
         cats_label.set_margin_top(12)
         box.append(cats_label)
 
-        # Cat sprite selector — animated previews!
+        # Cat sprite selector
         bubbles_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         bubbles_box.set_halign(Gtk.Align.CENTER)
-        self._anim_pictures = []  # track for animation timer
+        self._anim_pictures = []
         for c in CAT_COLORS:
             is_active = c.id in active_ids
             is_sel = self.selected_color_id == c.id and is_active
             cat_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
 
-            # Sprite preview button
             btn = Gtk.Button()
             sprite_size = 40
             pic = Gtk.Picture()
@@ -1660,7 +1569,6 @@ class SettingsWindow:
 
             if is_active:
                 btn.connect("clicked", self._on_bubble_select, c.id)
-                # Load walking frames for animation
                 if self._get_anim_frames:
                     frames = self._get_anim_frames(c.id, sprite_size)
                     if frames:
@@ -1669,7 +1577,6 @@ class SettingsWindow:
                 btn.connect("clicked", self._on_bubble_add, c.id)
             cat_box.append(btn)
 
-            # × remove button
             if is_active and len(active_ids) > 1:
                 rm_btn = Gtk.Button(label="\u00d7")
                 rm_css = Gtk.CssProvider()
@@ -1682,7 +1589,6 @@ class SettingsWindow:
             bubbles_box.append(cat_box)
         box.append(bubbles_box)
 
-        # Start animation timer for active cat previews
         if getattr(self, '_anim_timer', None):
             GLib.source_remove(self._anim_timer)
             self._anim_timer = None
@@ -1747,7 +1653,6 @@ class SettingsWindow:
             v = s.get_value()
             size_value.set_label(f"x{v:.1f}")
             self.current_scale = v
-            # Debounce: wait 800ms after last change before applying (reloads all sprites)
             if self._scale_timer:
                 try:
                     GLib.source_remove(self._scale_timer)
@@ -1768,7 +1673,7 @@ class SettingsWindow:
         model_strings = Gtk.StringList.new([L10n.s("loading")])
         model_combo.set_model(model_strings)
 
-        self._model_loading = True  # block callback during initial population
+        self._model_loading = True
 
         def _load_models():
             all_models = []
@@ -1808,11 +1713,10 @@ class SettingsWindow:
         self.window.set_child(scroll)
 
     def _animate_previews(self):
-        """Advance animation frame for each active cat preview."""
         for pic, frames, idx in self._anim_pictures:
             idx[0] = (idx[0] + 1) % len(frames)
             pic.set_paintable(frames[idx[0]])
-        return True  # keep timer running
+        return True
 
     def _on_bubble_select(self, btn, color_id):
         self.selected_color_id = color_id
@@ -1836,7 +1740,7 @@ class SettingsWindow:
 
     def _on_model_select(self, dropdown, pspec, string_list):
         if getattr(self, '_model_loading', False):
-            return  # ignore changes during dropdown population
+            return
         idx = dropdown.get_selected()
         if idx < string_list.get_n_items():
             name = string_list.get_string(idx)
@@ -1876,7 +1780,17 @@ class CatAIApp(Gtk.Application):
         self.screen_h = 1080
         self.selected_model = ""
         self.settings_ctrl = None
+        self.chat_bubble = None
+        self._context_menu = None
+        self._menu_timer = None
+        self._canvas_window = None
+        self._canvas_area = None
+        self._canvas_xid = None
         self._timers = []
+        # Drag state for canvas
+        self._drag_cat = None
+        self._drag_offset_x = 0.0
+        self._drag_offset_y = 0.0
 
     def do_activate(self):
         _setup_logging()
@@ -1897,7 +1811,6 @@ class CatAIApp(Gtk.Application):
         display = Gdk.Display.get_default()
         monitors = display.get_monitors()
         if monitors.get_n_items() > 0:
-            # Use bounding box of all monitors for multi-monitor support
             max_w, max_h = 0, 0
             for i in range(monitors.get_n_items()):
                 geo = monitors.get_item(i).get_geometry()
@@ -1921,10 +1834,17 @@ class CatAIApp(Gtk.Application):
             self._save_all()
 
         self._recompute_size()
+
+        # Create the single fullscreen transparent canvas window
+        self._create_canvas()
+
+        # Create shared chat bubble
+        self.chat_bubble = ChatBubbleController(self)
+        self.chat_bubble.setup()
+
+        # Create cat instances (no windows, just state)
         for i, cat_cfg in enumerate(self.cat_configs):
             self._create_instance(cat_cfg, i)
-        for cat in self.cat_instances:
-            cat._siblings = self.cat_instances
 
         # Actions
         for name, cb in [("quit", lambda *a: self.quit()), ("settings", lambda *a: self._open_settings())]:
@@ -1932,7 +1852,7 @@ class CatAIApp(Gtk.Application):
             action.connect("activate", cb)
             self.add_action(action)
 
-        # Disable automatic GC to prevent random pauses, collect manually
+        # Disable automatic GC to prevent random pauses
         gc.disable()
 
         self._timers = [
@@ -1942,8 +1862,208 @@ class CatAIApp(Gtk.Application):
             GLib.timeout_add(30000, self._gc_collect),
         ]
 
+    def _create_canvas(self):
+        """Create the single fullscreen transparent overlay window."""
+        win = Gtk.Window(application=self)
+        win.set_decorated(False)
+        win.add_css_class("canvas-window")
+        win.set_default_size(self.screen_w, self.screen_h)
+        win.set_resizable(False)
+
+        area = Gtk.DrawingArea()
+        area.set_content_width(self.screen_w)
+        area.set_content_height(self.screen_h)
+        area.set_draw_func(self._canvas_draw)
+        win.set_child(area)
+
+        # Gesture controllers on the canvas
+        # Click (left)
+        click = Gtk.GestureClick()
+        click.set_button(1)
+        click.connect("pressed", self._on_canvas_click_pressed)
+        click.connect("released", self._on_canvas_click_released)
+        area.add_controller(click)
+
+        # Right-click
+        rclick = Gtk.GestureClick()
+        rclick.set_button(3)
+        rclick.connect("released", self._on_canvas_right_click)
+        area.add_controller(rclick)
+
+        # Drag
+        drag = Gtk.GestureDrag()
+        drag.connect("drag-begin", self._on_canvas_drag_begin)
+        drag.connect("drag-update", self._on_canvas_drag_update)
+        drag.connect("drag-end", self._on_canvas_drag_end)
+        area.add_controller(drag)
+
+        set_always_on_top(win)
+        set_notification_type(win)
+
+        # We need the XID once realized, for XShape input passthrough
+        def _on_realize(w):
+            def _apply():
+                _apply_xid_hints(w, above=True, notification=True)
+                xid = _get_xid(w)
+                if xid:
+                    self._canvas_xid = xid
+                    # Set initial empty input shape so clicks pass through
+                    _update_input_shape(xid, [])
+                return False
+            GLib.idle_add(_apply)
+        win.connect("realize", _on_realize)
+
+        win.set_visible(True)
+        GLib.idle_add(lambda: move_window(win, 0, 0) or False)
+
+        self._canvas_window = win
+        self._canvas_area = area
+
+    def _canvas_draw(self, area, ctx, width, height):
+        """Draw all cats and meow bubbles on the canvas."""
+        # Clear with full transparency
+        ctx.set_operator(cairo.OPERATOR_SOURCE)
+        ctx.set_source_rgba(0, 0, 0, 0)
+        ctx.paint()
+        ctx.set_operator(cairo.OPERATOR_OVER)
+
+        for cat in self.cat_instances:
+            surface, _data_ref = cat._current_surface()
+            ctx.save()
+            ctx.set_source_surface(surface, cat.x, cat.y)
+            ctx.paint()
+            ctx.restore()
+
+            # Draw meow bubble if visible
+            if cat.meow_visible and cat.meow_text:
+                _draw_meow_bubble(ctx, cat.meow_text, cat.x, cat.y, cat.display_w)
+
+    def _update_input_regions(self):
+        """Update XShape input regions to only cover cat bounding rects."""
+        if not self._canvas_xid:
+            return
+        rects = []
+        for cat in self.cat_instances:
+            # Add some padding for easier clicking
+            pad = 4
+            rects.append((cat.x - pad, cat.y - pad,
+                         cat.display_w + pad * 2, cat.display_h + pad * 2))
+            # Also include meow bubble area if visible
+            if cat.meow_visible and cat.meow_text:
+                text_w = max(80, len(cat.meow_text) * 9 + 24)
+                bx = cat.x + cat.display_w / 2 - text_w / 2
+                by = cat.y - 40
+                rects.append((bx, by, text_w, 24))
+        _update_input_shape(self._canvas_xid, rects)
+
+    def _find_cat_at(self, x, y):
+        """Find the topmost cat at position (x, y). Returns CatInstance or None."""
+        # Iterate in reverse so last-drawn (topmost) cat wins
+        for cat in reversed(self.cat_instances):
+            if cat.hit_test(x, y):
+                return cat
+        return None
+
+    # ── Canvas gesture handlers ──────────────────────────────────────────────
+
+    def _on_canvas_click_pressed(self, gesture, n_press, x, y):
+        """Track which cat was clicked for click vs drag distinction."""
+        cat = self._find_cat_at(x, y)
+        if cat:
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+
+    def _on_canvas_click_released(self, gesture, n_press, x, y):
+        cat = self._find_cat_at(x, y)
+        if not cat:
+            return
+        if cat.mouse_moved:
+            return
+        if n_press == 2:
+            self._open_settings()
+            return
+        # Single click: hide other bubbles, toggle chat for this cat
+        if self.chat_bubble._active_cat is not cat:
+            self.chat_bubble.hide()
+        cat._toggle_chat()
+
+    def _on_canvas_right_click(self, gesture, n_press, x, y):
+        cat = self._find_cat_at(x, y)
+        if not cat:
+            return
+        menu = self._context_menu
+        if menu and menu.get_visible():
+            menu.set_visible(False)
+            return
+        if not menu:
+            menu = Gtk.Window(application=self)
+            menu.set_decorated(False)
+            menu.set_resizable(False)
+            menu.add_css_class("bubble-body")
+            set_always_on_top(menu)
+            set_notification_type(menu)
+
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            box.set_margin_top(8)
+            box.set_margin_bottom(8)
+            box.set_margin_start(8)
+            box.set_margin_end(8)
+
+            btn_settings = Gtk.Button(label=L10n.s("settings"))
+            btn_settings.add_css_class("pixel-label-small")
+            btn_settings.connect("clicked", lambda b: (menu.set_visible(False), self._open_settings()))
+            box.append(btn_settings)
+
+            btn_quit = Gtk.Button(label=L10n.s("quit"))
+            btn_quit.add_css_class("pixel-label-small")
+            btn_quit.connect("clicked", lambda b: self.quit())
+            box.append(btn_quit)
+
+            menu.set_child(box)
+            self._context_menu = menu
+
+        menu.set_visible(True)
+        GLib.idle_add(lambda: move_window(menu, int(cat.x + cat.display_w), int(cat.y)) or False)
+
+        def _auto_close_menu():
+            self._menu_timer = None
+            menu.set_visible(False)
+            return False
+        if self._menu_timer:
+            GLib.source_remove(self._menu_timer)
+        self._menu_timer = GLib.timeout_add(5000, _auto_close_menu)
+
+    def _on_canvas_drag_begin(self, gesture, start_x, start_y):
+        cat = self._find_cat_at(start_x, start_y)
+        if not cat:
+            return
+        gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+        self._drag_cat = cat
+        cat.dragging = True
+        cat.mouse_moved = False
+        cat.drag_win_x = cat.x
+        cat.drag_win_y = cat.y
+        self._drag_offset_x = start_x - cat.x
+        self._drag_offset_y = start_y - cat.y
+
+    def _on_canvas_drag_update(self, gesture, offset_x, offset_y):
+        cat = self._drag_cat
+        if not cat or not cat.dragging:
+            return
+        if abs(offset_x) > 3 or abs(offset_y) > 3:
+            cat.mouse_moved = True
+        cat.x = max(0, min(cat.drag_win_x + offset_x, cat.screen_w - cat.display_w))
+        cat.y = max(0, min(cat.drag_win_y + offset_y, cat.screen_h - cat.display_h))
+        # Canvas will redraw on next render tick
+
+    def _on_canvas_drag_end(self, gesture, offset_x, offset_y):
+        cat = self._drag_cat
+        if cat:
+            cat.dragging = False
+        self._drag_cat = None
+
+    # ── Tick callbacks ───────────────────────────────────────────────────────
+
     def _gc_collect(self):
-        # Only collect generation 0 (fast, <5ms) — gen 1+2 handled by Python naturally
         gc.collect(0)
         return True
 
@@ -1955,13 +2075,19 @@ class CatAIApp(Gtk.Application):
         for cat in self.cat_instances:
             cat.cleanup()
         self.cat_instances.clear()
+        if self.chat_bubble and self.chat_bubble.window:
+            self.chat_bubble.hide()
+            unregister_window(self.chat_bubble.window)
+        if self._context_menu:
+            unregister_window(self._context_menu)
+        if self._canvas_window:
+            unregister_window(self._canvas_window)
         if self.settings_ctrl and self.settings_ctrl.window:
             self.settings_ctrl._stop_timers()
             self.settings_ctrl.window.set_visible(False)
         Gtk.Application.do_shutdown(self)
 
     def _check_deps(self):
-        """Check optional external tools (not required, just enhance UX)."""
         if shutil.which("apt"):
             pkg_cmd = "sudo apt install"
         elif shutil.which("dnf"):
@@ -2003,7 +2129,12 @@ class CatAIApp(Gtk.Application):
         t0 = time.monotonic()
         for cat in self.cat_instances:
             cat.render_tick()
-        flush_x11()  # single flush for all window moves this frame
+        # Redraw the canvas
+        if self._canvas_area:
+            self._canvas_area.queue_draw()
+        # Update XShape input regions
+        self._update_input_regions()
+        flush_x11()
         dt = (time.monotonic() - t0) * 1000
         if dt > 20:
             log.warning("Slow render: %.0fms (%d cats)", dt, len(self.cat_instances))
@@ -2023,8 +2154,6 @@ class CatAIApp(Gtk.Application):
         self.cat_configs.append(cfg)
         self._save_all()
         self._create_instance(cfg, len(self.cat_instances))
-        for cat in self.cat_instances:
-            cat._siblings = self.cat_instances
         if self.settings_ctrl:
             self.settings_ctrl.selected_color_id = color_id
             self.settings_ctrl.refresh()
@@ -2036,13 +2165,14 @@ class CatAIApp(Gtk.Application):
         if idx is None:
             return
         cat = self.cat_instances[idx]
+        # If chat bubble is showing for this cat, hide it
+        if self.chat_bubble and self.chat_bubble._active_cat is cat:
+            self.chat_bubble.hide()
         cat.cleanup()
         self.cat_instances.pop(idx)
         self.cat_configs = [c for c in self.cat_configs if c["color_id"] != color_id]
         delete_memory(cat.config["id"])
         self._save_all()
-        for c in self.cat_instances:
-            c._siblings = self.cat_instances
         if self.settings_ctrl:
             self.settings_ctrl.selected_color_id = self.cat_configs[0]["color_id"] if self.cat_configs else None
             self.settings_ctrl.refresh()
@@ -2069,6 +2199,9 @@ class CatAIApp(Gtk.Application):
         self._save_all()
         for cat in self.cat_instances:
             cat.update_system_prompt(lang)
+        # Update chat bubble placeholder
+        if self.chat_bubble and self.chat_bubble._entry:
+            self.chat_bubble._entry.set_placeholder_text(L10n.s("talk"))
         if self.settings_ctrl:
             self.settings_ctrl.refresh()
 
@@ -2078,7 +2211,6 @@ class CatAIApp(Gtk.Application):
         for cat in self.cat_instances:
             if not cat.chat_backend:
                 continue
-            # Don't switch backend while streaming
             if cat.chat_backend.is_streaming:
                 cat.chat_backend.model = model
                 continue
