@@ -171,8 +171,11 @@ def _ensure_config_dir():
 def load_config():
     _ensure_config_dir()
     if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE) as f:
-            return json.load(f)
+        try:
+            with open(CONFIG_FILE) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            log.warning("Corrupted config, using defaults: %s", e)
     return {}
 
 def save_config(cfg):
@@ -183,8 +186,11 @@ def save_config(cfg):
 def load_memory(cat_id):
     path = os.path.join(CONFIG_DIR, f"mem_{cat_id}.json")
     if os.path.exists(path):
-        with open(path) as f:
-            return json.load(f)
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            log.warning("Corrupted memory for %s, resetting: %s", cat_id, e)
     return []
 
 def save_memory(cat_id, msgs):
@@ -228,8 +234,13 @@ X-GNOME-Autostart-enabled=true
 # ── Sprite Loading & Tinting ──────────────────────────────────────────────────
 
 def load_metadata(cat_dir):
-    with open(os.path.join(cat_dir, "metadata.json")) as f:
-        return json.load(f)
+    path = os.path.join(cat_dir, "metadata.json")
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"ERROR: Cannot load {path}: {e}")
+        sys.exit(1)
 
 def rgb_to_hsb(r, g, b):
     mx = max(r, g, b)
@@ -763,10 +774,15 @@ class ChatBubbleController:
         self.response_text += token
         if self._response_label:
             self._response_label.set_label(self.response_text)
-            # Auto-scroll to bottom
-            if self._scroll:
-                adj = self._scroll.get_vadjustment()
-                GLib.idle_add(lambda: adj.set_value(adj.get_upper()) or False)
+            # Debounced auto-scroll (max once per 200ms)
+            if self._scroll and not getattr(self, '_scroll_pending', False):
+                self._scroll_pending = True
+                def _do_scroll():
+                    adj = self._scroll.get_vadjustment()
+                    adj.set_value(adj.get_upper())
+                    self._scroll_pending = False
+                    return False
+                GLib.timeout_add(200, _do_scroll)
 
 
 # ── Meow Bubble ───────────────────────────────────────────────────────────────
@@ -1052,33 +1068,46 @@ class CatInstance:
     def _on_right_click(self, gesture, n_press, x, y):
         if not self._app:
             return
-        menu_win = Gtk.Window(application=self._app)
-        menu_win.set_decorated(False)
-        menu_win.set_resizable(False)
-        menu_win.add_css_class("bubble-body")
-        set_always_on_top(menu_win)
+        # Reuse a single shared menu window
+        menu = getattr(self._app, '_context_menu', None)
+        if menu and menu.get_visible():
+            menu.set_visible(False)
+            return
+        if not menu:
+            menu = Gtk.Window(application=self._app)
+            menu.set_decorated(False)
+            menu.set_resizable(False)
+            menu.add_css_class("bubble-body")
+            set_always_on_top(menu)
 
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        box.set_margin_top(8)
-        box.set_margin_bottom(8)
-        box.set_margin_start(8)
-        box.set_margin_end(8)
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            box.set_margin_top(8)
+            box.set_margin_bottom(8)
+            box.set_margin_start(8)
+            box.set_margin_end(8)
 
-        btn_settings = Gtk.Button(label=L10n.s("settings"))
-        btn_settings.add_css_class("pixel-label-small")
-        btn_settings.connect("clicked", lambda b: (menu_win.set_visible(False), self._app._open_settings()))
-        box.append(btn_settings)
+            btn_settings = Gtk.Button(label=L10n.s("settings"))
+            btn_settings.add_css_class("pixel-label-small")
+            btn_settings.connect("clicked", lambda b: (menu.set_visible(False), self._app._open_settings()))
+            box.append(btn_settings)
 
-        btn_quit = Gtk.Button(label=L10n.s("quit"))
-        btn_quit.add_css_class("pixel-label-small")
-        btn_quit.connect("clicked", lambda b: self._app.quit())
-        box.append(btn_quit)
+            btn_quit = Gtk.Button(label=L10n.s("quit"))
+            btn_quit.add_css_class("pixel-label-small")
+            btn_quit.connect("clicked", lambda b: self._app.quit())
+            box.append(btn_quit)
 
-        menu_win.set_child(box)
-        menu_win.set_visible(True)
-        GLib.idle_add(lambda: move_window(menu_win, int(self.x + self.display_w), int(self.y)) or False)
+            menu.set_child(box)
+            self._app._context_menu = menu
+
+        menu.set_visible(True)
+        GLib.idle_add(lambda: move_window(menu, int(self.x + self.display_w), int(self.y)) or False)
         # Auto-close after 5s
-        GLib.timeout_add(5000, lambda: menu_win.set_visible(False) or False)
+        if hasattr(self._app, '_menu_timer') and self._app._menu_timer:
+            try:
+                GLib.source_remove(self._app._menu_timer)
+            except Exception:
+                pass
+        self._app._menu_timer = GLib.timeout_add(5000, lambda: menu.set_visible(False) or False)
 
     def _on_drag_begin(self, gesture, start_x, start_y):
         self.dragging = True
@@ -1489,9 +1518,14 @@ class CatAIApp(Gtk.Application):
         display = Gdk.Display.get_default()
         monitors = display.get_monitors()
         if monitors.get_n_items() > 0:
-            geo = monitors.get_item(0).get_geometry()
-            self.screen_w = geo.width
-            self.screen_h = geo.height
+            # Use bounding box of all monitors for multi-monitor support
+            max_w, max_h = 0, 0
+            for i in range(monitors.get_n_items()):
+                geo = monitors.get_item(i).get_geometry()
+                max_w = max(max_w, geo.x + geo.width)
+                max_h = max(max_h, geo.y + geo.height)
+            self.screen_w = max_w
+            self.screen_h = max_h
 
         cfg = load_config()
         self.cat_scale = cfg.get("scale", DEFAULT_SCALE)
@@ -1627,7 +1661,10 @@ class CatAIApp(Gtk.Application):
         self.selected_model = model
         self._save_all()
         for cat in self.cat_instances:
-            # Recreate chat backend if switching between Claude/Ollama
+            # Don't switch backend while streaming
+            if cat.chat_backend and cat.chat_backend.is_streaming:
+                cat.chat_backend.model = model
+                continue
             if model.startswith("claude-") and not isinstance(cat.chat_backend, ClaudeChat):
                 cat.setup_chat(model, L10n.lang)
             elif not model.startswith("claude-") and isinstance(cat.chat_backend, ClaudeChat):
