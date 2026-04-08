@@ -31,7 +31,9 @@ catai
 
 - Animated pixel-art cats roaming freely across your screen
 - 6 cat personalities with AI chat (Claude API or Ollama)
-- Always-on-top, drag & drop, random meows
-- Settings UI, multilingual (FR/EN/ES), autostart option
+- Click-through: cats float above windows, clicks pass through
+- Drag & drop, random meows, settings UI
+- Multilingual (FR/EN/ES), autostart at login
+- Lazy loading + disk cache for instant startup
 
 Full documentation on [GitHub](https://github.com/Gheop/CATAI-Linux).

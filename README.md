@@ -13,7 +13,7 @@ Port of [CATAI](https://github.com/wil-pe/CATAI) (macOS/Swift) to Linux.
 ## Features
 
 - **Desktop companion** -- Cats roam freely across your screen with pixel-perfect animations
-- **Always on top** -- Cats stay visible above all windows
+- **Click-through** -- Cats float above all windows, clicks pass through to apps below
 - **Multi-cat** -- Up to 6 cats with distinct colors and personalities
 - **AI chat** -- Click a cat to open a pixel-art chat bubble, powered by [Claude](https://claude.ai) or [Ollama](https://ollama.ai)
 - **Random meows** -- Cats spontaneously say "Miaou~", "Prrr...", "Mrrp!" in cute speech bubbles
@@ -47,7 +47,7 @@ Claude is auto-detected from Claude Code's credentials (`~/.claude/.credentials.
 
 ## Requirements
 
-- Linux with X11 or XWayland (GNOME, KDE, etc.)
+- Linux with GNOME, KDE, or any X11/XWayland desktop
 - Python 3.10+
 
 ## Install
@@ -69,37 +69,25 @@ pip install catai-linux
 catai
 ```
 
-## Setup Ollama (optional)
-
-```bash
-./setup-ollama.sh
-```
-
-Pulls `gemma3:1b` (~815MB), a lightweight model. Other options:
-
-```bash
-ollama pull gemma3:4b     # Better quality, ~3GB
-ollama pull phi4-mini     # Microsoft, ~2.5GB
-ollama pull qwen3:1.7b    # Alibaba, ~1.3GB
-```
-
 ## Settings
 
 Right-click any cat to access Settings:
 
 - **Language** -- French / English / Spanish
-- **Cats** -- Click a color to add, click x to remove
+- **Cats** -- Click a sprite to add, click x to remove
 - **Name** -- Rename each cat
 - **Size** -- Scale slider
 - **Model** -- Choose between Claude and Ollama models
+- **Autostart** -- Launch at login
 
 ## How It Works
 
-- Single Python file, zero framework dependencies beyond GTK4
-- GTK4 + XWayland for transparent, always-on-top overlay windows
+- Single fullscreen transparent canvas with Cairo rendering
+- XShape input passthrough -- clicks go through to apps below
 - Pillow for sprite loading and per-pixel HSB color tinting
 - Claude API or Ollama for streaming AI chat
 - 368 hand-drawn sprites (8 directions x 5 animations)
+- Lazy loading + disk cache for instant startup
 - Config persisted in `~/.config/catai/`
 
 ## Development
@@ -107,9 +95,10 @@ Right-click any cat to access Settings:
 ```bash
 make lint    # Run ruff linter
 make fix     # Auto-fix lint issues
+make e2e     # Run E2E test suite (26 tests)
+make run     # Launch the app
+make build   # Build wheel + sdist
 ```
-
-CI runs ruff on every push/PR via GitHub Actions.
 
 ## Project Structure
 
@@ -119,9 +108,10 @@ CI runs ruff on every push/PR via GitHub Actions.
 │   ├── app.py            # Main application
 │   ├── __main__.py       # Entry point (python -m catai_linux)
 │   └── cute_orange_cat/  # Sprite assets (68x68 PNG)
+├── tests/
+│   └── e2e_test.py       # E2E test suite (socket-based)
 ├── pyproject.toml        # Package config + linter config
-├── Makefile              # make run / lint / fix / build
-├── setup-ollama.sh       # Ollama installer
+├── Makefile              # make run / lint / e2e / build
 └── .github/workflows/    # CI: lint + PyPI publish
 ```
 
