@@ -1029,9 +1029,11 @@ class ChatBubbleController:
         self._active_cat = None  # which CatInstance this bubble is showing for
 
     def setup(self):
-        self.window = Gtk.Window(application=self.app)
+        self.window = Gtk.Window()
         self.window.set_decorated(False)
         self.window.add_css_class("bubble-window")
+        set_notification_type(self.window)
+        set_always_on_top(self.window)
         self.window.set_default_size(self.bubble_w, -1)
         self.window.set_resizable(False)
         self.response_text = L10n.s("hi")
@@ -1868,6 +1870,7 @@ class CatAIApp(Gtk.Application):
         win = Gtk.Window(application=self)
         win.set_decorated(False)
         win.add_css_class("canvas-window")
+        set_notification_type(win)
         win.set_default_size(self.screen_w, self.screen_h)
         win.set_resizable(False)
 
@@ -2039,8 +2042,8 @@ class CatAIApp(Gtk.Application):
         cat.x = max(0, min(cat.drag_win_x + offset_x, cat.screen_w - cat.display_w))
         cat.y = max(0, min(cat.drag_win_y + offset_y, cat.screen_h - cat.display_h))
         # Force immediate redraw for smooth drag
-        if self._canvas:
-            self._canvas.queue_draw()
+        if self._canvas_area:
+            self._canvas_area.queue_draw()
 
     def _on_canvas_drag_end(self, gesture, offset_x, offset_y):
         cat = self._drag_cat
