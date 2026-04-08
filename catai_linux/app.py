@@ -1502,7 +1502,7 @@ class SettingsWindow:
         if not self.window:
             self.window = Gtk.Window(application=self.app)
             self.window.set_title("~ Cat Settings ~")
-            set_notification_type(self.window)
+            set_always_on_top(self.window)
             self.window.set_default_size(340, 680)
             self.window.set_resizable(False)
             self.window.add_css_class("settings-window")
