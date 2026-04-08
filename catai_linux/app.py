@@ -559,14 +559,15 @@ def _apply_xid_hints(window, above=False, notification=False):
 def set_always_on_top(window):
     """Mark window for always-on-top + skip-taskbar."""
     _above_pending.append(window)
-    window.connect("realize", lambda w: GLib.idle_add(
-        lambda: _apply_xid_hints(w, above=True) or False))
+    window.connect("realize", lambda w: _apply_xid_hints(w, above=True))
 
 def set_notification_type(window):
-    """Mark window as NOTIFICATION type only."""
+    """Mark window as NOTIFICATION type. Call realize() before first set_visible()."""
     _notification_windows.append(window)
-    window.connect("realize", lambda w: GLib.idle_add(
-        lambda: _apply_xid_hints(w, notification=True) or False))
+    window.connect("realize", lambda w: _apply_xid_hints(w, notification=True))
+    # Force realize now so type is set BEFORE first show
+    if not window.get_realized():
+        window.realize()
 
 def unregister_window(window):
     """Remove window from all global tracking lists and caches."""
