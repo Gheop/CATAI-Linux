@@ -1756,7 +1756,8 @@ class CatAIApp(Gtk.Application):
         ]
 
     def _gc_collect(self):
-        gc.collect()
+        # Only collect generation 0 (fast, <5ms) — gen 1+2 handled by Python naturally
+        gc.collect(0)
         return True
 
     def do_shutdown(self):
