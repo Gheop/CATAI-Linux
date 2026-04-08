@@ -1471,7 +1471,7 @@ class SettingsWindow:
         self.current_scale = scale
         self.current_model = model
         if not self.window:
-            self.window = Gtk.Window(application=self.app)
+            self.window = Gtk.Window()
             self.window.set_title("~ Cat Settings ~")
             self.window.set_default_size(340, 680)
             self.window.set_resizable(False)
@@ -1877,21 +1877,17 @@ class CatAIApp(Gtk.Application):
         win.set_child(area)
 
         # Gesture controllers on the canvas
-        # Click (left)
-        click = Gtk.GestureClick()
-        click.set_button(1)
-        click.connect("pressed", self._on_canvas_click_pressed)
-        click.connect("released", self._on_canvas_click_released)
-        area.add_controller(click)
-
-        # Right-click
+        # Right-click for context menu
         rclick = Gtk.GestureClick()
         rclick.set_button(3)
         rclick.connect("released", self._on_canvas_right_click)
         area.add_controller(rclick)
 
-        # Drag
+        # Left: drag gesture handles both click and drag
+        # - Short drag (no movement) = click → toggle chat
+        # - Long drag = move cat
         drag = Gtk.GestureDrag()
+        drag.set_button(1)
         drag.connect("drag-begin", self._on_canvas_drag_begin)
         drag.connect("drag-update", self._on_canvas_drag_update)
         drag.connect("drag-end", self._on_canvas_drag_end)
@@ -1966,25 +1962,13 @@ class CatAIApp(Gtk.Application):
 
     # ── Canvas gesture handlers ──────────────────────────────────────────────
 
-    def _on_canvas_click_pressed(self, gesture, n_press, x, y):
-        """Track which cat was clicked for click vs drag distinction."""
-        cat = self._find_cat_at(x, y)
-        if cat:
-            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
-
-    def _on_canvas_click_released(self, gesture, n_press, x, y):
-        cat = self._find_cat_at(x, y)
-        if not cat:
-            return
-        if cat.mouse_moved:
-            return
-        if n_press == 2:
-            self._open_settings()
-            return
-        # Single click: hide other bubbles, toggle chat for this cat
-        if self.chat_bubble._active_cat is not cat:
+    def _toggle_chat_for(self, cat):
+        """Toggle chat bubble for a specific cat."""
+        if self.chat_bubble._active_cat is cat and self.chat_bubble.is_visible:
             self.chat_bubble.hide()
-        cat._toggle_chat()
+        else:
+            self.chat_bubble.hide()
+            self.chat_bubble.show_for_cat(cat, self.screen_w, self.screen_h)
 
     def _on_canvas_right_click(self, gesture, n_press, x, y):
         cat = self._find_cat_at(x, y)
@@ -2053,12 +2037,17 @@ class CatAIApp(Gtk.Application):
             cat.mouse_moved = True
         cat.x = max(0, min(cat.drag_win_x + offset_x, cat.screen_w - cat.display_w))
         cat.y = max(0, min(cat.drag_win_y + offset_y, cat.screen_h - cat.display_h))
-        # Canvas will redraw on next render tick
+        # Force immediate redraw for smooth drag
+        if self._canvas:
+            self._canvas.queue_draw()
 
     def _on_canvas_drag_end(self, gesture, offset_x, offset_y):
         cat = self._drag_cat
         if cat:
             cat.dragging = False
+            if not cat.mouse_moved:
+                # No movement → treat as click → toggle chat
+                self._toggle_chat_for(cat)
         self._drag_cat = None
 
     # ── Tick callbacks ───────────────────────────────────────────────────────
