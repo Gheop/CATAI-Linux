@@ -474,18 +474,66 @@ def _x11_set_wm_hints_no_input(xid):
         return False
     try:
         dpy = ctypes.c_void_p(_xdpy)
-        _xlib.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
-        _xlib.XInternAtom.restype = ctypes.c_ulong
-        _xlib.XChangeProperty.argtypes = [
-            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong,
-            ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_ulong), ctypes.c_int]
         wm_hints = _xlib.XInternAtom(dpy, b"WM_HINTS", 0)
-        xa_wm_hints = wm_hints  # WM_HINTS uses its own atom as type
-        # flags=2 (InputHint), input=0 (no input)
         data = (ctypes.c_ulong * 9)(2, 0, 0, 0, 0, 0, 0, 0, 0)
-        _xlib.XChangeProperty(dpy, xid, wm_hints, xa_wm_hints, 32, 0, data, 9)
+        _xlib.XChangeProperty(dpy, xid, wm_hints, wm_hints, 32, 0, data, 9)
         return True
     except Exception:
+        return False
+
+
+def _x11_set_above_skip_taskbar(xid):
+    """Set _NET_WM_STATE_ABOVE + _NET_WM_STATE_SKIP_TASKBAR via X11 client message."""
+    if not (_init_xlib() and _xdpy):
+        return False
+    try:
+        dpy = ctypes.c_void_p(_xdpy)
+
+        # Get atoms
+        wm_state = _xlib.XInternAtom(dpy, b"_NET_WM_STATE", 0)
+        above = _xlib.XInternAtom(dpy, b"_NET_WM_STATE_ABOVE", 0)
+        skip = _xlib.XInternAtom(dpy, b"_NET_WM_STATE_SKIP_TASKBAR", 0)
+
+        # Get root window
+        _xlib.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+        _xlib.XDefaultRootWindow.restype = ctypes.c_ulong
+        root = _xlib.XDefaultRootWindow(dpy)
+
+        # Send client message: _NET_WM_STATE, _NET_WM_STATE_ADD(1), ABOVE
+        class XClientMessageEvent(ctypes.Structure):
+            _fields_ = [
+                ("type", ctypes.c_int), ("serial", ctypes.c_ulong),
+                ("send_event", ctypes.c_int), ("display", ctypes.c_void_p),
+                ("window", ctypes.c_ulong), ("message_type", ctypes.c_ulong),
+                ("format", ctypes.c_int), ("data", ctypes.c_ulong * 5),
+            ]
+
+        _xlib.XSendEvent.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_long,
+            ctypes.POINTER(XClientMessageEvent)]
+        _xlib.XSendEvent.restype = ctypes.c_int
+
+        # SubstructureRedirect | SubstructureNotify
+        mask = 0x00080000 | 0x00100000
+
+        for atom in [above, skip]:
+            ev = XClientMessageEvent()
+            ev.type = 33  # ClientMessage
+            ev.send_event = 1
+            ev.display = dpy
+            ev.window = xid
+            ev.message_type = wm_state
+            ev.format = 32
+            ev.data[0] = 1  # _NET_WM_STATE_ADD
+            ev.data[1] = atom
+            ev.data[2] = 0
+            ev.data[3] = 1  # source: application
+            ev.data[4] = 0
+            _xlib.XSendEvent(dpy, root, 0, mask, ctypes.byref(ev))
+
+        return True
+    except Exception as e:
+        log.debug("Xlib set_above failed: %s", e)
         return False
 
 
@@ -502,8 +550,8 @@ def _apply_xid_hints(window, above=False, no_focus=False, notification=False):
         return
     wid = id(window)
     if above and ("above", wid) not in _applied:
-        # above needs _NET_WM_STATE change via client message — wmctrl is best for this
-        _run_x11(["wmctrl", "-i", "-r", str(xid), "-b", "add,above,skip_taskbar"])
+        if not _x11_set_above_skip_taskbar(xid):
+            _run_x11(["wmctrl", "-i", "-r", str(xid), "-b", "add,above,skip_taskbar"])
         _applied.add(("above", wid))
     if notification and ("notif", wid) not in _applied:
         # Set window type synchronously via Xlib (no delay = no GNOME notification)
