@@ -807,7 +807,9 @@ class ChatBubbleController:
         self._cat_pos = (cat_x, cat_y, cat_w, cat_h)
         bx = int(cat_x + cat_w / 2 - self.bubble_w / 2)
         self.window.set_visible(True)
+        # Reposition twice: immediately + after GTK relayouts (for reopened bubbles with content)
         GLib.idle_add(self._move_above, bx, cat_y, cat_h)
+        GLib.timeout_add(100, self._move_above, bx, cat_y, cat_h)
         if not was_visible:
             self._entry.grab_focus()
 
