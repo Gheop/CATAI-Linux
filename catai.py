@@ -375,37 +375,19 @@ def move_window(window, x, y):
 
 
 _above_pending = []
-_all_windows = []
 _applied = set()
 _no_focus_windows = []
 
-def register_window(window):
-    """Register any app window for NOTIFICATION type (prevents GNOME 'is ready' alerts)."""
-    _all_windows.append(window)
-
 def set_no_focus(window):
-    """Mark window as not accepting focus (for meow bubbles etc.)."""
+    """Mark window as not accepting focus + NOTIFICATION type (meow, cat sprites)."""
     _no_focus_windows.append(window)
 
 def set_always_on_top(window):
-    """Mark window for always-on-top. Applied by _apply_above_all()."""
+    """Mark window for always-on-top + skip-taskbar."""
     _above_pending.append(window)
-    register_window(window)
 
 def _apply_above_all():
     """Apply X11 hints to new windows."""
-    # Set NOTIFICATION type on ALL app windows (prevents GNOME "est prêt" alerts)
-    for w in _all_windows:
-        key = ("type", id(w))
-        if key in _applied:
-            continue
-        xid = _get_xid(w)
-        if xid:
-            subprocess.Popen(
-                ["xprop", "-id", str(xid), "-f", "_NET_WM_WINDOW_TYPE", "32a",
-                 "-set", "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_NOTIFICATION"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            _applied.add(key)
     # Always on top + skip taskbar for overlay windows
     for w in _above_pending:
         key = ("above", id(w))
@@ -417,7 +399,7 @@ def _apply_above_all():
                 ["wmctrl", "-i", "-r", str(xid), "-b", "add,above,skip_taskbar"],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             _applied.add(key)
-    # No-focus hint on cat/meow windows
+    # No-focus + NOTIFICATION type on passive windows (meow, cat sprites)
     for w in _no_focus_windows:
         key = ("nofocus", id(w))
         if key in _applied:
@@ -427,6 +409,10 @@ def _apply_above_all():
             subprocess.Popen(
                 ["xprop", "-id", str(xid), "-f", "WM_HINTS", "32i",
                  "-set", "WM_HINTS", "2, 0, 0, 0, 0, 0, 0, 0, 0"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.Popen(
+                ["xprop", "-id", str(xid), "-f", "_NET_WM_WINDOW_TYPE", "32a",
+                 "-set", "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_NOTIFICATION"],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             _applied.add(key)
     return True
@@ -552,7 +538,10 @@ def create_chat(model):
     """Create the best available chat backend."""
     if model.startswith("claude-") and claude_available():
         return ClaudeChat(model)
-    if claude_available() and not fetch_ollama_models():
+    if not model.startswith("claude-"):
+        return OllamaChat(model)
+    # Claude model requested but unavailable — fallback to Ollama
+    if claude_available():
         return ClaudeChat(CLAUDE_MODEL)
     return OllamaChat(model)
 
