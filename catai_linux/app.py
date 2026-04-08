@@ -627,13 +627,25 @@ def create_chat(model):
         log.debug("Using Claude API (%s)", model)
         return ClaudeChat(model)
     if not model.startswith("claude-") and _ollama_available():
-        log.debug("Using Ollama (%s)", model)
-        return OllamaChat(model)
+        # Verify the model actually exists in Ollama
+        available = fetch_ollama_models()
+        if available and model in available:
+            log.debug("Using Ollama (%s)", model)
+            return OllamaChat(model)
+        elif available:
+            log.debug("Model %s not in Ollama (available: %s), trying Claude", model, available)
+        else:
+            log.debug("Ollama running but no models installed")
     if claude_available():
-        log.debug("Ollama unavailable, falling back to Claude API")
+        log.debug("Using Claude API (fallback)")
         return ClaudeChat(CLAUDE_MODEL)
-    log.warning("No AI backend available (no Claude credentials, no Ollama running)")
-    return OllamaChat(model)  # will fail gracefully with error message
+    if _ollama_available():
+        models = fetch_ollama_models()
+        if models:
+            log.debug("Using Ollama with first available model: %s", models[0])
+            return OllamaChat(models[0])
+    log.warning("No AI backend available")
+    return OllamaChat(model)
 
 # ── CSS Theme ──────────────────────────────────────────────────────────────────
 
