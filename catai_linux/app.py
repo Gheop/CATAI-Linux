@@ -1500,7 +1500,7 @@ class SettingsWindow:
         self.current_scale = scale
         self.current_model = model
         if not self.window:
-            self.window = Gtk.Window()
+            self.window = Gtk.Window(application=self.app)
             self.window.set_title("~ Cat Settings ~")
             set_notification_type(self.window)
             self.window.set_default_size(340, 680)
@@ -2010,7 +2010,7 @@ class CatAIApp(Gtk.Application):
             menu.set_visible(False)
             return
         if not menu:
-            menu = Gtk.Window()
+            menu = Gtk.Window(application=self)
             menu.set_decorated(False)
             menu.set_resizable(False)
             menu.add_css_class("bubble-body")
