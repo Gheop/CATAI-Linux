@@ -84,7 +84,7 @@ class L10n:
         "cats":     {"fr": "MES CHATS", "en": "MY CATS", "es": "MIS GATOS"},
         "name":     {"fr": "Nom :", "en": "Name:", "es": "Nombre:"},
         "size":     {"fr": "TAILLE", "en": "SIZE", "es": "TAMAÑO"},
-        "model":    {"fr": "MODÈLE OLLAMA", "en": "OLLAMA MODEL", "es": "MODELO OLLAMA"},
+        "model":    {"fr": "MODÈLE IA", "en": "AI MODEL", "es": "MODELO IA"},
         "quit":     {"fr": "Quitter", "en": "Quit", "es": "Salir"},
         "settings": {"fr": "Réglages...", "en": "Settings...", "es": "Ajustes..."},
         "talk":     {"fr": "Parle au chat...", "en": "Talk to the cat...", "es": "Habla al gato..."},
