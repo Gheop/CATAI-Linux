@@ -2436,6 +2436,9 @@ class CatAIApp(Gtk.Application):
         t0 = time.monotonic()
         for cat in self.cat_instances:
             cat.render_tick()
+        # Reposition chat entry if following a walking cat
+        if self._active_chat_cat and self._entry_window.get_visible():
+            self._position_chat_entry(self._active_chat_cat)
         # Redraw the canvas
         if self._canvas_area:
             self._canvas_area.queue_draw()
