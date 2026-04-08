@@ -662,6 +662,32 @@ def _get_claude_api_key():
     """Get API key from env var or Claude Code's OAuth token."""
     return os.environ.get("ANTHROPIC_API_KEY") or _read_claude_oauth()
 
+def _find_claude_cli():
+    """Find the claude CLI binary, checking common locations."""
+    for path in [
+        shutil.which("claude"),
+        os.path.expanduser("~/.local/bin/claude"),
+        "/usr/local/bin/claude",
+    ]:
+        if path and os.path.isfile(path):
+            return path
+    return None
+
+def _refresh_claude_token():
+    """Force Claude Code to refresh the OAuth token by calling it."""
+    cli = _find_claude_cli()
+    if not cli:
+        log.debug("Claude CLI not found, cannot refresh token")
+        return False
+    try:
+        log.debug("Refreshing Claude token via %s...", cli)
+        subprocess.run([cli, "-p", "ok", "--output-format", "text"],
+                       capture_output=True, timeout=30)
+        return True
+    except Exception as e:
+        log.debug("Token refresh failed: %s", e)
+        return False
+
 def _read_claude_oauth():
     try:
         if os.path.exists(CLAUDE_CREDS):
@@ -777,7 +803,8 @@ class ClaudeChat(ChatBackend):
                 yield from stream.text_stream
         except Exception as e:
             if "401" in str(e) or "authentication" in str(e).lower():
-                log.warning("Auth failed, refreshing token...")
+                log.warning("Auth failed, refreshing token via Claude CLI...")
+                _refresh_claude_token()
                 new_key = _read_claude_oauth()
                 if new_key:
                     import anthropic
