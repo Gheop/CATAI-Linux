@@ -27,6 +27,10 @@ log = logging.getLogger("catai")
 def _setup_logging():
     level = logging.DEBUG if "--debug" in sys.argv else logging.WARNING
     logging.basicConfig(level=level, format="%(levelname)s: %(message)s")
+    # Silence noisy loggers
+    logging.getLogger("PIL").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.INFO)
 
 import gi
 gi.require_version("Gtk", "4.0")
@@ -852,9 +856,11 @@ class CatInstance:
         self.chat_backend = None
         self.screen_w = 0
         self.screen_h = 0
+        self._app = None
         self._siblings = []
 
     def setup(self, app, meta, cat_dir, dw, dh, model, lang, start_x, screen_w, screen_h):
+        self._app = app
         self.display_w = dw
         self.display_h = dh
         self.screen_w = screen_w
@@ -1033,19 +1039,19 @@ class CatInstance:
     def _on_click(self, gesture, n_press, x, y):
         if self.mouse_moved:
             return
+        if n_press == 2:
+            # Double-click → open settings
+            if self._app:
+                self._app._open_settings()
+            return
         for cat in self._siblings:
             if cat is not self:
                 cat.chat_bubble.hide()
         self._toggle_chat()
 
     def _on_right_click(self, gesture, n_press, x, y):
-        menu = Gio.Menu()
-        menu.append(L10n.s("settings"), "app.settings")
-        menu.append(L10n.s("quit"), "app.quit")
-        popover = Gtk.PopoverMenu.new_from_model(menu)
-        popover.set_parent(self.picture)
-        popover.connect("closed", lambda p: p.unparent())
-        popover.popup()
+        if self._app:
+            self._app._open_settings()
 
     def _on_drag_begin(self, gesture, start_x, start_y):
         self.dragging = True
