@@ -50,19 +50,20 @@ Claude is auto-detected from Claude Code's credentials (`~/.claude/.credentials.
 - Linux with X11 or XWayland (GNOME, KDE, etc.)
 - Python 3.10+
 
-## Install (Fedora)
+## Install
 
 ```bash
+# System dependencies (Fedora)
 sudo dnf install python3-gobject python3-pillow xdotool wmctrl
-pip install httpx anthropic
+
+# Install from PyPI
+pip install catai-linux
 ```
 
 ## Run
 
 ```bash
-python3 catai.py
-# or
-make run
+catai
 ```
 
 ## Setup Ollama (optional)
@@ -111,15 +112,14 @@ CI runs ruff on every push/PR via GitHub Actions.
 
 ```
 .
-├── catai.py              # Entire application (single file)
-├── Makefile              # make run / lint / fix
-├── ruff.toml             # Linter config
-├── build.sh              # Launch script with dependency check
+├── catai_linux/          # Python package
+│   ├── app.py            # Main application
+│   ├── __main__.py       # Entry point (python -m catai_linux)
+│   └── cute_orange_cat/  # Sprite assets (68x68 PNG)
+├── pyproject.toml        # Package config + linter config
+├── Makefile              # make run / lint / fix / build
 ├── setup-ollama.sh       # Ollama installer
-└── cute_orange_cat/      # Sprite assets (68x68 PNG)
-    ├── metadata.json     # Animation definitions
-    ├── rotations/        # 8 direction sprites
-    └── animations/       # 5 animations x 8 directions
+└── .github/workflows/    # CI: lint + PyPI publish
 ```
 
 ## Credits

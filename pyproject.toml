@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "catai-linux"
+version = "0.1.0"
+description = "Virtual desktop pet cats for Linux — pixel art cats that roam your screen and chat via AI"
+readme = "PYPI_README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{name = "Gheop"}]
+keywords = ["desktop-pet", "cat", "pixel-art", "linux", "gtk4", "claude", "ollama", "ai-chat", "wayland"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: X11 Applications :: GTK",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Games/Entertainment",
+]
+
+dependencies = [
+    "PyGObject",
+    "Pillow",
+    "httpx",
+    "anthropic",
+]
+
+[project.optional-dependencies]
+dev = ["ruff", "build"]
+
+[project.urls]
+Homepage = "https://github.com/Gheop/CATAI-Linux"
+Repository = "https://github.com/Gheop/CATAI-Linux"
+Issues = "https://github.com/Gheop/CATAI-Linux/issues"
+
+[project.scripts]
+catai = "catai_linux.app:main"
+
+[tool.setuptools.packages.find]
+include = ["catai_linux*"]
+
+[tool.setuptools.package-data]
+catai_linux = ["cute_orange_cat/**/*.png", "cute_orange_cat/**/*.json"]
+
+[tool.ruff]
+line-length = 140
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "UP"]
+ignore = ["E402", "E501", "E701", "E702", "E741", "UP015"]

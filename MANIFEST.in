@@ -1,0 +1,3 @@
+include PYPI_README.md
+include LICENSE
+recursive-include catai_linux/cute_orange_cat *.png *.json

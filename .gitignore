@@ -1,5 +1,10 @@
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
+dist/
+build/
 upstream-catai-macos/
 .claude/
+.ruff_cache/
+.coverage

@@ -225,13 +225,15 @@ def is_autostart():
 def set_autostart(enabled):
     if enabled:
         os.makedirs(AUTOSTART_DIR, exist_ok=True)
-        script = os.path.abspath(__file__)
+        # Use 'catai' command if available (pip install), else python3 + script
+        catai_cmd = shutil.which("catai")
+        exec_cmd = catai_cmd if catai_cmd else f'python3 "{os.path.abspath(__file__)}"'
         with open(AUTOSTART_FILE, "w") as f:
             f.write(f"""[Desktop Entry]
 Type=Application
 Name=CATAI
 Comment=Virtual desktop pet cats
-Exec=python3 "{script}"
+Exec={exec_cmd}
 Terminal=false
 X-GNOME-Autostart-enabled=true
 """)
@@ -1640,10 +1642,11 @@ class CatAIApp(Gtk.Application):
         apply_css()
         self._check_deps()
 
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        self.cat_dir = os.path.join(script_dir, "cute_orange_cat")
+        # Assets are inside the package directory
+        pkg_dir = os.path.dirname(os.path.abspath(__file__))
+        self.cat_dir = os.path.join(pkg_dir, "cute_orange_cat")
         if not os.path.isdir(self.cat_dir):
-            print(f"ERROR: cute_orange_cat/ not found in {script_dir}")
+            print(f"ERROR: cute_orange_cat/ not found in {pkg_dir}")
             sys.exit(1)
 
         self.meta = load_metadata(self.cat_dir)
@@ -1878,7 +1881,10 @@ class CatAIApp(Gtk.Application):
 
 # ── Entry Point ────────────────────────────────────────────────────────────────
 
-if __name__ == "__main__":
+def main():
     gtk_args = [a for a in sys.argv if a != "--debug"]
     app = CatAIApp()
     app.run(gtk_args)
+
+if __name__ == "__main__":
+    main()
