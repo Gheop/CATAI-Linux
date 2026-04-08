@@ -395,18 +395,46 @@ _no_focus_windows = []
 
 _notification_windows = []
 
+def _apply_xid_hints(window, above=False, no_focus=False, notification=False):
+    """Apply X11 hints immediately if XID is available, otherwise defer."""
+    xid = _get_xid(window)
+    if not xid:
+        return  # will be caught by _apply_above_all timer
+    if above and ("above", id(window)) not in _applied:
+        subprocess.Popen(["wmctrl", "-i", "-r", str(xid), "-b", "add,above,skip_taskbar"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        _applied.add(("above", id(window)))
+    if notification and ("notif", id(window)) not in _applied:
+        subprocess.Popen(["xprop", "-id", str(xid), "-f", "_NET_WM_WINDOW_TYPE", "32a",
+                         "-set", "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_NOTIFICATION"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        _applied.add(("notif", id(window)))
+    if no_focus and ("nofocus", id(window)) not in _applied:
+        subprocess.Popen(["xprop", "-id", str(xid), "-f", "WM_HINTS", "32i",
+                         "-set", "WM_HINTS", "2, 0, 0, 0, 0, 0, 0, 0, 0"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        _applied.add(("nofocus", id(window)))
+
 def set_no_focus(window):
-    """Mark window as not accepting focus + NOTIFICATION type (meow, cat sprites)."""
+    """Mark window as not accepting focus + NOTIFICATION type."""
     _no_focus_windows.append(window)
     _notification_windows.append(window)
+    _above_pending.append(window)
+    # Apply immediately on realize
+    window.connect("realize", lambda w: GLib.idle_add(
+        lambda: _apply_xid_hints(w, above=True, no_focus=True, notification=True) or False))
 
 def set_notification_type(window):
     """Mark window as NOTIFICATION type only (prevents GNOME alerts but keeps focus)."""
     _notification_windows.append(window)
+    window.connect("realize", lambda w: GLib.idle_add(
+        lambda: _apply_xid_hints(w, notification=True) or False))
 
 def set_always_on_top(window):
     """Mark window for always-on-top + skip-taskbar."""
     _above_pending.append(window)
+    window.connect("realize", lambda w: GLib.idle_add(
+        lambda: _apply_xid_hints(w, above=True) or False))
 
 def _apply_above_all():
     """Apply X11 hints to new windows."""
@@ -829,8 +857,7 @@ class MeowBubble:
         self._label.add_css_class("pixel-label-small")
         overlay.add_overlay(self._label)
         self.window.set_child(overlay)
-        set_always_on_top(self.window)
-        set_no_focus(self.window)
+        set_no_focus(self.window)  # includes above + notification + no-focus
 
     def show(self, text, cat_x, cat_y, cat_w, cat_h):
         if self._timer_id:
