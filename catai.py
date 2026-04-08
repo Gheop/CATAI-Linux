@@ -1636,5 +1636,6 @@ class CatAIApp(Gtk.Application):
 # ── Entry Point ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    gtk_args = [a for a in sys.argv if a != "--debug"]
     app = CatAIApp()
-    app.run(sys.argv)
+    app.run(gtk_args)
