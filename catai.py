@@ -900,8 +900,16 @@ class MeowBubble:
         bx = max(0, int(cat_x + cat_w / 2 - text_w / 2))
         by = max(0, int(cat_y - 40))
         self.window.set_default_size(text_w, 32)
+        # Remember currently focused window, show meow, restore focus
+        try:
+            focused = subprocess.run(["xdotool", "getactivewindow"],
+                                     capture_output=True, text=True, timeout=1).stdout.strip()
+        except Exception:
+            focused = None
         self.window.set_visible(True)
         GLib.idle_add(lambda: move_window(self.window, bx, by) or False)
+        if focused:
+            GLib.idle_add(lambda: _run_x11(["xdotool", "windowactivate", focused]) or False)
         self._timer_id = GLib.timeout_add(random.randint(2000, 3000), self._auto_hide)
 
     def _auto_hide(self):
