@@ -17,6 +17,7 @@ import logging
 import random
 import shutil
 import subprocess
+import time
 import sys
 import threading
 import uuid
@@ -879,9 +880,6 @@ def create_chat(model):
 # ── CSS Theme ──────────────────────────────────────────────────────────────────
 
 CSS = b"""
-.cat-window {
-    background: transparent;
-}
 .canvas-window {
     background: transparent;
 }
@@ -1065,8 +1063,6 @@ class ChatBubbleController:
         self.window.set_resizable(False)
         self.response_text = L10n.s("hi")
         self._build()
-        set_always_on_top(self.window)
-        set_notification_type(self.window)
 
     def _build(self):
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -1819,8 +1815,6 @@ class CatAIApp(Gtk.Application):
         self._timers = []
         # Drag state for canvas
         self._drag_cat = None
-        self._drag_offset_x = 0.0
-        self._drag_offset_y = 0.0
 
     def do_activate(self):
         _setup_logging()
@@ -1963,6 +1957,8 @@ class CatAIApp(Gtk.Application):
         for cat in self.cat_instances:
             surface, _data_ref = cat._current_surface()
             ctx.save()
+            ctx.rectangle(cat.x, cat.y, cat.display_w, cat.display_h)
+            ctx.clip()
             ctx.set_source_surface(surface, cat.x, cat.y)
             ctx.paint()
             ctx.restore()
@@ -2004,7 +2000,6 @@ class CatAIApp(Gtk.Application):
         if self.chat_bubble._active_cat is cat and self.chat_bubble.is_visible:
             self.chat_bubble.hide()
         else:
-            self.chat_bubble.hide()
             self.chat_bubble.show_for_cat(cat)
 
     def _create_context_menu(self):
@@ -2064,8 +2059,6 @@ class CatAIApp(Gtk.Application):
         cat.mouse_moved = False
         cat.drag_win_x = cat.x
         cat.drag_win_y = cat.y
-        self._drag_offset_x = start_x - cat.x
-        self._drag_offset_y = start_y - cat.y
 
     def _on_canvas_drag_update(self, gesture, offset_x, offset_y):
         cat = self._drag_cat
@@ -2152,7 +2145,6 @@ class CatAIApp(Gtk.Application):
         })
 
     def _render_tick(self):
-        import time
         t0 = time.monotonic()
         for cat in self.cat_instances:
             cat.render_tick()
