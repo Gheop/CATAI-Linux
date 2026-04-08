@@ -2058,7 +2058,7 @@ class CatAIApp(Gtk.Application):
             cat = self._active_chat_cat
             if cat:
                 cat.chat_visible = False
-                self._chat_entry.set_visible(False)
+                self._entry_window.set_visible(False)
                 self._active_chat_cat = None
                 return "OK chat closed"
             return "ERR: no active chat"
@@ -2102,26 +2102,25 @@ class CatAIApp(Gtk.Application):
         win.set_default_size(self.screen_w, self.screen_h)
         win.set_resizable(False)
 
-        overlay = Gtk.Overlay()
-
         area = Gtk.DrawingArea()
         area.set_content_width(self.screen_w)
         area.set_content_height(self.screen_h)
         area.set_draw_func(self._canvas_draw)
-        overlay.set_child(area)
+        win.set_child(area)
 
-        # Chat input entry (floating, positioned via margins)
+        # Chat input entry in its own tiny window (not in canvas — overlay blocks passthrough)
+        self._entry_window = Gtk.Window()
+        self._entry_window.set_decorated(False)
+        self._entry_window.set_resizable(False)
+        self._entry_window.set_default_size(260, 30)
+        set_notification_type(self._entry_window)
+        set_always_on_top(self._entry_window)
         self._chat_entry = Gtk.Entry()
         self._chat_entry.set_placeholder_text(L10n.s("talk"))
         self._chat_entry.add_css_class("pixel-entry")
-        self._chat_entry.set_visible(False)
-        self._chat_entry.set_halign(Gtk.Align.START)
-        self._chat_entry.set_valign(Gtk.Align.START)
         self._chat_entry.set_size_request(260, -1)
         self._chat_entry.connect("activate", self._on_chat_entry_activate)
-        overlay.add_overlay(self._chat_entry)
-
-        win.set_child(overlay)
+        self._entry_window.set_child(self._chat_entry)
 
         # Gesture controllers on the canvas
         # Right-click for context menu
@@ -2142,31 +2141,31 @@ class CatAIApp(Gtk.Application):
 
         set_always_on_top(win)
 
-        # Apply X11 hints and XShape as soon as window is realized
-        def _on_realize(w):
-            log.debug("Canvas realize callback fired")
-            _apply_xid_hints(w, above=True, notification=True)
+        def _set_empty_input(w):
+            """Set empty input region so clicks pass through everywhere."""
+            surface = w.get_surface()
+            if surface:
+                import cairo as _cairo
+                surface.set_input_region(_cairo.Region())
             xid = _get_xid(w)
             if xid:
                 self._canvas_xid = xid
                 _update_input_shape(xid, [])
                 flush_x11()
-                log.debug("Canvas XID=%d, XShape input passthrough active", xid)
-            else:
-                log.debug("Canvas realize: no XID yet")
+                log.debug("Canvas passthrough active (XID=%d)", xid)
+
+        # Apply as soon as realized
+        def _on_realize(w):
+            _apply_xid_hints(w, above=True, notification=True)
+            _set_empty_input(w)
         win.connect("realize", _on_realize)
 
         win.set_visible(True)
 
-        # Also try to get XID after visible (fallback)
+        # Fallback: retry after visible
         def _late_xid_check():
             if not self._canvas_xid:
-                xid = _get_xid(win)
-                if xid:
-                    self._canvas_xid = xid
-                    _update_input_shape(xid, [])
-                    flush_x11()
-                    log.debug("Canvas XID=%d (late init)", xid)
+                _set_empty_input(win)
             return False
         GLib.timeout_add(500, _late_xid_check)
         GLib.idle_add(lambda: move_window(win, 0, 0) or False)
@@ -2232,8 +2231,7 @@ class CatAIApp(Gtk.Application):
         if self._menu_visible:
             rects.append((self._menu_x, self._menu_y, 120, 50))
         # Include chat entry area
-        if self._chat_entry and self._chat_entry.get_visible():
-            rects.append((self._chat_entry.get_margin_start(), self._chat_entry.get_margin_top(), 260, 30))
+        # Entry window is separate — not part of canvas input shape
         # XShape for X11 level
         _update_input_shape(self._canvas_xid, rects)
 
@@ -2261,7 +2259,7 @@ class CatAIApp(Gtk.Application):
         """Toggle chat bubble for a specific cat."""
         if cat.chat_visible:
             cat.chat_visible = False
-            self._chat_entry.set_visible(False)
+            self._entry_window.set_visible(False)
             self._active_chat_cat = None
         else:
             # Close other chats
@@ -2272,11 +2270,11 @@ class CatAIApp(Gtk.Application):
                 cat.chat_response = L10n.s("hi")
             self._active_chat_cat = cat
             self._position_chat_entry(cat)
-            self._chat_entry.set_visible(True)
+            self._entry_window.set_visible(True)
             self._chat_entry.grab_focus()
 
     def _position_chat_entry(self, cat):
-        """Position the chat entry below the chat bubble, above the cat."""
+        """Position the chat entry window below the chat bubble, above the cat."""
         bw = 280
         words = cat.chat_response.split() if cat.chat_response else []
         wrapped_lines = max(1, min(8, len(words) // 5 + 1))
@@ -2287,8 +2285,7 @@ class CatAIApp(Gtk.Application):
             by = cat.y + cat.display_h + 10
         entry_x = int(bx + 12)
         entry_y = int(by + bh - 35)
-        self._chat_entry.set_margin_start(max(0, entry_x))
-        self._chat_entry.set_margin_top(max(0, entry_y))
+        move_window(self._entry_window, max(0, entry_x), max(0, entry_y))
 
     def _on_chat_entry_activate(self, entry):
         """User pressed Enter in the chat entry."""
@@ -2478,7 +2475,7 @@ class CatAIApp(Gtk.Application):
         # If chat bubble is showing for this cat, hide it
         if self._active_chat_cat is cat:
             cat.chat_visible = False
-            self._chat_entry.set_visible(False)
+            self._entry_window.set_visible(False)
             self._active_chat_cat = None
         cat.cleanup()
         self.cat_instances.pop(idx)
