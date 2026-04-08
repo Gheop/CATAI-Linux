@@ -1058,7 +1058,6 @@ class ChatBubbleController:
         self.window = Gtk.Window()
         self.window.set_decorated(False)
         self.window.add_css_class("bubble-window")
-        set_notification_type(self.window)
         set_always_on_top(self.window)
         self.window.set_default_size(self.bubble_w, -1)
         self.window.set_resizable(False)
@@ -1926,7 +1925,6 @@ class CatAIApp(Gtk.Application):
         area.add_controller(drag)
 
         set_always_on_top(win)
-        set_notification_type(win)
 
         # We need the XID once realized, for XShape input passthrough
         def _on_realize(w):
@@ -2010,7 +2008,6 @@ class CatAIApp(Gtk.Application):
         menu.set_resizable(False)
         menu.add_css_class("bubble-body")
         set_always_on_top(menu)
-        set_notification_type(menu)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         box.set_margin_top(8)
