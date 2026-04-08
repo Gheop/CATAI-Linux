@@ -29,7 +29,8 @@ def _setup_logging():
     # Silence noisy loggers
     logging.getLogger("PIL").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("httpx").setLevel(logging.INFO)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("anthropic").setLevel(logging.WARNING)
 
 import gi
 gi.require_version("Gtk", "4.0")
@@ -1628,8 +1629,13 @@ class CatAIApp(Gtk.Application):
         })
 
     def _render_tick(self):
+        import time
+        t0 = time.monotonic()
         for cat in self.cat_instances:
             cat.render_tick()
+        dt = (time.monotonic() - t0) * 1000
+        if dt > 50:  # log if render takes more than 50ms
+            log.warning("Slow render tick: %.0fms (%d cats)", dt, len(self.cat_instances))
         return True
 
     def _behavior_tick(self):
