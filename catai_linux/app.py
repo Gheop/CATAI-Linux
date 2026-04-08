@@ -2112,7 +2112,6 @@ class CatAIApp(Gtk.Application):
         self._entry_window.set_decorated(False)
         self._entry_window.set_resizable(False)
         self._entry_window.set_default_size(260, 30)
-        set_always_on_top(self._entry_window)
         self._chat_entry = Gtk.Entry()
         self._chat_entry.set_placeholder_text(L10n.s("talk"))
         self._chat_entry.add_css_class("pixel-entry")
@@ -2273,20 +2272,43 @@ class CatAIApp(Gtk.Application):
             self._active_chat_cat = cat
             self._position_chat_entry(cat)
             self._entry_window.set_visible(True)
+            self._entry_window.present()
             self._chat_entry.grab_focus()
 
     def _position_chat_entry(self, cat):
-        """Position the chat entry window below the chat bubble, above the cat."""
+        """Position the entry inside the chat bubble (same layout as _draw_chat_bubble)."""
+        # Replicate exact same sizing as _draw_chat_bubble
+        text = cat.chat_response or ""
+        max_chars = 35
+        words = text.split()
+        lines = []
+        line = ""
+        for w in words:
+            if len(line) + len(w) + 1 > max_chars:
+                if line:
+                    lines.append(line)
+                line = w
+            else:
+                line = f"{line} {w}" if line else w
+        if line:
+            lines.append(line)
+        if not lines:
+            lines = [""]
+        if len(lines) > 8:
+            lines = lines[-8:]
+
+        line_h = 15  # font_size(11) + 4
+        pad = 12
         bw = 280
-        words = cat.chat_response.split() if cat.chat_response else []
-        wrapped_lines = max(1, min(8, len(words) // 5 + 1))
-        bh = 24 + wrapped_lines * 15 + 30
+        bh = pad * 2 + len(lines) * line_h + 30
         bx = cat.x + cat.display_w / 2 - bw / 2
         by = cat.y - bh - 15
-        if by < 30:
+        if by < 0:
             by = cat.y + cat.display_h + 10
-        entry_x = int(bx + 12)
-        entry_y = int(by + bh - 35)
+
+        # Entry sits in the 30px space at bottom of bubble
+        entry_x = int(bx + pad)
+        entry_y = int(by + bh - 30)
         move_window(self._entry_window, max(0, entry_x), max(0, entry_y))
 
     def _on_chat_entry_activate(self, entry):
