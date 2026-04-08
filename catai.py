@@ -178,10 +178,19 @@ def load_config():
             log.warning("Corrupted config, using defaults: %s", e)
     return {}
 
+def _atomic_write(path, data):
+    """Write JSON atomically (temp + rename) to avoid corruption."""
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, path)
+    except OSError as e:
+        log.warning("Failed to save %s: %s", path, e)
+
 def save_config(cfg):
     _ensure_config_dir()
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
+    _atomic_write(CONFIG_FILE, cfg)
 
 def load_memory(cat_id):
     path = os.path.join(CONFIG_DIR, f"mem_{cat_id}.json")
@@ -198,9 +207,7 @@ def save_memory(cat_id, msgs):
     s = msgs[:]
     if len(s) > MEM_MAX * 2 + 1:
         s = [s[0]] + s[-(MEM_MAX * 2):]
-    path = os.path.join(CONFIG_DIR, f"mem_{cat_id}.json")
-    with open(path, "w") as f:
-        json.dump(s, f, ensure_ascii=False)
+    _atomic_write(os.path.join(CONFIG_DIR, f"mem_{cat_id}.json"), s)
 
 def delete_memory(cat_id):
     path = os.path.join(CONFIG_DIR, f"mem_{cat_id}.json")
@@ -509,11 +516,13 @@ class ChatBackend:
         self.messages = []
         self.is_streaming = False
         self._cancel = False
+        self._lock = threading.Lock()
 
     def send(self, text, on_token, on_done, on_error=None):
-        self.messages.append({"role": "user", "content": text})
-        if len(self.messages) > MEM_MAX * 2 + 1:
-            self.messages = [self.messages[0]] + self.messages[-(MEM_MAX * 2):]
+        with self._lock:
+            self.messages.append({"role": "user", "content": text})
+            if len(self.messages) > MEM_MAX * 2 + 1:
+                self.messages = [self.messages[0]] + self.messages[-(MEM_MAX * 2):]
         self.is_streaming = True
         self._cancel = False
 
@@ -530,8 +539,9 @@ class ChatBackend:
                     log.warning("Chat error: %s", e)
                     GLib.idle_add(on_error, L10n.s("err"))
             finally:
-                if full:
-                    self.messages.append({"role": "assistant", "content": full})
+                with self._lock:
+                    if full:
+                        self.messages.append({"role": "assistant", "content": full})
                 self.is_streaming = False
                 GLib.idle_add(on_done)
 
@@ -1608,6 +1618,7 @@ class CatAIApp(Gtk.Application):
         self.screen_h = 1080
         self.selected_model = ""
         self.settings_ctrl = None
+        self._timers = []
 
     def do_activate(self):
         _setup_logging()
@@ -1662,9 +1673,24 @@ class CatAIApp(Gtk.Application):
             action.connect("activate", cb)
             self.add_action(action)
 
-        GLib.timeout_add(RENDER_MS, self._render_tick)
-        GLib.timeout_add(BEHAVIOR_MS, self._behavior_tick)
-        GLib.timeout_add(2000, _apply_above_all)
+        self._timers = [
+            GLib.timeout_add(RENDER_MS, self._render_tick),
+            GLib.timeout_add(BEHAVIOR_MS, self._behavior_tick),
+            GLib.timeout_add(2000, _apply_above_all),
+        ]
+
+    def do_shutdown(self):
+        """Clean shutdown: stop timers, cleanup cats, close windows."""
+        for tid in self._timers:
+            GLib.source_remove(tid)
+        self._timers.clear()
+        for cat in self.cat_instances:
+            cat.cleanup()
+        self.cat_instances.clear()
+        if self.settings_ctrl and self.settings_ctrl.window:
+            self.settings_ctrl._stop_timers()
+            self.settings_ctrl.window.set_visible(False)
+        Gtk.Application.do_shutdown(self)
 
     def _check_deps(self):
         """Verify required external tools are available."""
