@@ -93,6 +93,7 @@ class L10n:
         "loading":  {"fr": "Chargement...", "en": "Loading...", "es": "Cargando..."},
         "no_ollama": {"fr": "(Ollama indisponible)", "en": "(Ollama unavailable)", "es": "(Ollama no disponible)"},
         "err":      {"fr": "Mrrp... pas de connexion", "en": "Mrrp... no connection", "es": "Mrrp... sin conexión"},
+        "err_auth": {"fr": "Mrrp... token expiré, relance 'claude' pour renouveler", "en": "Mrrp... token expired, run 'claude' to renew", "es": "Mrrp... token expirado, ejecuta 'claude' para renovar"},
         "lang_label": {"fr": "LANGUE", "en": "LANGUAGE", "es": "IDIOMA"},
         "autostart": {"fr": "Lancer au démarrage", "en": "Start at login", "es": "Iniciar al arrancar"},
     }
@@ -587,8 +588,12 @@ class ChatBackend:
                     GLib.idle_add(on_token, chunk)
             except Exception as e:
                 if on_error and not full:
-                    log.warning("Chat error: %s", e)
-                    GLib.idle_add(on_error, L10n.s("err"))
+                    err_str = str(e)
+                    log.warning("Chat error: %s", err_str)
+                    if "401" in err_str or "authentication" in err_str.lower() or "token" in err_str.lower():
+                        GLib.idle_add(on_error, L10n.s("err_auth"))
+                    else:
+                        GLib.idle_add(on_error, L10n.s("err"))
             finally:
                 with self._lock:
                     if full:
@@ -630,11 +635,32 @@ class ClaudeChat(ChatBackend):
                 system_prompt = msg["content"]
             else:
                 api_messages.append(msg)
-        with self.client.messages.stream(
-            model=self.model, max_tokens=256,
-            system=system_prompt, messages=api_messages,
-        ) as stream:
-            yield from stream.text_stream
+        try:
+            with self.client.messages.stream(
+                model=self.model, max_tokens=256,
+                system=system_prompt, messages=api_messages,
+            ) as stream:
+                yield from stream.text_stream
+        except Exception as e:
+            if "401" in str(e) or "authentication" in str(e).lower():
+                # Try refreshing the token
+                log.warning("Auth failed, refreshing token...")
+                new_key = _read_claude_oauth()
+                if new_key:
+                    import anthropic
+                    global _anthropic_client
+                    _anthropic_client = anthropic.Anthropic(api_key=new_key)
+                    self.client = _anthropic_client
+                    # Retry once
+                    with self.client.messages.stream(
+                        model=self.model, max_tokens=256,
+                        system=system_prompt, messages=api_messages,
+                    ) as stream:
+                        yield from stream.text_stream
+                else:
+                    raise ValueError(L10n.s("err_auth"))
+            else:
+                raise
 
 
 class OllamaChat(ChatBackend):
