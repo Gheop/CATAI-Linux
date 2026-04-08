@@ -1976,6 +1976,123 @@ class CatAIApp(Gtk.Application):
             GLib.timeout_add(30000, self._gc_collect),
         ]
 
+        # Test socket for E2E tests (--test-socket flag)
+        if "--test-socket" in sys.argv:
+            self._start_test_socket()
+
+    # ── Test socket for E2E tests ─────────────────────────────────────────
+
+    SOCK_PATH = "/tmp/catai_test.sock"
+
+    def _start_test_socket(self):
+        """Start a Unix socket for E2E test commands."""
+        import socket as sock_mod
+        if os.path.exists(self.SOCK_PATH):
+            os.remove(self.SOCK_PATH)
+        self._test_sock = sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM)
+        self._test_sock.setblocking(False)
+        self._test_sock.bind(self.SOCK_PATH)
+        self._test_sock.listen(1)
+        GLib.io_add_watch(self._test_sock.fileno(), GLib.IOCondition.IN, self._on_test_connection)
+        log.debug("Test socket listening on %s", self.SOCK_PATH)
+
+    def _on_test_connection(self, fd, condition):
+        conn, _ = self._test_sock.accept()
+        conn.setblocking(True)
+        data = conn.recv(4096).decode().strip()
+        response = self._handle_test_cmd(data)
+        conn.sendall((response + "\n").encode())
+        conn.close()
+        return True
+
+    def _handle_test_cmd(self, cmd):
+        """Handle a test command. Returns response string."""
+        parts = cmd.split()
+        if not parts:
+            return "ERR: empty command"
+        action = parts[0]
+
+        if action == "status":
+            return f"OK cats={len(self.cat_instances)} canvas_xid={self._canvas_xid}"
+
+        elif action == "cat_positions":
+            positions = [f"{c.config['color_id']}:{c.x:.0f},{c.y:.0f}" for c in self.cat_instances]
+            return "OK " + " ".join(positions)
+
+        elif action == "click_cat":
+            idx = int(parts[1]) if len(parts) > 1 else 0
+            if 0 <= idx < len(self.cat_instances):
+                self._toggle_chat_for(self.cat_instances[idx])
+                return f"OK toggled chat for cat {idx}"
+            return "ERR: invalid cat index"
+
+        elif action == "right_click_cat":
+            idx = int(parts[1]) if len(parts) > 1 else 0
+            if 0 <= idx < len(self.cat_instances):
+                cat = self.cat_instances[idx]
+                self._menu_visible = True
+                self._menu_x = int(cat.x + cat.display_w)
+                self._menu_y = int(cat.y)
+                return "OK menu shown"
+            return "ERR: invalid cat index"
+
+        elif action == "click_menu_settings":
+            self._menu_visible = False
+            self._open_settings()
+            return "OK settings opened"
+
+        elif action == "click_menu_quit":
+            self._menu_visible = False
+            GLib.timeout_add(100, lambda: self.quit() or False)
+            return "OK quitting"
+
+        elif action == "type_chat":
+            text = " ".join(parts[1:]) if len(parts) > 1 else "coucou"
+            cat = self._active_chat_cat
+            if cat:
+                cat.send_chat(text)
+                return f"OK sent: {text}"
+            return "ERR: no active chat"
+
+        elif action == "close_chat":
+            cat = self._active_chat_cat
+            if cat:
+                cat.chat_visible = False
+                self._chat_entry.set_visible(False)
+                self._active_chat_cat = None
+                return "OK chat closed"
+            return "ERR: no active chat"
+
+        elif action == "drag_cat":
+            idx = int(parts[1]) if len(parts) > 1 else 0
+            dx = int(parts[2]) if len(parts) > 2 else 100
+            dy = int(parts[3]) if len(parts) > 3 else 0
+            if 0 <= idx < len(self.cat_instances):
+                cat = self.cat_instances[idx]
+                cat.x += dx
+                cat.y += dy
+                return f"OK cat {idx} moved to {cat.x:.0f},{cat.y:.0f}"
+            return "ERR: invalid cat index"
+
+        elif action == "close_settings":
+            if self.settings_ctrl and self.settings_ctrl.window:
+                self.settings_ctrl._on_close()
+                return "OK settings closed"
+            return "ERR: settings not open"
+
+        elif action == "get_chat_response":
+            cat = self._active_chat_cat
+            if cat:
+                return f"OK {cat.chat_response}"
+            return "ERR: no active chat"
+
+        elif action == "screenshot":
+            if self._canvas_area:
+                self._canvas_area.queue_draw()
+            return "OK redraw queued"
+
+        return f"ERR: unknown command '{action}'"
+
     def _create_canvas(self):
         """Create the single fullscreen transparent overlay window."""
         win = Gtk.Window(application=self)
@@ -2027,6 +2144,7 @@ class CatAIApp(Gtk.Application):
 
         # Apply X11 hints and XShape as soon as window is realized
         def _on_realize(w):
+            log.debug("Canvas realize callback fired")
             _apply_xid_hints(w, above=True, notification=True)
             xid = _get_xid(w)
             if xid:
@@ -2034,9 +2152,23 @@ class CatAIApp(Gtk.Application):
                 _update_input_shape(xid, [])
                 flush_x11()
                 log.debug("Canvas XID=%d, XShape input passthrough active", xid)
+            else:
+                log.debug("Canvas realize: no XID yet")
         win.connect("realize", _on_realize)
 
         win.set_visible(True)
+
+        # Also try to get XID after visible (fallback)
+        def _late_xid_check():
+            if not self._canvas_xid:
+                xid = _get_xid(win)
+                if xid:
+                    self._canvas_xid = xid
+                    _update_input_shape(xid, [])
+                    flush_x11()
+                    log.debug("Canvas XID=%d (late init)", xid)
+            return False
+        GLib.timeout_add(500, _late_xid_check)
         GLib.idle_add(lambda: move_window(win, 0, 0) or False)
 
         self._canvas_window = win
@@ -2102,7 +2234,18 @@ class CatAIApp(Gtk.Application):
         # Include chat entry area
         if self._chat_entry and self._chat_entry.get_visible():
             rects.append((self._chat_entry.get_margin_start(), self._chat_entry.get_margin_top(), 260, 30))
+        # XShape for X11 level
         _update_input_shape(self._canvas_xid, rects)
+
+        # GDK surface input region (GTK4 level — needed for GTK to pass events through)
+        if self._canvas_window:
+            surface = self._canvas_window.get_surface()
+            if surface:
+                import cairo
+                region = cairo.Region()
+                for rx, ry, rw, rh in rects:
+                    region.union(cairo.RectangleInt(int(rx), int(ry), max(1, int(rw)), max(1, int(rh))))
+                surface.set_input_region(region)
 
     def _find_cat_at(self, x, y):
         """Find the topmost cat at position (x, y). Returns CatInstance or None."""
@@ -2440,7 +2583,7 @@ class CatAIApp(Gtk.Application):
 # ── Entry Point ────────────────────────────────────────────────────────────────
 
 def main():
-    gtk_args = [a for a in sys.argv if a != "--debug"]
+    gtk_args = [a for a in sys.argv if a not in ("--debug", "--test-socket")]
     app = CatAIApp()
     app.run(gtk_args)
 
