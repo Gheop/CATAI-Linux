@@ -1069,7 +1069,7 @@ def _draw_chat_bubble(ctx, text, cat_x, cat_y, cat_w, cat_h):
     line_h = font_size + 4
     pad = 12
     bw = 280
-    bh = pad * 2 + len(lines) * line_h + 34  # 30 entry + 4 padding
+    bh = pad * 2 + len(lines) * line_h + 42  # 30 entry + 12 padding
     bx = cat_x + cat_w / 2 - bw / 2
     by = cat_y - bh - 15
     if by < 0:
@@ -1584,8 +1584,9 @@ class SettingsWindow:
         self.current_model = model
         if not self.window:
             self.window = Gtk.Window()
-            self.window.set_hide_on_close(True)  # keep alive when closed
+            self.window.set_hide_on_close(True)
             self.window.set_title("~ Cat Settings ~")
+            set_notification_type(self.window)  # prevent GNOME "is ready" alert
             set_always_on_top(self.window)
             self.window.set_default_size(340, 680)
             self.window.set_resizable(False)
@@ -2316,7 +2317,7 @@ class CatAIApp(Gtk.Application):
         line_h = 15  # font_size(11) + 4
         pad = 12
         bw = 280
-        bh = pad * 2 + len(lines) * line_h + 34
+        bh = pad * 2 + len(lines) * line_h + 42
         bx = cat.x + cat.display_w / 2 - bw / 2
         by = cat.y - bh - 15
         if by < 0:
@@ -2324,7 +2325,7 @@ class CatAIApp(Gtk.Application):
 
         # Entry sits in the 30px space at bottom of bubble (using margins in canvas coords)
         entry_x = int(bx + pad)
-        entry_y = int(by + bh - 30)
+        entry_y = int(by + bh - 36)  # centered in 42px space (6px top + 30px entry + 6px bottom)
         self._chat_entry.set_margin_start(max(0, entry_x))
         self._chat_entry.set_margin_top(max(0, entry_y))
 
