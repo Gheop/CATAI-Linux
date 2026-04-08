@@ -18,7 +18,6 @@ sudo dnf install python3-gobject python3-pillow
 # Ubuntu/Debian:
 sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-4.0 python3-pil
 
-# Install from PyPI
 pip install catai-linux
 ```
 

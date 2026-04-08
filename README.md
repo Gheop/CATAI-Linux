@@ -61,10 +61,6 @@ sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-4.0 python3-pil
 
 # Install from PyPI
 pip install catai-linux
-
-# Optional (improves window positioning on some setups):
-# sudo dnf install xdotool wmctrl   # Fedora
-# sudo apt install xdotool wmctrl   # Ubuntu
 ```
 
 ## Run
