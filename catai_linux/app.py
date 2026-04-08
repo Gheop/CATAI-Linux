@@ -645,12 +645,41 @@ CSS = b"""
     background-color: #f2e6cc;
     border: 3px solid #4d3319;
     border-radius: 4px;
+    color: #4d3319;
+}
+.bubble-body button {
+    background-color: #e6d5b8;
+    color: #4d3319;
+    border: 1px solid #4d3319;
+}
+.bubble-body button:hover {
+    background-color: #d4c4a6;
 }
 .meow-window {
     background: transparent;
 }
 .settings-window {
     background-color: #f2e6cc;
+    color: #4d3319;
+}
+.settings-window button {
+    background-color: #e6d5b8;
+    color: #4d3319;
+}
+.settings-window button:hover {
+    background-color: #d4c4a6;
+}
+.settings-window label {
+    color: #4d3319;
+}
+.settings-window checkbutton label {
+    color: #4d3319;
+}
+.settings-window scale trough {
+    background-color: #d4c4a6;
+}
+.settings-window scale highlight {
+    background-color: #ff9933;
 }
 .pixel-label {
     font-family: monospace;
