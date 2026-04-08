@@ -1712,9 +1712,16 @@ class CatAIApp(Gtk.Application):
 
     def _check_deps(self):
         """Verify required external tools are available."""
+        # Detect package manager for install hint
+        if shutil.which("apt"):
+            pkg_cmd = "sudo apt install"
+        elif shutil.which("dnf"):
+            pkg_cmd = "sudo dnf install"
+        else:
+            pkg_cmd = "install"
         for tool in ["xdotool", "wmctrl"]:
             if not shutil.which(tool):
-                log.warning("Missing dependency: %s (install with: sudo dnf install %s)", tool, tool)
+                log.warning("Missing dependency: %s (%s %s)", tool, pkg_cmd, tool)
 
     def _recompute_size(self):
         self.display_w = int(round(self.sprite_w * self.cat_scale))
