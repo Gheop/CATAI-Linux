@@ -723,11 +723,13 @@ class ChatBubbleController:
         self.window = None
         self.response_text = ""
         self.on_send = None
+        self.on_close = None
         self.bubble_w = 300
         self.tail_h = 15
         self.padding = 18
         self._entry = None
         self._response_label = None
+        self._cat_pos = (0, 0, 0, 0)  # cat_x, cat_y, cat_w, cat_h for repositioning
 
     def setup(self):
         self.window = Gtk.Window(application=self.app)
@@ -743,13 +745,22 @@ class ChatBubbleController:
     def _build(self):
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 
-        # Bubble body: DrawingArea as background + content via overlay
+        # Bubble body
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         body.set_margin_start(self.padding)
         body.set_margin_end(self.padding)
-        body.set_margin_top(self.padding)
+        body.set_margin_top(6)
         body.set_margin_bottom(self.padding)
         body.add_css_class("bubble-body")
+
+        # Close button
+        close_btn = Gtk.Button(label="\u00d7")
+        close_css = Gtk.CssProvider()
+        close_css.load_from_data(b"button { background: transparent; color: #4d3319; min-width: 20px; min-height: 16px; font-size: 14px; padding: 0; border: none; }")
+        close_btn.get_style_context().add_provider(close_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        close_btn.set_halign(Gtk.Align.END)
+        close_btn.connect("clicked", lambda b: self._do_close())
+        body.append(close_btn)
 
         # Response in a scrollable area
         self._response_label = Gtk.Label(label=self.response_text)
@@ -793,6 +804,7 @@ class ChatBubbleController:
 
     def show(self, cat_x, cat_y, cat_w, cat_h):
         was_visible = self.window.get_visible()
+        self._cat_pos = (cat_x, cat_y, cat_w, cat_h)
         bx = int(cat_x + cat_w / 2 - self.bubble_w / 2)
         self.window.set_visible(True)
         GLib.idle_add(self._move_above, bx, cat_y, cat_h)
@@ -803,8 +815,14 @@ class ChatBubbleController:
         """Move bubble to follow cat, without stealing focus."""
         if not self.is_visible:
             return
+        self._cat_pos = (cat_x, cat_y, cat_w, cat_h)
         bx = int(cat_x + cat_w / 2 - self.bubble_w / 2)
         GLib.idle_add(self._move_above, bx, cat_y, cat_h)
+
+    def _do_close(self):
+        self.hide()
+        if self.on_close:
+            self.on_close()
 
     def _move_above(self, bx, cat_y, cat_h):
         alloc = self.window.get_allocation()
@@ -832,13 +850,18 @@ class ChatBubbleController:
         self.response_text += token
         if self._response_label:
             self._response_label.set_label(self.response_text)
-            # Debounced auto-scroll (max once per 200ms)
+            # Debounced auto-scroll + reposition (max once per 200ms)
             if self._scroll and not getattr(self, '_scroll_pending', False):
                 self._scroll_pending = True
                 def _do_scroll():
                     adj = self._scroll.get_vadjustment()
                     adj.set_value(adj.get_upper())
                     self._scroll_pending = False
+                    # Reposition bubble above cat as it grows
+                    cx, cy, cw, ch = self._cat_pos
+                    if cx or cy:
+                        bx = int(cx + cw / 2 - self.bubble_w / 2)
+                        self._move_above(bx, cy, ch)
                     return False
                 GLib.timeout_add(200, _do_scroll)
 
