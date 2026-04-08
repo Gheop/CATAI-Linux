@@ -534,13 +534,26 @@ class OllamaChat(ChatBackend):
                         pass
 
 
+_ollama_checked = None
+
+def _ollama_available():
+    """Check Ollama availability once (cached)."""
+    global _ollama_checked
+    if _ollama_checked is None:
+        try:
+            httpx.get(f"{OLLAMA_URL}/api/tags", timeout=1)
+            _ollama_checked = True
+        except Exception:
+            _ollama_checked = False
+    return _ollama_checked
+
 def create_chat(model):
     """Create the best available chat backend."""
     if model.startswith("claude-") and claude_available():
         return ClaudeChat(model)
-    if not model.startswith("claude-"):
+    if not model.startswith("claude-") and _ollama_available():
         return OllamaChat(model)
-    # Claude model requested but unavailable — fallback to Ollama
+    # Ollama not running or Claude model requested — use Claude if available
     if claude_available():
         return ClaudeChat(CLAUDE_MODEL)
     return OllamaChat(model)
@@ -858,10 +871,7 @@ class CatInstance:
         self.window.add_css_class("cat-window")
         self.window.set_default_size(dw, dh)
         self.window.set_resizable(False)
-        self.window.set_can_focus(False)
-        self.window.set_focusable(False)
         set_always_on_top(self.window)
-        set_no_focus(self.window)
 
         self.picture = Gtk.Picture()
         self.picture.set_can_shrink(False)
