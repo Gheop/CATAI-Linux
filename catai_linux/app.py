@@ -1953,8 +1953,7 @@ class CatAIApp(Gtk.Application):
 
         # Pre-create context menu and settings (hidden) so NOTIFICATION type
         # is applied before user ever sees them (avoids GNOME "is ready" alert)
-        self._open_settings()
-        self.settings_ctrl.window.set_visible(False)
+        # Settings window created on first use (not pre-opened to avoid GNOME notification)
 
         # Create cat instances (no windows, just state)
         for i, cat_cfg in enumerate(self.cat_configs):
@@ -2109,11 +2108,10 @@ class CatAIApp(Gtk.Application):
         win.set_child(area)
 
         # Chat input entry in its own tiny window (not in canvas — overlay blocks passthrough)
-        self._entry_window = Gtk.Window()
+        self._entry_window = Gtk.Window(application=self)
         self._entry_window.set_decorated(False)
         self._entry_window.set_resizable(False)
         self._entry_window.set_default_size(260, 30)
-        set_notification_type(self._entry_window)
         set_always_on_top(self._entry_window)
         self._chat_entry = Gtk.Entry()
         self._chat_entry.set_placeholder_text(L10n.s("talk"))
@@ -2121,6 +2119,10 @@ class CatAIApp(Gtk.Application):
         self._chat_entry.set_size_request(260, -1)
         self._chat_entry.connect("activate", self._on_chat_entry_activate)
         self._entry_window.set_child(self._chat_entry)
+        # Pre-realize: show offscreen briefly to get XID, then hide
+        self._entry_window.set_visible(True)
+        move_window(self._entry_window, -500, -500)
+        GLib.idle_add(lambda: self._entry_window.set_visible(False) or False)
 
         # Gesture controllers on the canvas
         # Right-click for context menu
