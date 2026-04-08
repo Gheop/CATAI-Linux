@@ -321,14 +321,42 @@ def pil_to_texture(img, target_w, target_h):
     return Gdk.MemoryTexture.new(target_w, target_h, Gdk.MemoryFormat.R8G8B8A8,
                                   gbytes, target_w * 4)
 
-def load_and_tint(path, color_def):
-    """Load a sprite PNG and apply color tinting. Returns PIL Image."""
+CACHE_DIR = os.path.expanduser("~/.cache/catai")
+
+def _cache_path(path, color_id, size):
+    """Get cache file path for a tinted sprite."""
+    name = os.path.basename(os.path.dirname(os.path.dirname(path))) + "_" + \
+           os.path.basename(os.path.dirname(path)) + "_" + os.path.basename(path)
+    return os.path.join(CACHE_DIR, color_id, f"{size[0]}x{size[1]}", name)
+
+def load_and_tint(path, color_def, cache_size=None):
+    """Load a sprite PNG and apply color tinting. Uses disk cache if cache_size given."""
+    # Try disk cache first
+    if cache_size:
+        cp = _cache_path(path, color_def.id, cache_size)
+        if os.path.exists(cp):
+            try:
+                return Image.open(cp).convert("RGBA")
+            except Exception:
+                pass
+
     try:
         src = Image.open(path).convert("RGBA")
     except Exception:
         log.warning("Missing sprite: %s", path)
         src = Image.new("RGBA", (68, 68), (255, 0, 255, 128))
-    return tint_sprite(src, color_def)
+    tinted = tint_sprite(src, color_def)
+
+    # Save to disk cache
+    if cache_size:
+        cp = _cache_path(path, color_def.id, cache_size)
+        try:
+            os.makedirs(os.path.dirname(cp), exist_ok=True)
+            tinted.save(cp, "PNG")
+        except Exception:
+            pass
+
+    return tinted
 
 # ── X11 Window Helpers ─────────────────────────────────────────────────────────
 
@@ -1085,21 +1113,57 @@ class CatInstance:
         if len(mem) > 1:
             self.chat_backend.messages.extend(mem[1:])
 
-    def load_assets(self, meta, cat_dir):
-        """Load all sprites, tint them, and pre-convert to GPU textures."""
+    def load_assets(self, meta, cat_dir, lazy=True):
+        """Load sprites with disk cache. Rotations loaded immediately, animations lazy in background."""
         dw, dh = self.display_w, self.display_h
+        size = (dw, dh)
+
+        # Always load rotations immediately (8 sprites, fast)
         self.rotations = {}
         for dir_name, rel_path in meta["frames"]["rotations"].items():
-            pil = load_and_tint(os.path.join(cat_dir, rel_path), self.color_def)
+            pil = load_and_tint(os.path.join(cat_dir, rel_path), self.color_def, cache_size=size)
             self.rotations[dir_name] = pil_to_texture(pil, dw, dh)
+
+        # Load walking animation immediately (needed right away)
         self.animations = {}
-        for anim_name, dirs in meta["frames"]["animations"].items():
-            self.animations[anim_name] = {}
-            for dir_name, frame_paths in dirs.items():
-                self.animations[anim_name][dir_name] = [
-                    pil_to_texture(load_and_tint(os.path.join(cat_dir, p), self.color_def), dw, dh)
+        walk_key = "running-8-frames"
+        if walk_key in meta["frames"]["animations"]:
+            self.animations[walk_key] = {}
+            for dir_name, frame_paths in meta["frames"]["animations"][walk_key].items():
+                self.animations[walk_key][dir_name] = [
+                    pil_to_texture(load_and_tint(os.path.join(cat_dir, p), self.color_def, cache_size=size), dw, dh)
                     for p in frame_paths
                 ]
+
+        if lazy:
+            # Load remaining animations in background thread
+            remaining = {k: v for k, v in meta["frames"]["animations"].items() if k != walk_key}
+            if remaining:
+                threading.Thread(target=self._load_anims_bg, args=(remaining, cat_dir, size), daemon=True).start()
+        else:
+            # Load all at once (used for scale change)
+            for anim_name, dirs in meta["frames"]["animations"].items():
+                if anim_name == walk_key:
+                    continue
+                self.animations[anim_name] = {}
+                for dir_name, frame_paths in dirs.items():
+                    self.animations[anim_name][dir_name] = [
+                        pil_to_texture(load_and_tint(os.path.join(cat_dir, p), self.color_def, cache_size=size), dw, dh)
+                        for p in frame_paths
+                    ]
+
+    def _load_anims_bg(self, anims, cat_dir, size):
+        """Background-load remaining animations."""
+        dw, dh = size
+        for anim_name, dirs in anims.items():
+            anim_data = {}
+            for dir_name, frame_paths in dirs.items():
+                anim_data[dir_name] = [
+                    pil_to_texture(load_and_tint(os.path.join(cat_dir, p), self.color_def, cache_size=size), dw, dh)
+                    for p in frame_paths
+                ]
+            # Update on main thread to avoid race
+            GLib.idle_add(lambda an=anim_name, ad=anim_data: self.animations.update({an: ad}) or False)
 
     def _fallback_tex(self):
         return self.rotations.get(self.direction) or self.rotations.get("south") or next(iter(self.rotations.values()))
@@ -1328,7 +1392,7 @@ class CatInstance:
     def apply_scale(self, new_w, new_h, meta, cat_dir):
         self.display_w = new_w
         self.display_h = new_h
-        self.load_assets(meta, cat_dir)
+        self.load_assets(meta, cat_dir, lazy=False)
         self.window.set_default_size(new_w, new_h)
         self._last_tex = None
         self.picture.set_paintable(self._current_texture())
