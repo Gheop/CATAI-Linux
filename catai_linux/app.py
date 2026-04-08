@@ -2118,10 +2118,13 @@ class CatAIApp(Gtk.Application):
         self._chat_entry.set_size_request(260, -1)
         self._chat_entry.connect("activate", self._on_chat_entry_activate)
         self._entry_window.set_child(self._chat_entry)
-        # Pre-realize: show offscreen briefly to get XID, then hide
-        self._entry_window.set_visible(True)
-        move_window(self._entry_window, -500, -500)
-        GLib.idle_add(lambda: self._entry_window.set_visible(False) or False)
+        # Set above on realize so entry floats over canvas, but keep focus ability
+        def _entry_realize(w):
+            xid = _get_xid(w)
+            if xid:
+                _x11_set_above_skip_taskbar(xid)
+                flush_x11()
+        self._entry_window.connect("realize", _entry_realize)
 
         # Gesture controllers on the canvas
         # Right-click for context menu
@@ -2272,6 +2275,11 @@ class CatAIApp(Gtk.Application):
             self._active_chat_cat = cat
             self._position_chat_entry(cat)
             self._entry_window.set_visible(True)
+            # Force above + focus
+            xid = _get_xid(self._entry_window)
+            if xid:
+                _x11_set_above_skip_taskbar(xid)
+                flush_x11()
             self._entry_window.present()
             self._chat_entry.grab_focus()
 
