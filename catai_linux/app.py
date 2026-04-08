@@ -10,6 +10,7 @@ os.environ.setdefault("GDK_BACKEND", "x11")
 
 import ctypes
 import enum
+import gc
 import json
 import logging
 import random
@@ -1734,11 +1735,19 @@ class CatAIApp(Gtk.Application):
             action.connect("activate", cb)
             self.add_action(action)
 
+        # Disable automatic GC to prevent random pauses, collect manually
+        gc.disable()
+
         self._timers = [
             GLib.timeout_add(RENDER_MS, self._render_tick),
             GLib.timeout_add(BEHAVIOR_MS, self._behavior_tick),
             GLib.timeout_add(10000, _apply_above_all),
+            GLib.timeout_add(30000, self._gc_collect),
         ]
+
+    def _gc_collect(self):
+        gc.collect()
+        return True
 
     def do_shutdown(self):
         """Clean shutdown: stop timers, cleanup cats, close windows."""
@@ -1797,8 +1806,8 @@ class CatAIApp(Gtk.Application):
         for cat in self.cat_instances:
             cat.render_tick()
         dt = (time.monotonic() - t0) * 1000
-        if dt > 50:  # log if render takes more than 50ms
-            log.warning("Slow render tick: %.0fms (%d cats)", dt, len(self.cat_instances))
+        if dt > 20:
+            log.warning("Slow render: %.0fms (%d cats)", dt, len(self.cat_instances))
         return True
 
     def _behavior_tick(self):
