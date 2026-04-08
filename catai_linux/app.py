@@ -624,13 +624,16 @@ def _ollama_available():
 def create_chat(model):
     """Create the best available chat backend."""
     if model.startswith("claude-") and claude_available():
+        log.debug("Using Claude API (%s)", model)
         return ClaudeChat(model)
     if not model.startswith("claude-") and _ollama_available():
+        log.debug("Using Ollama (%s)", model)
         return OllamaChat(model)
-    # Ollama not running or Claude model requested — use Claude if available
     if claude_available():
+        log.debug("Ollama unavailable, falling back to Claude API")
         return ClaudeChat(CLAUDE_MODEL)
-    return OllamaChat(model)
+    log.warning("No AI backend available (no Claude credentials, no Ollama running)")
+    return OllamaChat(model)  # will fail gracefully with error message
 
 # ── CSS Theme ──────────────────────────────────────────────────────────────────
 
@@ -1279,7 +1282,8 @@ class CatInstance:
             self.state = CatState.IDLE
             self.frame_index = 0
             self.idle_ticks = 0
-            save_memory(self.config["id"], self.chat_backend.messages)
+            if self.chat_backend:
+                save_memory(self.config["id"], self.chat_backend.messages)
             return False
 
         def on_error(msg):
