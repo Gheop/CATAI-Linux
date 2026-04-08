@@ -488,6 +488,11 @@ def _get_claude_api_key():
 
 def _read_claude_oauth():
     try:
+        # Check file permissions aren't too open
+        if os.path.exists(CLAUDE_CREDS):
+            mode = os.stat(CLAUDE_CREDS).st_mode
+            if mode & 0o077:
+                log.warning("Credentials file %s is accessible by others (mode %o)", CLAUDE_CREDS, mode)
         with open(CLAUDE_CREDS) as f:
             return json.load(f)["claudeAiOauth"]["accessToken"]
     except Exception:
@@ -553,12 +558,21 @@ class ChatBackend:
         self._cancel = True
 
 
+_anthropic_client = None
+
+def _get_anthropic_client():
+    global _anthropic_client
+    if _anthropic_client is None:
+        import anthropic
+        _anthropic_client = anthropic.Anthropic(api_key=_get_claude_api_key())
+    return _anthropic_client
+
+
 class ClaudeChat(ChatBackend):
 
     def __init__(self, model=CLAUDE_MODEL):
         super().__init__(model)
-        import anthropic
-        self.client = anthropic.Anthropic(api_key=_get_claude_api_key())
+        self.client = _get_anthropic_client()
 
     def _stream_chunks(self):
         system_prompt = ""
@@ -1238,6 +1252,11 @@ class CatInstance:
         self.chat_bubble.hide()
         self.meow_bubble.hide()
         self.window.set_visible(False)
+        # Remove from global X11 hint lists to prevent leaks
+        for lst in [_above_pending, _no_focus_windows, _notification_windows]:
+            for w in [self.window, self.chat_bubble.window, self.meow_bubble.window]:
+                if w in lst:
+                    lst.remove(w)
 
 
 # ── Settings Window ────────────────────────────────────────────────────────────
@@ -1272,17 +1291,35 @@ class SettingsWindow:
             self.window.set_default_size(340, 680)
             self.window.set_resizable(False)
             self.window.add_css_class("settings-window")
-            self.window.connect("close-request", lambda *a: self.window.set_visible(False) or True)
+            self.window.connect("close-request", self._on_close)
         if not self.selected_color_id:
             cfgs = self.get_configs() if self.get_configs else []
             if cfgs:
                 self.selected_color_id = cfgs[0]["color_id"]
         self._build()
 
+    def _on_close(self, *args):
+        self._stop_timers()
+        self.window.set_visible(False)
+        return True
+
+    def _stop_timers(self):
+        if self._anim_timer:
+            GLib.source_remove(self._anim_timer)
+            self._anim_timer = None
+        if self._scale_timer:
+            try:
+                GLib.source_remove(self._scale_timer)
+            except Exception:
+                pass
+            self._scale_timer = None
+        self._anim_pictures = []
+
     def refresh(self):
         self._build()
 
     def _build(self):
+        self._stop_timers()  # clean up old animation timers and pictures
         configs = self.get_configs() if self.get_configs else []
         active_ids = {c["color_id"] for c in configs}
 
@@ -1403,6 +1440,7 @@ class SettingsWindow:
                 name_box.append(nl)
                 ne = Gtk.Entry()
                 ne.set_text(cfg["name"] if cfg else cd.names.get(L10n.lang, ""))
+                ne.set_max_length(30)
                 ne.add_css_class("pixel-entry")
                 ne.set_hexpand(True)
                 ne.connect("changed", self._on_name_changed, self.selected_color_id)
@@ -1732,8 +1770,10 @@ class CatAIApp(Gtk.Application):
         self.selected_model = model
         self._save_all()
         for cat in self.cat_instances:
+            if not cat.chat_backend:
+                continue
             # Don't switch backend while streaming
-            if cat.chat_backend and cat.chat_backend.is_streaming:
+            if cat.chat_backend.is_streaming:
                 cat.chat_backend.model = model
                 continue
             if model.startswith("claude-") and not isinstance(cat.chat_backend, ClaudeChat):

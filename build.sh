@@ -10,6 +10,7 @@ MISSING=""
 python3 -c "import gi; gi.require_version('Gtk', '4.0')" 2>/dev/null || MISSING="$MISSING python3-gobject"
 python3 -c "from PIL import Image" 2>/dev/null || MISSING="$MISSING python3-pillow"
 python3 -c "import httpx" 2>/dev/null || MISSING="$MISSING python3-httpx"
+python3 -c "import anthropic" 2>/dev/null || MISSING="$MISSING anthropic (pip install anthropic)"
 command -v xdotool &>/dev/null || MISSING="$MISSING xdotool"
 command -v wmctrl &>/dev/null || MISSING="$MISSING wmctrl"
 
