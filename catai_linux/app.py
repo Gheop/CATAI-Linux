@@ -438,13 +438,55 @@ def flush_x11():
 
 
 def _run_x11(cmd):
-    """Run an X11 tool non-blocking in a background thread (no zombies, no main-thread block)."""
+    """Run an X11 tool non-blocking in a background thread."""
     def _bg():
         try:
             subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
         except Exception:
             pass
     threading.Thread(target=_bg, daemon=True).start()
+
+
+def _x11_set_property_atom(xid, prop_name, value_name):
+    """Set an X11 atom property directly via Xlib (no subprocess needed)."""
+    if not (_init_xlib() and _xdpy):
+        return False
+    try:
+        dpy = ctypes.c_void_p(_xdpy)
+        _xlib.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+        _xlib.XInternAtom.restype = ctypes.c_ulong
+        _xlib.XChangeProperty.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong,
+            ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_ulong), ctypes.c_int]
+        prop = _xlib.XInternAtom(dpy, prop_name.encode(), 0)
+        val = _xlib.XInternAtom(dpy, value_name.encode(), 0)
+        xa_atom = _xlib.XInternAtom(dpy, b"ATOM", 0)
+        data = (ctypes.c_ulong * 1)(val)
+        _xlib.XChangeProperty(dpy, xid, prop, xa_atom, 32, 0, data, 1)
+        return True
+    except Exception:
+        return False
+
+
+def _x11_set_wm_hints_no_input(xid):
+    """Set WM_HINTS InputHint=False directly via Xlib."""
+    if not (_init_xlib() and _xdpy):
+        return False
+    try:
+        dpy = ctypes.c_void_p(_xdpy)
+        _xlib.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+        _xlib.XInternAtom.restype = ctypes.c_ulong
+        _xlib.XChangeProperty.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong,
+            ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_ulong), ctypes.c_int]
+        wm_hints = _xlib.XInternAtom(dpy, b"WM_HINTS", 0)
+        xa_wm_hints = wm_hints  # WM_HINTS uses its own atom as type
+        # flags=2 (InputHint), input=0 (no input)
+        data = (ctypes.c_ulong * 9)(2, 0, 0, 0, 0, 0, 0, 0, 0)
+        _xlib.XChangeProperty(dpy, xid, wm_hints, xa_wm_hints, 32, 0, data, 9)
+        return True
+    except Exception:
+        return False
 
 
 _above_pending = []
@@ -460,16 +502,23 @@ def _apply_xid_hints(window, above=False, no_focus=False, notification=False):
         return
     wid = id(window)
     if above and ("above", wid) not in _applied:
+        # above needs _NET_WM_STATE change via client message — wmctrl is best for this
         _run_x11(["wmctrl", "-i", "-r", str(xid), "-b", "add,above,skip_taskbar"])
         _applied.add(("above", wid))
     if notification and ("notif", wid) not in _applied:
-        _run_x11(["xprop", "-id", str(xid), "-f", "_NET_WM_WINDOW_TYPE", "32a",
-                  "-set", "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_NOTIFICATION"])
+        # Set window type synchronously via Xlib (no delay = no GNOME notification)
+        if not _x11_set_property_atom(xid, "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_NOTIFICATION"):
+            _run_x11(["xprop", "-id", str(xid), "-f", "_NET_WM_WINDOW_TYPE", "32a",
+                      "-set", "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_NOTIFICATION"])
         _applied.add(("notif", wid))
     if no_focus and ("nofocus", wid) not in _applied:
-        _run_x11(["xprop", "-id", str(xid), "-f", "WM_HINTS", "32i",
-                  "-set", "WM_HINTS", "2, 0, 0, 0, 0, 0, 0, 0, 0"])
+        if not _x11_set_wm_hints_no_input(xid):
+            _run_x11(["xprop", "-id", str(xid), "-f", "WM_HINTS", "32i",
+                      "-set", "WM_HINTS", "2, 0, 0, 0, 0, 0, 0, 0, 0"])
         _applied.add(("nofocus", wid))
+    # Flush immediately so hints are applied before window is shown
+    if _xlib and _xdpy:
+        _xlib.XFlush(ctypes.c_void_p(_xdpy))
 
 
 def set_no_focus(window):
