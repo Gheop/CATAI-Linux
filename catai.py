@@ -385,47 +385,53 @@ def move_window(window, x, y):
         _xlib.XMoveWindow(ctypes.c_void_p(_xdpy), xid, int(x), int(y))
         _xlib.XFlush(ctypes.c_void_p(_xdpy))
     else:
-        subprocess.Popen(["xdotool", "windowmove", str(xid), str(int(x)), str(int(y))],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["xdotool", "windowmove", str(xid), str(int(x)), str(int(y))],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
+
+
+def _run_x11(cmd):
+    """Run an X11 tool (wmctrl/xprop) with proper cleanup (no zombies)."""
+    try:
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
+    except Exception:
+        pass
 
 
 _above_pending = []
 _applied = set()
 _no_focus_windows = []
-
 _notification_windows = []
 
+
 def _apply_xid_hints(window, above=False, no_focus=False, notification=False):
-    """Apply X11 hints immediately if XID is available, otherwise defer."""
+    """Apply X11 hints immediately if XID is available."""
     xid = _get_xid(window)
     if not xid:
-        return  # will be caught by _apply_above_all timer
-    if above and ("above", id(window)) not in _applied:
-        subprocess.Popen(["wmctrl", "-i", "-r", str(xid), "-b", "add,above,skip_taskbar"],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        _applied.add(("above", id(window)))
-    if notification and ("notif", id(window)) not in _applied:
-        subprocess.Popen(["xprop", "-id", str(xid), "-f", "_NET_WM_WINDOW_TYPE", "32a",
-                         "-set", "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_NOTIFICATION"],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        _applied.add(("notif", id(window)))
-    if no_focus and ("nofocus", id(window)) not in _applied:
-        subprocess.Popen(["xprop", "-id", str(xid), "-f", "WM_HINTS", "32i",
-                         "-set", "WM_HINTS", "2, 0, 0, 0, 0, 0, 0, 0, 0"],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        _applied.add(("nofocus", id(window)))
+        return
+    wid = id(window)
+    if above and ("above", wid) not in _applied:
+        _run_x11(["wmctrl", "-i", "-r", str(xid), "-b", "add,above,skip_taskbar"])
+        _applied.add(("above", wid))
+    if notification and ("notif", wid) not in _applied:
+        _run_x11(["xprop", "-id", str(xid), "-f", "_NET_WM_WINDOW_TYPE", "32a",
+                  "-set", "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_NOTIFICATION"])
+        _applied.add(("notif", wid))
+    if no_focus and ("nofocus", wid) not in _applied:
+        _run_x11(["xprop", "-id", str(xid), "-f", "WM_HINTS", "32i",
+                  "-set", "WM_HINTS", "2, 0, 0, 0, 0, 0, 0, 0, 0"])
+        _applied.add(("nofocus", wid))
+
 
 def set_no_focus(window):
     """Mark window as not accepting focus + NOTIFICATION type."""
     _no_focus_windows.append(window)
     _notification_windows.append(window)
     _above_pending.append(window)
-    # Apply immediately on realize
     window.connect("realize", lambda w: GLib.idle_add(
         lambda: _apply_xid_hints(w, above=True, no_focus=True, notification=True) or False))
 
 def set_notification_type(window):
-    """Mark window as NOTIFICATION type only (prevents GNOME alerts but keeps focus)."""
+    """Mark window as NOTIFICATION type only."""
     _notification_windows.append(window)
     window.connect("realize", lambda w: GLib.idle_add(
         lambda: _apply_xid_hints(w, notification=True) or False))
@@ -436,43 +442,24 @@ def set_always_on_top(window):
     window.connect("realize", lambda w: GLib.idle_add(
         lambda: _apply_xid_hints(w, above=True) or False))
 
+def unregister_window(window):
+    """Remove window from all global tracking lists and caches."""
+    wid = id(window)
+    for lst in [_above_pending, _no_focus_windows, _notification_windows]:
+        while window in lst:
+            lst.remove(window)
+    for prefix in ["above", "notif", "nofocus"]:
+        _applied.discard((prefix, wid))
+    _xid_cache.pop(wid, None)
+
 def _apply_above_all():
-    """Apply X11 hints to new windows."""
-    # Always on top + skip taskbar for overlay windows
-    for w in _above_pending:
-        key = ("above", id(w))
-        if key in _applied:
-            continue
-        xid = _get_xid(w)
-        if xid:
-            subprocess.Popen(
-                ["wmctrl", "-i", "-r", str(xid), "-b", "add,above,skip_taskbar"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            _applied.add(key)
-    # NOTIFICATION type on marked windows (prevents GNOME "is ready" alerts)
-    for w in _notification_windows:
-        key = ("notif", id(w))
-        if key in _applied:
-            continue
-        xid = _get_xid(w)
-        if xid:
-            subprocess.Popen(
-                ["xprop", "-id", str(xid), "-f", "_NET_WM_WINDOW_TYPE", "32a",
-                 "-set", "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_NOTIFICATION"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            _applied.add(key)
-    # No-focus hint on passive windows (meow, cat sprites)
-    for w in _no_focus_windows:
-        key = ("nofocus", id(w))
-        if key in _applied:
-            continue
-        xid = _get_xid(w)
-        if xid:
-            subprocess.Popen(
-                ["xprop", "-id", str(xid), "-f", "WM_HINTS", "32i",
-                 "-set", "WM_HINTS", "2, 0, 0, 0, 0, 0, 0, 0, 0"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            _applied.add(key)
+    """Apply X11 hints to windows not yet processed (fallback timer)."""
+    for w in list(_above_pending):
+        _apply_xid_hints(w, above=True)
+    for w in list(_notification_windows):
+        _apply_xid_hints(w, notification=True)
+    for w in list(_no_focus_windows):
+        _apply_xid_hints(w, no_focus=True)
     return True
 
 
@@ -723,7 +710,6 @@ class ChatBubbleController:
         self.window = None
         self.response_text = ""
         self.on_send = None
-        self.on_close = None
         self.bubble_w = 300
         self.tail_h = 15
         self.padding = 18
@@ -823,8 +809,6 @@ class ChatBubbleController:
 
     def _do_close(self):
         self.hide()
-        if self.on_close:
-            self.on_close()
 
     def _move_above(self, bx, cat_y, cat_h):
         alloc = self.window.get_allocation()
@@ -1277,11 +1261,11 @@ class CatInstance:
         self.chat_bubble.hide()
         self.meow_bubble.hide()
         self.window.set_visible(False)
-        # Remove from global X11 hint lists to prevent leaks
-        for lst in [_above_pending, _no_focus_windows, _notification_windows]:
-            for w in [self.window, self.chat_bubble.window, self.meow_bubble.window]:
-                if w in lst:
-                    lst.remove(w)
+        # Remove from all global tracking to prevent leaks
+        for w in [self.window, self.chat_bubble.window, self.meow_bubble.window]:
+            unregister_window(w)
+        self._app = None
+        self.chat_backend = None
 
 
 # ── Settings Window ────────────────────────────────────────────────────────────
@@ -1329,15 +1313,11 @@ class SettingsWindow:
         return True
 
     def _stop_timers(self):
-        if self._anim_timer:
-            GLib.source_remove(self._anim_timer)
-            self._anim_timer = None
-        if self._scale_timer:
-            try:
-                GLib.source_remove(self._scale_timer)
-            except Exception:
-                pass
-            self._scale_timer = None
+        for attr in ('_anim_timer', '_scale_timer'):
+            tid = getattr(self, attr, None)
+            if tid:
+                GLib.source_remove(tid)
+                setattr(self, attr, None)
         self._anim_pictures = []
 
     def refresh(self):
