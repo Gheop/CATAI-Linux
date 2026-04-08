@@ -20,7 +20,7 @@ import sys
 import threading
 import uuid
 import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning, module="gi")
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 log = logging.getLogger("catai")
 
@@ -1432,14 +1432,18 @@ class SettingsWindow:
             cx += sz + gap
 
     def _on_bubble_click(self, gesture, n_press, x, y, active_ids):
-        sz = 32; gap = 10
+        sz = 32; gap = 10; h = 50
         total = len(CAT_COLORS) * (sz + gap) - gap
         cx = (300 - total) / 2
         for c in CAT_COLORS:
-            if cx <= x <= cx + sz and (25 - sz/2) <= y <= (25 + sz/2):
+            if cx <= x <= cx + sz and (h/2 - sz/2) <= y <= (h/2 + sz/2):
+                # Check × button (top-right of bubble, same coords as drawing)
                 if c.id in active_ids and len(active_ids) > 1:
-                    xr = 9; xx = cx + sz - 7 + 2; xy = 25 - sz/2 + 7 - 2
-                    if (x - xx)**2 + (y - xy)**2 <= xr**2:
+                    xr = 7
+                    xx = cx + sz - xr + 2
+                    xy = h/2 - sz/2 + xr - 2
+                    # Use generous hit radius (12px) for easier clicking
+                    if (x - xx)**2 + (y - xy)**2 <= 144:
                         if self.on_remove: self.on_remove(c.id)
                         return
                 if c.id in active_ids:
