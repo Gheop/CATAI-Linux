@@ -1574,24 +1574,25 @@ class SettingsWindow:
         model_strings = Gtk.StringList.new([L10n.s("loading")])
         model_combo.set_model(model_strings)
 
+        self._model_loading = True  # block callback during initial population
+
         def _load_models():
             all_models = []
-            # Add Claude models if Claude Code is available
             if claude_available():
                 all_models.append(f"{CLAUDE_MODEL} (Claude)")
-            # Add Ollama models (only if Ollama is reachable)
             if _ollama_available():
                 all_models.extend(fetch_ollama_models())
             def _update():
+                self._model_loading = True
                 model_strings.splice(0, model_strings.get_n_items(),
                                      all_models if all_models else [L10n.s("no_ollama")])
                 if all_models:
-                    # Find current model in list
                     current = self.current_model
                     for i, m in enumerate(all_models):
                         if m.startswith(current):
                             model_combo.set_selected(i)
                             break
+                self._model_loading = False
                 return False
             GLib.idle_add(_update)
         threading.Thread(target=_load_models, daemon=True).start()
@@ -1640,11 +1641,12 @@ class SettingsWindow:
             self.on_rename(color_id, entry.get_text())
 
     def _on_model_select(self, dropdown, pspec, string_list):
+        if getattr(self, '_model_loading', False):
+            return  # ignore changes during dropdown population
         idx = dropdown.get_selected()
         if idx < string_list.get_n_items():
             name = string_list.get_string(idx)
             if name and not name.startswith("(") and name != L10n.s("loading"):
-                # Extract model id from display name like "claude-haiku-4-5 (Claude)"
                 model_id = name.split(" (")[0] if " (" in name else name
                 self.current_model = model_id
                 if self.on_model_changed:
