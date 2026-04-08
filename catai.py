@@ -460,13 +460,16 @@ def unregister_window(window):
     _xid_cache.pop(wid, None)
 
 def _apply_above_all():
-    """Apply X11 hints to windows not yet processed (fallback timer)."""
+    """Fallback: apply X11 hints to any windows missed by realize callback."""
     for w in list(_above_pending):
-        _apply_xid_hints(w, above=True)
+        if ("above", id(w)) not in _applied:
+            _apply_xid_hints(w, above=True)
     for w in list(_notification_windows):
-        _apply_xid_hints(w, notification=True)
+        if ("notif", id(w)) not in _applied:
+            _apply_xid_hints(w, notification=True)
     for w in list(_no_focus_windows):
-        _apply_xid_hints(w, no_focus=True)
+        if ("nofocus", id(w)) not in _applied:
+            _apply_xid_hints(w, no_focus=True)
     return True
 
 
@@ -900,16 +903,19 @@ class MeowBubble:
         bx = max(0, int(cat_x + cat_w / 2 - text_w / 2))
         by = max(0, int(cat_y - 40))
         self.window.set_default_size(text_w, 32)
-        # Remember currently focused window, show meow, restore focus
+        # Save focused window XID, show meow, then restore focus in background
+        focused = getattr(self, '_last_focused', None)
         try:
-            focused = subprocess.run(["xdotool", "getactivewindow"],
-                                     capture_output=True, text=True, timeout=1).stdout.strip()
+            r = subprocess.run(["xdotool", "getactivewindow"],
+                               capture_output=True, text=True, timeout=1)
+            focused = r.stdout.strip() if r.returncode == 0 else None
         except Exception:
-            focused = None
+            pass
         self.window.set_visible(True)
         GLib.idle_add(lambda: move_window(self.window, bx, by) or False)
         if focused:
-            GLib.idle_add(lambda: _run_x11(["xdotool", "windowactivate", focused]) or False)
+            # Restore focus after a short delay (let WM process the meow window first)
+            GLib.timeout_add(50, lambda: _run_x11(["xdotool", "windowactivate", "--sync", focused]) or False)
         self._timer_id = GLib.timeout_add(random.randint(2000, 3000), self._auto_hide)
 
     def _auto_hide(self):
@@ -1684,7 +1690,7 @@ class CatAIApp(Gtk.Application):
         self._timers = [
             GLib.timeout_add(RENDER_MS, self._render_tick),
             GLib.timeout_add(BEHAVIOR_MS, self._behavior_tick),
-            GLib.timeout_add(2000, _apply_above_all),
+            GLib.timeout_add(10000, _apply_above_all),
         ]
 
     def do_shutdown(self):
