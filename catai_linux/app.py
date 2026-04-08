@@ -2057,7 +2057,7 @@ class CatAIApp(Gtk.Application):
             cat = self._active_chat_cat
             if cat:
                 cat.chat_visible = False
-                self._entry_window.set_visible(False)
+                self._chat_entry.set_visible(False)
                 self._active_chat_cat = None
                 return "OK chat closed"
             return "ERR: no active chat"
@@ -2101,37 +2101,35 @@ class CatAIApp(Gtk.Application):
         win.set_default_size(self.screen_w, self.screen_h)
         win.set_resizable(False)
 
+        overlay = Gtk.Overlay()
+
         area = Gtk.DrawingArea()
         area.set_content_width(self.screen_w)
         area.set_content_height(self.screen_h)
         area.set_draw_func(self._canvas_draw)
-        win.set_child(area)
+        area.set_can_target(False)  # Don't capture mouse on DrawingArea → passthrough
+        overlay.set_child(area)
 
-        # Chat input entry in its own tiny window (not in canvas — overlay blocks passthrough)
-        self._entry_window = Gtk.Window(application=self)
-        self._entry_window.set_decorated(False)
-        self._entry_window.set_resizable(False)
-        self._entry_window.set_default_size(260, 30)
+        # Chat input entry inside the overlay (visible + positioned dynamically)
         self._chat_entry = Gtk.Entry()
         self._chat_entry.set_placeholder_text(L10n.s("talk"))
         self._chat_entry.add_css_class("pixel-entry")
-        self._chat_entry.set_size_request(260, -1)
+        self._chat_entry.set_halign(Gtk.Align.START)
+        self._chat_entry.set_valign(Gtk.Align.START)
+        self._chat_entry.set_size_request(256, -1)
+        self._chat_entry.set_visible(False)
         self._chat_entry.connect("activate", self._on_chat_entry_activate)
-        self._entry_window.set_child(self._chat_entry)
-        # Set above on realize so entry floats over canvas, but keep focus ability
-        def _entry_realize(w):
-            xid = _get_xid(w)
-            if xid:
-                _x11_set_above_skip_taskbar(xid)
-                flush_x11()
-        self._entry_window.connect("realize", _entry_realize)
+        overlay.add_overlay(self._chat_entry)
+
+        win.set_child(overlay)
+        self._entry_window = None  # no separate window needed
 
         # Gesture controllers on the canvas
         # Right-click for context menu
         rclick = Gtk.GestureClick()
         rclick.set_button(3)
         rclick.connect("released", self._on_canvas_right_click)
-        area.add_controller(rclick)
+        overlay.add_controller(rclick)
 
         # Left: drag gesture handles both click and drag
         # - Short drag (no movement) = click → toggle chat
@@ -2141,7 +2139,7 @@ class CatAIApp(Gtk.Application):
         drag.connect("drag-begin", self._on_canvas_drag_begin)
         drag.connect("drag-update", self._on_canvas_drag_update)
         drag.connect("drag-end", self._on_canvas_drag_end)
-        area.add_controller(drag)
+        overlay.add_controller(drag)
 
         set_always_on_top(win)
 
@@ -2166,10 +2164,22 @@ class CatAIApp(Gtk.Application):
 
         win.set_visible(True)
 
-        # Fallback: retry after visible
+        # Fallback: retry after visible + detect canvas Y offset
         def _late_xid_check():
             if not self._canvas_xid:
                 _set_empty_input(win)
+            # Detect canvas Y offset (GNOME top bar)
+            xid = _get_xid(win)
+            if xid:
+                try:
+                    r = subprocess.run(["xdotool", "getwindowgeometry", "--shell", str(xid)],
+                                       capture_output=True, text=True, timeout=1)
+                    for line in r.stdout.split("\n"):
+                        if line.startswith("Y="):
+                            self._canvas_y_offset = int(line.split("=")[1])
+                            log.debug("Canvas Y offset: %d", self._canvas_y_offset)
+                except Exception:
+                    self._canvas_y_offset = 0
             return False
         GLib.timeout_add(500, _late_xid_check)
         GLib.idle_add(lambda: move_window(win, 0, 0) or False)
@@ -2235,7 +2245,10 @@ class CatAIApp(Gtk.Application):
         if self._menu_visible:
             rects.append((self._menu_x, self._menu_y, 120, 50))
         # Include chat entry area
-        # Entry window is separate — not part of canvas input shape
+        # Include chat entry in input region when visible
+        if self._chat_entry and self._chat_entry.get_visible():
+            rects.append((self._chat_entry.get_margin_start(),
+                         self._chat_entry.get_margin_top(), 260, 30))
         # XShape for X11 level
         _update_input_shape(self._canvas_xid, rects)
 
@@ -2263,7 +2276,7 @@ class CatAIApp(Gtk.Application):
         """Toggle chat bubble for a specific cat."""
         if cat.chat_visible:
             cat.chat_visible = False
-            self._entry_window.set_visible(False)
+            self._chat_entry.set_visible(False)
             self._active_chat_cat = None
         else:
             # Close other chats
@@ -2274,13 +2287,7 @@ class CatAIApp(Gtk.Application):
                 cat.chat_response = L10n.s("hi")
             self._active_chat_cat = cat
             self._position_chat_entry(cat)
-            self._entry_window.set_visible(True)
-            # Force above + focus
-            xid = _get_xid(self._entry_window)
-            if xid:
-                _x11_set_above_skip_taskbar(xid)
-                flush_x11()
-            self._entry_window.present()
+            self._chat_entry.set_visible(True)
             self._chat_entry.grab_focus()
 
     def _position_chat_entry(self, cat):
@@ -2314,10 +2321,11 @@ class CatAIApp(Gtk.Application):
         if by < 0:
             by = cat.y + cat.display_h + 10
 
-        # Entry sits in the 30px space at bottom of bubble
+        # Entry sits in the 30px space at bottom of bubble (using margins in canvas coords)
         entry_x = int(bx + pad)
         entry_y = int(by + bh - 30)
-        move_window(self._entry_window, max(0, entry_x), max(0, entry_y))
+        self._chat_entry.set_margin_start(max(0, entry_x))
+        self._chat_entry.set_margin_top(max(0, entry_y))
 
     def _on_chat_entry_activate(self, entry):
         """User pressed Enter in the chat entry."""
@@ -2469,7 +2477,7 @@ class CatAIApp(Gtk.Application):
         for cat in self.cat_instances:
             cat.render_tick()
         # Reposition chat entry if following a walking cat
-        if self._active_chat_cat and self._entry_window.get_visible():
+        if self._active_chat_cat and self._chat_entry.get_visible():
             self._position_chat_entry(self._active_chat_cat)
         # Redraw the canvas
         if self._canvas_area:
@@ -2510,7 +2518,7 @@ class CatAIApp(Gtk.Application):
         # If chat bubble is showing for this cat, hide it
         if self._active_chat_cat is cat:
             cat.chat_visible = False
-            self._entry_window.set_visible(False)
+            self._chat_entry.set_visible(False)
             self._active_chat_cat = None
         cat.cleanup()
         self.cat_instances.pop(idx)
