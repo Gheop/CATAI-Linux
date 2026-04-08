@@ -44,7 +44,7 @@ import httpx
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
-RENDER_MS = 100        # 10 FPS
+RENDER_MS = 125        # 8 FPS (smoother on XWayland)
 BEHAVIOR_MS = 1000     # 1 Hz
 WALK_SPEED = 4
 MEM_MAX = 20
@@ -386,16 +386,26 @@ def _init_xlib():
     log.debug("Xlib unavailable, using xdotool fallback")
     return False
 
+_xlib_dirty = False
+
 def move_window(window, x, y):
     """Move a GTK4 window. Uses Xlib directly, falls back to xdotool."""
+    global _xlib_dirty
     xid = _get_xid(window)
     if not xid:
         return
     if _init_xlib() and _xdpy:
         _xlib.XMoveWindow(ctypes.c_void_p(_xdpy), xid, int(x), int(y))
-        _xlib.XFlush(ctypes.c_void_p(_xdpy))
+        _xlib_dirty = True  # flush once after all moves
     else:
         _run_x11(["xdotool", "windowmove", str(xid), str(int(x)), str(int(y))])
+
+def flush_x11():
+    """Flush all pending X11 operations (call once per frame, not per window)."""
+    global _xlib_dirty
+    if _xlib_dirty and _xlib and _xdpy:
+        _xlib.XFlush(ctypes.c_void_p(_xdpy))
+        _xlib_dirty = False
 
 
 def _run_x11(cmd):
@@ -1805,6 +1815,7 @@ class CatAIApp(Gtk.Application):
         t0 = time.monotonic()
         for cat in self.cat_instances:
             cat.render_tick()
+        flush_x11()  # single flush for all window moves this frame
         dt = (time.monotonic() - t0) * 1000
         if dt > 20:
             log.warning("Slow render: %.0fms (%d cats)", dt, len(self.cat_instances))
