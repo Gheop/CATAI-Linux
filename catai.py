@@ -12,7 +12,6 @@ import ctypes
 import enum
 import json
 import logging
-import math
 import random
 import shutil
 import subprocess
@@ -393,9 +392,16 @@ _above_pending = []
 _applied = set()
 _no_focus_windows = []
 
+_notification_windows = []
+
 def set_no_focus(window):
     """Mark window as not accepting focus + NOTIFICATION type (meow, cat sprites)."""
     _no_focus_windows.append(window)
+    _notification_windows.append(window)
+
+def set_notification_type(window):
+    """Mark window as NOTIFICATION type only (prevents GNOME alerts but keeps focus)."""
+    _notification_windows.append(window)
 
 def set_always_on_top(window):
     """Mark window for always-on-top + skip-taskbar."""
@@ -414,7 +420,19 @@ def _apply_above_all():
                 ["wmctrl", "-i", "-r", str(xid), "-b", "add,above,skip_taskbar"],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             _applied.add(key)
-    # No-focus + NOTIFICATION type on passive windows (meow, cat sprites)
+    # NOTIFICATION type on marked windows (prevents GNOME "is ready" alerts)
+    for w in _notification_windows:
+        key = ("notif", id(w))
+        if key in _applied:
+            continue
+        xid = _get_xid(w)
+        if xid:
+            subprocess.Popen(
+                ["xprop", "-id", str(xid), "-f", "_NET_WM_WINDOW_TYPE", "32a",
+                 "-set", "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_NOTIFICATION"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            _applied.add(key)
+    # No-focus hint on passive windows (meow, cat sprites)
     for w in _no_focus_windows:
         key = ("nofocus", id(w))
         if key in _applied:
@@ -424,10 +442,6 @@ def _apply_above_all():
             subprocess.Popen(
                 ["xprop", "-id", str(xid), "-f", "WM_HINTS", "32i",
                  "-set", "WM_HINTS", "2, 0, 0, 0, 0, 0, 0, 0, 0"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            subprocess.Popen(
-                ["xprop", "-id", str(xid), "-f", "_NET_WM_WINDOW_TYPE", "32a",
-                 "-set", "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_NOTIFICATION"],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             _applied.add(key)
     return True
@@ -681,6 +695,7 @@ class ChatBubbleController:
         self.response_text = L10n.s("hi")
         self._build()
         set_always_on_top(self.window)
+        set_notification_type(self.window)
 
     def _build(self):
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -1079,6 +1094,7 @@ class CatInstance:
             menu.set_resizable(False)
             menu.add_css_class("bubble-body")
             set_always_on_top(menu)
+            set_notification_type(menu)
 
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
             box.set_margin_top(8)
@@ -1102,12 +1118,13 @@ class CatInstance:
         menu.set_visible(True)
         GLib.idle_add(lambda: move_window(menu, int(self.x + self.display_w), int(self.y)) or False)
         # Auto-close after 5s
-        if hasattr(self._app, '_menu_timer') and self._app._menu_timer:
-            try:
-                GLib.source_remove(self._app._menu_timer)
-            except Exception:
-                pass
-        self._app._menu_timer = GLib.timeout_add(5000, lambda: menu.set_visible(False) or False)
+        def _auto_close_menu():
+            self._app._menu_timer = None
+            menu.set_visible(False)
+            return False
+        if getattr(self._app, '_menu_timer', None):
+            GLib.source_remove(self._app._menu_timer)
+        self._app._menu_timer = GLib.timeout_add(5000, _auto_close_menu)
 
     def _on_drag_begin(self, gesture, start_x, start_y):
         self.dragging = True
@@ -1272,15 +1289,47 @@ class SettingsWindow:
         cats_label.set_margin_top(12)
         box.append(cats_label)
 
-        # Color bubbles
-        bubbles = Gtk.DrawingArea()
-        bubbles.set_content_width(300)
-        bubbles.set_content_height(50)
-        bubbles.set_draw_func(self._draw_bubbles, active_ids)
-        click_ctrl = Gtk.GestureClick()
-        click_ctrl.connect("released", self._on_bubble_click, active_ids)
-        bubbles.add_controller(click_ctrl)
-        box.append(bubbles)
+        # Color bubbles — real GTK buttons for reliable clicking
+        bubbles_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        bubbles_box.set_halign(Gtk.Align.CENTER)
+        for c in CAT_COLORS:
+            is_active = c.id in active_ids
+            is_sel = self.selected_color_id == c.id and is_active
+
+            cat_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+
+            btn = Gtk.Button()
+            btn.set_size_request(34, 34)
+            # Color via inline CSS
+            r, g, b, a = c.color_rgba
+            css = Gtk.CssProvider()
+            css.load_from_data(f"""
+                button {{ background: rgba({int(r*255)},{int(g*255)},{int(b*255)},1);
+                         border-radius: 50%; min-width: 30px; min-height: 30px;
+                         border: {3 if is_sel else 2}px solid {'#ffcc33' if is_sel else '#4d3319'};
+                         opacity: {1.0 if is_active else 0.4}; }}
+            """.encode())
+            btn.get_style_context().add_provider(css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+            if is_active:
+                btn.connect("clicked", self._on_bubble_select, c.id)
+            else:
+                btn.connect("clicked", self._on_bubble_add, c.id)
+            cat_box.append(btn)
+
+            # × remove button for active cats (if more than 1)
+            if is_active and len(active_ids) > 1:
+                rm_btn = Gtk.Button(label="\u00d7")
+                rm_btn.set_size_request(18, 18)
+                rm_btn.set_halign(Gtk.Align.CENTER)
+                rm_css = Gtk.CssProvider()
+                rm_css.load_from_data(b"button { background: #cc3333; color: white; border-radius: 50%; min-width: 16px; min-height: 16px; font-size: 10px; padding: 0; }")
+                rm_btn.get_style_context().add_provider(rm_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+                rm_btn.connect("clicked", self._on_bubble_remove, c.id)
+                cat_box.append(rm_btn)
+
+            bubbles_box.append(cat_box)
+        box.append(bubbles_box)
 
         # Selected cat details
         if self.selected_color_id and self.selected_color_id in active_ids:
@@ -1398,61 +1447,17 @@ class SettingsWindow:
         scroll.set_child(box)
         self.window.set_child(scroll)
 
-    def _draw_bubbles(self, area, ctx, w, h, active_ids):
-        sz = 32
-        gap = 10
-        total = len(CAT_COLORS) * (sz + gap) - gap
-        cx = (w - total) / 2
-        for c in CAT_COLORS:
-            center_x = cx + sz / 2
-            center_y = h / 2
-            ctx.arc(center_x, center_y, sz / 2, 0, 2 * math.pi)
-            ctx.set_source_rgba(*c.color_rgba)
-            ctx.fill()
-            is_sel = self.selected_color_id == c.id and c.id in active_ids
-            ctx.set_source_rgba(1, 0.8, 0.3, 1) if is_sel else ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
-            ctx.set_line_width(3 if is_sel else 2)
-            ctx.arc(center_x, center_y, sz / 2, 0, 2 * math.pi)
-            ctx.stroke()
-            if c.id not in active_ids:
-                ctx.set_source_rgba(0.95, 0.95, 0.95, 0.5)
-                ctx.arc(center_x, center_y, sz / 2, 0, 2 * math.pi)
-                ctx.fill()
-            if c.id in active_ids and len(active_ids) > 1:
-                xr = 7
-                xx = cx + sz - xr + 2
-                xy = h / 2 - sz / 2 + xr - 2
-                ctx.arc(xx, xy, xr, 0, 2 * math.pi)
-                ctx.set_source_rgba(0.8, 0.2, 0.2, 1)
-                ctx.fill()
-                ctx.set_source_rgba(1, 1, 1, 1)
-                ctx.set_font_size(10)
-                ctx.move_to(xx - 3, xy + 3)
-                ctx.show_text("\u00d7")
-            cx += sz + gap
+    def _on_bubble_select(self, btn, color_id):
+        self.selected_color_id = color_id
+        self._build()
 
-    def _on_bubble_click(self, gesture, n_press, x, y, active_ids):
-        sz = 32; gap = 10; h = 50
-        total = len(CAT_COLORS) * (sz + gap) - gap
-        cx = (300 - total) / 2
-        for c in CAT_COLORS:
-            if cx <= x <= cx + sz and (h/2 - sz/2) <= y <= (h/2 + sz/2):
-                # Check × button (top-right of bubble, same coords as drawing)
-                if c.id in active_ids and len(active_ids) > 1:
-                    xr = 7
-                    xx = cx + sz - xr + 2
-                    xy = h/2 - sz/2 + xr - 2
-                    # Use generous hit radius (12px) for easier clicking
-                    if (x - xx)**2 + (y - xy)**2 <= 144:
-                        if self.on_remove: self.on_remove(c.id)
-                        return
-                if c.id in active_ids:
-                    self.selected_color_id = c.id
-                    self._build()
-                elif self.on_add:
-                    self.on_add(c.id)
-                return
-            cx += sz + gap
+    def _on_bubble_add(self, btn, color_id):
+        if self.on_add:
+            self.on_add(color_id)
+
+    def _on_bubble_remove(self, btn, color_id):
+        if self.on_remove:
+            self.on_remove(color_id)
 
     def _on_lang_click(self, btn, lang_code):
         if self.on_lang_changed:
