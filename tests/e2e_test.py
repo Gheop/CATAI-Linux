@@ -96,13 +96,19 @@ def get_window_type(xid):
 
 
 def find_settings_window():
+    """Find settings window (no title — search by size ~340-370px wide)."""
     try:
-        r = subprocess.run(["xdotool", "search", "--name", "Cat Settings"],
-                           capture_output=True, text=True, timeout=3)
-        wids = [w.strip() for w in r.stdout.strip().split("\n") if w.strip()]
-        return wids[0] if wids else None
+        for wid in find_catai_windows():
+            r = subprocess.run(["xdotool", "getwindowgeometry", "--shell", wid],
+                               capture_output=True, text=True, timeout=2)
+            for line in r.stdout.split("\n"):
+                if line.startswith("WIDTH="):
+                    w = int(line.split("=")[1])
+                    if 330 < w < 400:  # settings window is ~340-370px
+                        return wid
     except Exception:
-        return None
+        pass
+    return None
 
 
 def count_colored_pixels(path, max_count=None):

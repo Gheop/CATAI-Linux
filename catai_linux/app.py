@@ -1585,8 +1585,8 @@ class SettingsWindow:
         if not self.window:
             self.window = Gtk.Window()
             self.window.set_hide_on_close(True)
-            self.window.set_title("~ Cat Settings ~")
-            set_notification_type(self.window)  # prevent GNOME "is ready" alert
+            self.window.set_decorated(False)
+            set_notification_type(self.window)
             set_always_on_top(self.window)
             self.window.set_default_size(340, 680)
             self.window.set_resizable(False)
@@ -1620,10 +1620,19 @@ class SettingsWindow:
         active_ids = {c["color_id"] for c in configs}
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        box.set_margin_top(16)
+        box.set_margin_top(8)
         box.set_margin_bottom(16)
         box.set_margin_start(16)
         box.set_margin_end(16)
+
+        # Close button (top-right)
+        close_btn = Gtk.Button(label="\u00d7")
+        close_css = Gtk.CssProvider()
+        close_css.load_from_data(b"button { background: transparent; color: #4d3319; font-size: 18px; font-weight: bold; min-width: 24px; min-height: 24px; padding: 0; border: none; }")
+        close_btn.get_style_context().add_provider(close_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        close_btn.set_halign(Gtk.Align.END)
+        close_btn.connect("clicked", lambda b: self._on_close())
+        box.append(close_btn)
 
         # Title
         title = Gtk.Label(label=L10n.s("title"))
@@ -1874,6 +1883,15 @@ class SettingsWindow:
     def show(self):
         self.window.set_visible(True)
         self.window.present()
+        # Center on screen
+        display = Gdk.Display.get_default()
+        if display:
+            monitors = display.get_monitors()
+            if monitors.get_n_items() > 0:
+                geo = monitors.get_item(0).get_geometry()
+                cx = (geo.width - 340) // 2
+                cy = (geo.height - 680) // 2
+                move_window(self.window, cx, cy)
 
 
 # ── Main Application ───────────────────────────────────────────────────────────
