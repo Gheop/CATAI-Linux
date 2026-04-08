@@ -11,13 +11,22 @@ os.environ.setdefault("GDK_BACKEND", "x11")
 import ctypes
 import enum
 import json
+import logging
 import math
 import random
+import shutil
 import subprocess
 import sys
 import threading
+import uuid
 import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", module="gi.overrides")
+
+log = logging.getLogger("catai")
+
+def _setup_logging():
+    level = logging.DEBUG if "--debug" in sys.argv else logging.WARNING
+    logging.basicConfig(level=level, format="%(levelname)s: %(message)s")
 
 import gi
 gi.require_version("Gtk", "4.0")
@@ -35,6 +44,7 @@ BEHAVIOR_MS = 1000     # 1 Hz
 WALK_SPEED = 4
 MEM_MAX = 20
 OLLAMA_URL = "http://localhost:11434"
+OLLAMA_TIMEOUT = 60
 DEFAULT_SCALE = 1.5
 MIN_SCALE = 0.5
 MAX_SCALE = 4.0
@@ -204,7 +214,7 @@ def set_autostart(enabled):
 Type=Application
 Name=CATAI
 Comment=Virtual desktop pet cats
-Exec=python3 {script}
+Exec=python3 "{script}"
 Terminal=false
 X-GNOME-Autostart-enabled=true
 """)
@@ -291,6 +301,7 @@ def load_and_tint(path, color_def):
     try:
         src = Image.open(path).convert("RGBA")
     except Exception:
+        log.warning("Missing sprite: %s", path)
         src = Image.new("RGBA", (68, 68), (255, 0, 255, 128))
     return tint_sprite(src, color_def)
 
@@ -327,14 +338,27 @@ def _init_xlib():
         display = Gdk.Display.get_default()
         if isinstance(display, GdkX11.X11Display):
             xdpy_obj = display.get_xdisplay()
-            # Extract the raw void* pointer from the xlib.Display wrapper
-            _xdpy = int(str(xdpy_obj).split("void at ")[1].rstrip(")>"), 16) if "void at" in str(xdpy_obj) else None
-            if _xdpy:
+            # Extract raw pointer: try hash() first (stable), fallback to repr parsing
+            try:
+                _xdpy = hash(xdpy_obj)
+                # Validate: hash of ctypes-backed object IS the pointer on CPython
+                lib.XFlush(ctypes.c_void_p(_xdpy))
                 _xlib = lib
+                log.debug("Xlib initialized via hash(), pointer=%#x", _xdpy)
                 return True
-    except Exception:
-        pass
+            except (TypeError, OSError):
+                pass
+            # Fallback: parse repr string
+            s = str(xdpy_obj)
+            if "void at 0x" in s:
+                _xdpy = int(s.split("void at ")[1].rstrip(")>"), 16)
+                _xlib = lib
+                log.debug("Xlib initialized via repr(), pointer=%#x", _xdpy)
+                return True
+    except Exception as e:
+        log.debug("Xlib init failed: %s", e)
     _xlib = False
+    log.debug("Xlib unavailable, using xdotool fallback")
     return False
 
 def move_window(window, x, y):
@@ -436,7 +460,8 @@ def fetch_ollama_models():
     try:
         resp = httpx.get(f"{OLLAMA_URL}/api/tags", timeout=3)
         return [m["name"] for m in resp.json().get("models", [])]
-    except Exception:
+    except Exception as e:
+        log.debug("Ollama unavailable: %s", e)
         return []
 
 
@@ -466,7 +491,8 @@ class ChatBackend:
                     GLib.idle_add(on_token, chunk)
             except Exception as e:
                 if on_error and not full:
-                    GLib.idle_add(on_error, str(e)[:80] if str(e) else L10n.s("err"))
+                    log.warning("Chat error: %s", e)
+                    GLib.idle_add(on_error, L10n.s("err"))
             finally:
                 if full:
                     self.messages.append({"role": "assistant", "content": full})
@@ -508,7 +534,7 @@ class ClaudeChat(ChatBackend):
 class OllamaChat(ChatBackend):
 
     def _stream_chunks(self):
-        with httpx.Client(timeout=60) as client:
+        with httpx.Client(timeout=OLLAMA_TIMEOUT) as client:
             with client.stream("POST", f"{OLLAMA_URL}/api/chat",
                                json={"model": self.model, "messages": self.messages, "stream": True}) as resp:
                 for line in resp.iter_lines():
@@ -1054,11 +1080,12 @@ class CatInstance:
         self.state = CatState.EATING
         self.frame_index = 0
 
-        first_token = [True]
+        first_token = True
         def on_token(token):
-            if first_token[0]:
+            nonlocal first_token
+            if first_token:
                 self.chat_bubble.set_response(token)
-                first_token[0] = False
+                first_token = False
             else:
                 self.chat_bubble.append_response(token)
             return False
@@ -1100,6 +1127,8 @@ class CatInstance:
         move_window(self.window, int(self.x), int(self.y))
 
     def cleanup(self):
+        if self.chat_backend:
+            self.chat_backend.cancel()
         self.chat_bubble.hide()
         self.meow_bubble.hide()
         self.window.set_visible(False)
@@ -1285,7 +1314,7 @@ class SettingsWindow:
                     # Find current model in list
                     current = self.current_model
                     for i, m in enumerate(all_models):
-                        if current in m:
+                        if m.startswith(current):
                             model_combo.set_selected(i)
                             break
                 return False
@@ -1411,7 +1440,9 @@ class CatAIApp(Gtk.Application):
         self.settings_ctrl = None
 
     def do_activate(self):
+        _setup_logging()
         apply_css()
+        self._check_deps()
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
         self.cat_dir = os.path.join(script_dir, "cute_orange_cat")
@@ -1438,7 +1469,7 @@ class CatAIApp(Gtk.Application):
 
         if not self.cat_configs:
             self.cat_configs = [{
-                "id": f"cat_{random.randint(1000, 9999)}",
+                "id": f"cat_{uuid.uuid4().hex[:8]}",
                 "color_id": "orange",
                 "name": CAT_COLORS[0].names.get(L10n.lang, "Citrouille"),
             }]
@@ -1460,6 +1491,12 @@ class CatAIApp(Gtk.Application):
         GLib.timeout_add(BEHAVIOR_MS, self._behavior_tick)
         GLib.timeout_add(2000, _apply_above_all)
 
+    def _check_deps(self):
+        """Verify required external tools are available."""
+        for tool in ["xdotool", "wmctrl"]:
+            if not shutil.which(tool):
+                log.warning("Missing dependency: %s (install with: sudo dnf install %s)", tool, tool)
+
     def _recompute_size(self):
         self.display_w = int(round(self.sprite_w * self.cat_scale))
         self.display_h = int(round(self.sprite_h * self.cat_scale))
@@ -1479,6 +1516,7 @@ class CatAIApp(Gtk.Application):
 
     def _save_all(self):
         save_config({
+            "version": 1,
             "cats": self.cat_configs,
             "scale": self.cat_scale,
             "model": self.selected_model,
@@ -1499,7 +1537,7 @@ class CatAIApp(Gtk.Application):
         cd = color_def(color_id)
         if not cd or any(c["color_id"] == color_id for c in self.cat_configs):
             return
-        cfg = {"id": f"cat_{random.randint(1000, 9999)}", "color_id": color_id,
+        cfg = {"id": f"cat_{uuid.uuid4().hex[:8]}", "color_id": color_id,
                "name": cd.names.get(L10n.lang, cd.names["fr"])}
         self.cat_configs.append(cfg)
         self._save_all()
