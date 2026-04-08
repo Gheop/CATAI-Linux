@@ -1231,6 +1231,9 @@ class SettingsWindow:
         self.on_lang_changed = None
         self.get_configs = None
         self.get_preview = None
+        self._get_anim_frames = None
+        self._anim_pictures = []
+        self._anim_timer = None
 
     def setup(self, scale, model):
         self.current_scale = scale
@@ -1289,47 +1292,66 @@ class SettingsWindow:
         cats_label.set_margin_top(12)
         box.append(cats_label)
 
-        # Color bubbles — real GTK buttons for reliable clicking
-        bubbles_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        # Cat sprite selector — animated previews!
+        bubbles_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         bubbles_box.set_halign(Gtk.Align.CENTER)
+        self._anim_pictures = []  # track for animation timer
         for c in CAT_COLORS:
             is_active = c.id in active_ids
             is_sel = self.selected_color_id == c.id and is_active
-
             cat_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
 
+            # Sprite preview button
             btn = Gtk.Button()
-            btn.set_size_request(34, 34)
-            # Color via inline CSS
-            r, g, b, a = c.color_rgba
-            css = Gtk.CssProvider()
-            css.load_from_data(f"""
-                button {{ background: rgba({int(r*255)},{int(g*255)},{int(b*255)},1);
-                         border-radius: 50%; min-width: 30px; min-height: 30px;
-                         border: {3 if is_sel else 2}px solid {'#ffcc33' if is_sel else '#4d3319'};
-                         opacity: {1.0 if is_active else 0.4}; }}
+            sprite_size = 40
+            pic = Gtk.Picture()
+            pic.set_size_request(sprite_size, sprite_size)
+            pic.set_can_shrink(True)
+            if self.get_preview:
+                pil_img = self.get_preview(c.id)
+                if pil_img:
+                    pic.set_paintable(pil_to_texture(pil_img, sprite_size, sprite_size))
+            btn.set_child(pic)
+            btn_css = Gtk.CssProvider()
+            border_color = '#ffcc33' if is_sel else ('#4d3319' if is_active else 'transparent')
+            btn_css.load_from_data(f"""
+                button {{ background: transparent; padding: 2px;
+                         border: {3 if is_sel else 2}px solid {border_color};
+                         border-radius: 6px; opacity: {1.0 if is_active else 0.4}; }}
+                button:hover {{ opacity: 1.0; }}
             """.encode())
-            btn.get_style_context().add_provider(css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            btn.get_style_context().add_provider(btn_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
             if is_active:
                 btn.connect("clicked", self._on_bubble_select, c.id)
+                # Load walking frames for animation
+                if self._get_anim_frames:
+                    frames = self._get_anim_frames(c.id, sprite_size)
+                    if frames:
+                        self._anim_pictures.append((pic, frames, [0]))
             else:
                 btn.connect("clicked", self._on_bubble_add, c.id)
             cat_box.append(btn)
 
-            # × remove button for active cats (if more than 1)
+            # × remove button
             if is_active and len(active_ids) > 1:
                 rm_btn = Gtk.Button(label="\u00d7")
-                rm_btn.set_size_request(18, 18)
-                rm_btn.set_halign(Gtk.Align.CENTER)
                 rm_css = Gtk.CssProvider()
                 rm_css.load_from_data(b"button { background: #cc3333; color: white; border-radius: 50%; min-width: 16px; min-height: 16px; font-size: 10px; padding: 0; }")
                 rm_btn.get_style_context().add_provider(rm_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+                rm_btn.set_halign(Gtk.Align.CENTER)
                 rm_btn.connect("clicked", self._on_bubble_remove, c.id)
                 cat_box.append(rm_btn)
 
             bubbles_box.append(cat_box)
         box.append(bubbles_box)
+
+        # Start animation timer for active cat previews
+        if getattr(self, '_anim_timer', None):
+            GLib.source_remove(self._anim_timer)
+            self._anim_timer = None
+        if self._anim_pictures:
+            self._anim_timer = GLib.timeout_add(150, self._animate_previews)
 
         # Selected cat details
         if self.selected_color_id and self.selected_color_id in active_ids:
@@ -1446,6 +1468,13 @@ class SettingsWindow:
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.set_child(box)
         self.window.set_child(scroll)
+
+    def _animate_previews(self):
+        """Advance animation frame for each active cat preview."""
+        for pic, frames, idx in self._anim_pictures:
+            idx[0] = (idx[0] + 1) % len(frames)
+            pic.set_paintable(frames[idx[0]])
+        return True  # keep timer running
 
     def _on_bubble_select(self, btn, color_id):
         self.selected_color_id = color_id
@@ -1687,6 +1716,7 @@ class CatAIApp(Gtk.Application):
         ctrl = self.settings_ctrl
         ctrl.get_configs = lambda: self.cat_configs
         ctrl.get_preview = self._get_preview
+        ctrl._get_anim_frames = self._get_anim_frames
         ctrl.on_add = self.add_cat
         ctrl.on_remove = self.remove_cat
         ctrl.on_rename = self.rename_cat
@@ -1709,6 +1739,22 @@ class CatAIApp(Gtk.Application):
             return tint_sprite(img, cd)
         except Exception:
             return None
+
+    def _get_anim_frames(self, color_id, size):
+        """Get walking animation frames as textures for settings preview."""
+        cd = color_def(color_id)
+        if not cd:
+            return None
+        anim_key = "running-8-frames"
+        direction = "east"
+        frame_paths = self.meta["frames"]["animations"].get(anim_key, {}).get(direction, [])
+        if not frame_paths:
+            return None
+        textures = []
+        for p in frame_paths:
+            pil = load_and_tint(os.path.join(self.cat_dir, p), cd)
+            textures.append(pil_to_texture(pil, size, size))
+        return textures if textures else None
 
 
 # ── Entry Point ────────────────────────────────────────────────────────────────
