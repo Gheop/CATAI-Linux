@@ -1880,12 +1880,9 @@ class CatInstance:
                 if self.y < 0:
                     # Wrap: reappear at the bottom
                     self.y = self.screen_h - self.display_h
+                self.state = CatState.IDLE
                 self.frame_index = 0
                 self.idle_ticks = 0
-                # Chain another climb or transition to IDLE
-                if random.random() < 0.45:
-                    self.state = CatState.IDLE
-                # else: keep climbing (frame_index already 0)
             else:
                 self.frame_index += 1
 
