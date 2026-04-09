@@ -76,6 +76,14 @@ class CatState(enum.Enum):
     SCRATCHING_TREE = "scratching_tree"
     PEEING = "peeing"
     POOPING = "pooping"
+    # catset-specific states
+    FLAT = "flat"
+    LOVE = "love"
+    GROOMING = "grooming"
+    ROLLING = "rolling"
+    SURPRISED = "surprised"
+    JUMPING = "jumping"
+    CLIMBING = "climbing"
 
 
 ANIM_KEYS = {
@@ -91,11 +99,20 @@ ANIM_KEYS = {
     CatState.SCRATCHING_TREE: "scratching-tree",
     CatState.PEEING: "peeing",
     CatState.POOPING: "pooping",
+    CatState.FLAT: "flat",
+    CatState.LOVE: "love",
+    CatState.GROOMING: "grooming",
+    CatState.ROLLING: "rolling",
+    CatState.SURPRISED: "surprised",
+    CatState.JUMPING: "jumping",
+    CatState.CLIMBING: "climbing",
 }
 ONE_SHOT_STATES = {
     CatState.EATING, CatState.DRINKING, CatState.ANGRY, CatState.WAKING_UP,
     CatState.CHASING_MOUSE, CatState.PLAYING_BALL, CatState.BUTTERFLY,
     CatState.SCRATCHING_TREE, CatState.PEEING, CatState.POOPING,
+    CatState.FLAT, CatState.LOVE, CatState.GROOMING, CatState.ROLLING,
+    CatState.SURPRISED, CatState.JUMPING,
 }
 
 # ── Localization ───────────────────────────────────────────────────────────────
@@ -187,6 +204,73 @@ CAT_COLORS = [
 
 def color_def(id):
     return next((c for c in CAT_COLORS if c.id == id), None)
+
+# Sentinel: catset chars are pre-colored — skip tinting
+_CATSET_COLOR_DEF = CatColorDef("catset", None, 0, 1, 0, {}, {}, {})
+
+CATSET_CHARS = [
+    ("cat_orange", "🟠"),
+    ("cat01",      "🟤"),
+    ("cat02",      "⬛"),
+    ("cat03",      "🟫"),
+    ("cat04",      "🩶"),
+    ("cat05",      "🖤"),
+]
+
+CATSET_PERSONALITIES = {
+    "cat_orange": {
+        "name": {"fr": "Mandarine", "en": "Tangerine", "es": "Mandarina"},
+        "traits": {"fr": "espiègle et joueur", "en": "mischievous and playful", "es": "travieso y juguetón"},
+        "skills": {"fr": "Tu adores faire des bêtises et tu es toujours en mouvement.",
+                   "en": "You love getting into mischief and are always on the move.",
+                   "es": "Te encanta hacer travesuras y siempre estás en movimiento."},
+    },
+    "cat01": {
+        "name": {"fr": "Tabby", "en": "Tabby", "es": "Tabby"},
+        "traits": {"fr": "curieux et aventurier", "en": "curious and adventurous", "es": "curioso y aventurero"},
+        "skills": {"fr": "Tu explores chaque recoin et poses beaucoup de questions.",
+                   "en": "You explore every corner and ask lots of questions.",
+                   "es": "Exploras cada rincón y haces muchas preguntas."},
+    },
+    "cat02": {
+        "name": {"fr": "Ombre", "en": "Shadow", "es": "Sombra"},
+        "traits": {"fr": "mystérieux et silencieux", "en": "mysterious and silent", "es": "misterioso y silencioso"},
+        "skills": {"fr": "Tu observes tout sans rien dire et parles peu, mais avec profondeur.",
+                   "en": "You observe everything silently and speak rarely but deeply.",
+                   "es": "Observas todo en silencio y hablas poco, pero con profundidad."},
+    },
+    "cat03": {
+        "name": {"fr": "Noisette", "en": "Hazel", "es": "Avellana"},
+        "traits": {"fr": "doux et réconfortant", "en": "gentle and comforting", "es": "dulce y reconfortante"},
+        "skills": {"fr": "Tu aimes câliner et remonter le moral de tout le monde.",
+                   "en": "You love to cuddle and cheer everyone up.",
+                   "es": "Te encanta mimar y animar a todos."},
+    },
+    "cat04": {
+        "name": {"fr": "Brume", "en": "Mist", "es": "Niebla"},
+        "traits": {"fr": "sage et philosophe", "en": "wise and philosophical", "es": "sabio y filosófico"},
+        "skills": {"fr": "Tu médites et partages des pensées profondes sur la vie.",
+                   "en": "You meditate and share deep thoughts about life.",
+                   "es": "Meditas y compartes pensamientos profundos sobre la vida."},
+    },
+    "cat05": {
+        "name": {"fr": "Minuit", "en": "Midnight", "es": "Medianoche"},
+        "traits": {"fr": "élégant et nocturne", "en": "elegant and nocturnal", "es": "elegante y nocturno"},
+        "skills": {"fr": "Tu es à ton aise dans l'obscurité et racontes des histoires mystérieuses.",
+                   "en": "You're at home in the dark and tell mysterious stories.",
+                   "es": "Te sientes a gusto en la oscuridad y cuentas historias misteriosas."},
+    },
+}
+
+def _catset_prompt(char_id, name, lang):
+    p = CATSET_PERSONALITIES.get(char_id, CATSET_PERSONALITIES["cat01"])
+    t = p["traits"].get(lang, p["traits"]["fr"])
+    sk = p["skills"].get(lang, p["skills"]["fr"])
+    if lang == "en":
+        return f"You are a little {t} cat named {name}. {sk} Respond briefly with cat sounds (meow, purr, mrrp). Max 2-3 sentences."
+    elif lang == "es":
+        return f"Eres un gatito {t} llamado {name}. {sk} Responde brevemente con sonidos de gato (miau, purr, mrrp). Máximo 2-3 frases."
+    return f"Tu es un petit chat {t} nommé {name}. {sk} Réponds brièvement avec des sons de chat (miaou, purr, mrrp). Max 2-3 phrases."
 
 # ── Persistence ────────────────────────────────────────────────────────────────
 
@@ -306,7 +390,7 @@ def hsb_to_rgb(h, s, b):
     return r + m, g + m, bb + m
 
 def tint_sprite(img, color_def):
-    if color_def.id == "orange":
+    if color_def is _CATSET_COLOR_DEF or color_def.id == "orange":
         return img
     img = img.convert("RGBA")
     pixels = list(img.getdata())
@@ -372,7 +456,7 @@ def _cache_path(path, color_id, size):
 
 def load_and_tint(path, color_def, cache_size=None):
     """Load a sprite PNG and apply color tinting. Uses disk cache if cache_size given."""
-    if cache_size:
+    if cache_size and color_def is not _CATSET_COLOR_DEF:
         cp = _cache_path(path, color_def.id, cache_size)
         if os.path.exists(cp):
             try:
@@ -387,7 +471,7 @@ def load_and_tint(path, color_def, cache_size=None):
         src = Image.new("RGBA", (68, 68), (255, 0, 255, 128))
     tinted = tint_sprite(src, color_def)
 
-    if cache_size:
+    if cache_size and color_def is not _CATSET_COLOR_DEF:
         cp = _cache_path(path, color_def.id, cache_size)
         try:
             os.makedirs(os.path.dirname(cp), exist_ok=True)
@@ -1618,6 +1702,8 @@ class CatInstance:
         self.screen_w = 0
         self.screen_h = 0
         self._app = None
+        self._meta = None
+        self._cat_dir = ""
         # Meow bubble state (drawn on canvas)
         self.meow_text = ""
         self.meow_visible = False
@@ -1641,12 +1727,18 @@ class CatInstance:
         self.y = random.randint(int(screen_h * 0.3), screen_h - dh)
         self.dest_x = start_x
         self.dest_y = self.y
+        self._meta = meta
+        self._cat_dir = cat_dir
 
         self.load_assets(meta, cat_dir)
         self.setup_chat(model, lang)
 
     def setup_chat(self, model, lang):
-        prompt = self.color_def.prompt(self.config["name"], lang)
+        char_id = self.config.get("char_id")
+        if char_id and self.color_def is _CATSET_COLOR_DEF:
+            prompt = _catset_prompt(char_id, self.config["name"], lang)
+        else:
+            prompt = self.color_def.prompt(self.config["name"], lang)
         self.chat_backend = create_chat(model)
         self.chat_backend.messages = [{"role": "system", "content": prompt}]
         mem = load_memory(self.config["id"])
@@ -1765,12 +1857,37 @@ class CatInstance:
             key = ANIM_KEYS.get(self.state)
             if key:
                 frames = self.animations.get(key, {}).get(self.direction, [])
-                if frames and self.frame_index >= len(frames) - 1:
+                if not frames:
+                    # Animation absent for this character — fall back to IDLE immediately
+                    self.state = CatState.IDLE
+                    self.frame_index = 0
+                    self.idle_ticks = 0
+                elif self.frame_index >= len(frames) - 1:
                     self.state = CatState.IDLE
                     self.frame_index = 0
                     self.idle_ticks = 0
                 else:
                     self.frame_index += 1
+        elif self.state == CatState.CLIMBING:
+            frames = self.animations.get("climbing", {}).get(self.direction, [])
+            if not frames:
+                self.state = CatState.IDLE
+                self.frame_index = 0
+                self.idle_ticks = 0
+            elif self.frame_index >= len(frames) - 1:
+                # One climbing cycle done — move cat up by its own height
+                self.y -= self.display_h
+                if self.y < 0:
+                    # Wrap: reappear at the bottom
+                    self.y = self.screen_h - self.display_h
+                self.frame_index = 0
+                self.idle_ticks = 0
+                # Chain another climb or transition to IDLE
+                if random.random() < 0.45:
+                    self.state = CatState.IDLE
+                # else: keep climbing (frame_index already 0)
+            else:
+                self.frame_index += 1
 
     def behavior_tick(self):
         if self.chat_visible or self.dragging or self.in_encounter:
@@ -1785,40 +1902,70 @@ class CatInstance:
                 self._sleep_tick = 0
                 self.direction = "south"  # only south frames available
                 self.idle_ticks = 0
-            elif r < 0.25:
+            elif r < 0.22:
                 self.state = CatState.WALKING
                 self.frame_index = 0
                 self.dest_x = random.uniform(self.display_w, max(self.display_w + 1, self.screen_w - self.display_w))
                 self.dest_y = random.randint(int(self.screen_h * 0.3), self.screen_h - self.display_h)
-            elif r < 0.30:
+            elif r < 0.27:
                 self.state = CatState.EATING
                 self.frame_index = 0
-            elif r < 0.35:
+                self.direction = "south"
+            elif r < 0.30:
                 self.state = CatState.DRINKING
                 self.frame_index = 0
-            elif r < 0.38:
+                self.direction = "south"
+            elif r < 0.33:
                 self._show_random_meow()
-            elif r < 0.42:
+            elif r < 0.37:
                 self.state = CatState.CHASING_MOUSE
                 self.frame_index = 0
                 self.direction = random.choice(["east", "west"])
-            elif r < 0.45:
+            elif r < 0.40:
+                self.state = CatState.FLAT
+                self.frame_index = 0
+                self.direction = "south"
+            elif r < 0.43:
+                self.state = CatState.GROOMING
+                self.frame_index = 0
+                self.direction = "south"
+            elif r < 0.46:
+                self.state = CatState.LOVE
+                self.frame_index = 0
+                self.direction = "south"
+            elif r < 0.49:
+                self.state = CatState.ROLLING
+                self.frame_index = 0
+                self.direction = "south"
+            elif r < 0.52:
+                self.state = CatState.SURPRISED
+                self.frame_index = 0
+                self.direction = random.choice(["east", "west"])
+            elif r < 0.55:
+                self.state = CatState.JUMPING
+                self.frame_index = 0
+                self.direction = "south"
+            elif r < 0.62:
+                self.state = CatState.CLIMBING
+                self.frame_index = 0
+                self.direction = random.choice(["east", "west"])
+            elif r < 0.65:
                 self.state = CatState.PLAYING_BALL
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.48:
+            elif r < 0.68:
                 self.state = CatState.BUTTERFLY
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.51:
+            elif r < 0.71:
                 self.state = CatState.SCRATCHING_TREE
                 self.frame_index = 0
                 self.direction = random.choice(["east", "west"])
-            elif r < 0.54:
+            elif r < 0.74:
                 self.state = CatState.PEEING
                 self.frame_index = 0
                 self.direction = random.choice(["east", "west"])
-            elif r < 0.57:
+            elif r < 0.77:
                 self.state = CatState.POOPING
                 self.frame_index = 0
                 self.direction = "south"
@@ -1865,7 +2012,11 @@ class CatInstance:
         self.chat_backend.send(text, on_token, on_done, on_error)
 
     def update_system_prompt(self, lang):
-        p = self.color_def.prompt(self.config["name"], lang)
+        char_id = self.config.get("char_id")
+        if char_id and self.color_def is _CATSET_COLOR_DEF:
+            p = _catset_prompt(char_id, self.config["name"], lang)
+        else:
+            p = self.color_def.prompt(self.config["name"], lang)
         if self.chat_backend.messages:
             self.chat_backend.messages[0] = {"role": "system", "content": p}
 
@@ -1883,10 +2034,10 @@ class CatInstance:
         self._meow_timer_id = None
         return False
 
-    def apply_scale(self, new_w, new_h, meta, cat_dir):
+    def apply_scale(self, new_w, new_h, meta=None, cat_dir=None):
         self.display_w = new_w
         self.display_h = new_h
-        self.load_assets(meta, cat_dir, lazy=False)
+        self.load_assets(meta or self._meta, cat_dir or self._cat_dir, lazy=False)
 
     def cleanup(self):
         if self.chat_backend:
@@ -1920,12 +2071,16 @@ class SettingsWindow:
         self.on_add = None
         self.on_remove = None
         self.on_rename = None
+        self.on_add_catset = None
+        self.on_remove_catset = None
+        self.on_rename_catset = None
         self.on_scale_changed = None
         self.on_model_changed = None
         self.on_lang_changed = None
         self.on_encounters_changed = None
         self.get_configs = None
         self.get_preview = None
+        self.get_catset_preview = None
         self._get_anim_frames = None
         self._anim_pictures = []
         self._anim_timer = None
@@ -1945,8 +2100,10 @@ class SettingsWindow:
             self.window.connect("close-request", self._on_close)
         if not self.selected_color_id:
             cfgs = self.get_configs() if self.get_configs else []
-            if cfgs:
-                self.selected_color_id = cfgs[0]["color_id"]
+            # Find first legacy (color_id) config to pre-select
+            legacy = next((c for c in cfgs if c.get("color_id")), None)
+            if legacy:
+                self.selected_color_id = legacy["color_id"]
         self._build()
 
     def _on_close(self, *args):
@@ -1968,7 +2125,8 @@ class SettingsWindow:
     def _build(self):
         self._stop_timers()
         configs = self.get_configs() if self.get_configs else []
-        active_ids = {c["color_id"] for c in configs}
+        active_ids = {c["color_id"] for c in configs if c.get("color_id")}
+        active_char_ids = {c["char_id"] for c in configs if c.get("char_id")}
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         box.set_margin_top(8)
@@ -2064,6 +2222,49 @@ class SettingsWindow:
             bubbles_box.append(cat_box)
         box.append(bubbles_box)
 
+        # ── Catset character row ──────────────────────────────────────────────
+        catset_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        catset_box.set_halign(Gtk.Align.CENTER)
+        catset_box.set_margin_top(4)
+        total_cats = len(active_ids) + len(active_char_ids)
+        for char_id, emoji in CATSET_CHARS:
+            is_active = char_id in active_char_ids
+            cbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            btn = Gtk.Button()
+            sprite_size = 40
+            pic = Gtk.Picture()
+            pic.set_size_request(sprite_size, sprite_size)
+            pic.set_can_shrink(True)
+            if self.get_catset_preview:
+                pil_img = self.get_catset_preview(char_id)
+                if pil_img:
+                    pic.set_paintable(pil_to_texture(pil_img, sprite_size, sprite_size))
+            btn.set_child(pic)
+            btn_css = Gtk.CssProvider()
+            border_color = '#4d3319' if is_active else 'transparent'
+            btn_css.load_from_data(f"""
+                button {{ background: transparent; padding: 2px;
+                         border: 2px solid {border_color};
+                         border-radius: 6px; opacity: {1.0 if is_active else 0.4}; }}
+                button:hover {{ opacity: 1.0; }}
+            """.encode())
+            btn.get_style_context().add_provider(btn_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            if is_active:
+                pass  # no select-highlight for catset (no details panel)
+            else:
+                btn.connect("clicked", self._on_catset_add, char_id)
+            cbox.append(btn)
+            if is_active and total_cats > 1:
+                rm_btn = Gtk.Button(label="\u00d7")
+                rm_css = Gtk.CssProvider()
+                rm_css.load_from_data(b"button { background: #cc3333; color: white; border-radius: 50%; min-width: 16px; min-height: 16px; font-size: 10px; padding: 0; }")
+                rm_btn.get_style_context().add_provider(rm_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+                rm_btn.set_halign(Gtk.Align.CENTER)
+                rm_btn.connect("clicked", self._on_catset_remove, char_id)
+                cbox.append(rm_btn)
+            catset_box.append(cbox)
+        box.append(catset_box)
+
         if getattr(self, '_anim_timer', None):
             GLib.source_remove(self._anim_timer)
             self._anim_timer = None
@@ -2073,7 +2274,7 @@ class SettingsWindow:
         # Selected cat details
         if self.selected_color_id and self.selected_color_id in active_ids:
             cd = color_def(self.selected_color_id)
-            cfg = next((c for c in configs if c["color_id"] == self.selected_color_id), None)
+            cfg = next((c for c in configs if c.get("color_id") == self.selected_color_id), None)
             if cd:
                 if self.get_preview:
                     pil_img = self.get_preview(self.selected_color_id)
@@ -2215,6 +2416,14 @@ class SettingsWindow:
     def _on_bubble_remove(self, btn, color_id):
         if self.on_remove:
             self.on_remove(color_id)
+
+    def _on_catset_add(self, btn, char_id):
+        if self.on_add_catset:
+            self.on_add_catset(char_id)
+
+    def _on_catset_remove(self, btn, char_id):
+        if self.on_remove_catset:
+            self.on_remove_catset(char_id)
 
     def _on_lang_click(self, btn, lang_code):
         if self.on_lang_changed:
@@ -3014,14 +3223,33 @@ class CatAIApp(Gtk.Application):
         self.display_h = int(round(self.sprite_h * self.cat_scale))
 
     def _create_instance(self, config, index):
-        cd = color_def(config["color_id"])
-        if not cd:
-            return
+        char_id = config.get("char_id")
+        if char_id:
+            # Catset character: load its own metadata
+            pkg_dir = os.path.dirname(os.path.abspath(__file__))
+            char_dir = os.path.join(pkg_dir, char_id)
+            if not os.path.isdir(char_dir):
+                log.warning("Catset dir not found: %s — skipping", char_dir)
+                return
+            meta = load_metadata(char_dir)
+            sprite_w = meta["character"]["size"]["width"]
+            sprite_h = meta["character"]["size"]["height"]
+            dw = int(round(sprite_w * self.cat_scale))
+            dh = int(round(sprite_h * self.cat_scale))
+            cd = _CATSET_COLOR_DEF
+        else:
+            cd = color_def(config.get("color_id", ""))
+            if not cd:
+                return
+            meta = self.meta
+            char_dir = self.cat_dir
+            dw = self.display_w
+            dh = self.display_h
         inst = CatInstance(config, cd)
-        start_x = random.randint(int(self.display_w), int(self.screen_w - self.display_w * 2))
-        start_x = max(0, min(start_x, self.screen_w - self.display_w))
-        inst.setup(self, self.meta, self.cat_dir,
-                   self.display_w, self.display_h,
+        start_x = random.randint(int(dw), int(self.screen_w - dw * 2))
+        start_x = max(0, min(start_x, self.screen_w - dw))
+        inst.setup(self, meta, char_dir,
+                   dw, dh,
                    self.selected_model, L10n.lang,
                    start_x, self.screen_w, self.screen_h)
         self.cat_instances.append(inst)
@@ -3128,20 +3356,62 @@ class CatAIApp(Gtk.Application):
             self._active_chat_cat = None
         cat.cleanup()
         self.cat_instances.pop(idx)
-        self.cat_configs = [c for c in self.cat_configs if c["color_id"] != color_id]
+        self.cat_configs = [c for c in self.cat_configs if c.get("color_id") != color_id]
         delete_memory(cat.config["id"])
         self._save_all()
         if self.settings_ctrl:
-            self.settings_ctrl.selected_color_id = self.cat_configs[0]["color_id"] if self.cat_configs else None
+            first_legacy = next((c for c in self.cat_configs if c.get("color_id")), None)
+            self.settings_ctrl.selected_color_id = first_legacy["color_id"] if first_legacy else None
             self.settings_ctrl.refresh()
 
     def rename_cat(self, color_id, name):
         for cfg in self.cat_configs:
-            if cfg["color_id"] == color_id:
+            if cfg.get("color_id") == color_id:
                 cfg["name"] = name; break
         self._save_all()
         for inst in self.cat_instances:
-            if inst.color_def.id == color_id:
+            if inst.config.get("color_id") == color_id:
+                inst.config["name"] = name
+                inst.update_system_prompt(L10n.lang)
+
+    def add_catset_char(self, char_id):
+        if any(c.get("char_id") == char_id for c in self.cat_configs):
+            return
+        p = CATSET_PERSONALITIES.get(char_id, CATSET_PERSONALITIES["cat01"])
+        name = p["name"].get(L10n.lang, p["name"]["fr"])
+        cfg = {"id": f"cat_{uuid.uuid4().hex[:8]}", "char_id": char_id, "name": name}
+        self.cat_configs.append(cfg)
+        self._save_all()
+        self._create_instance(cfg, len(self.cat_instances))
+        if self.settings_ctrl:
+            self.settings_ctrl.refresh()
+
+    def remove_catset_char(self, char_id):
+        if len(self.cat_configs) <= 1:
+            return
+        idx = next((i for i, c in enumerate(self.cat_instances) if c.config.get("char_id") == char_id), None)
+        if idx is None:
+            return
+        cat = self.cat_instances[idx]
+        if self._active_chat_cat is cat:
+            cat.chat_visible = False
+            self._chat_entry.set_visible(False)
+            self._active_chat_cat = None
+        cat.cleanup()
+        self.cat_instances.pop(idx)
+        self.cat_configs = [c for c in self.cat_configs if c.get("char_id") != char_id]
+        delete_memory(cat.config["id"])
+        self._save_all()
+        if self.settings_ctrl:
+            self.settings_ctrl.refresh()
+
+    def rename_catset_char(self, char_id, name):
+        for cfg in self.cat_configs:
+            if cfg.get("char_id") == char_id:
+                cfg["name"] = name; break
+        self._save_all()
+        for inst in self.cat_instances:
+            if inst.config.get("char_id") == char_id:
                 inst.config["name"] = name
                 inst.update_system_prompt(L10n.lang)
 
@@ -3150,7 +3420,10 @@ class CatAIApp(Gtk.Application):
         self._recompute_size()
         self._save_all()
         for cat in self.cat_instances:
-            cat.apply_scale(self.display_w, self.display_h, self.meta, self.cat_dir)
+            # Each cat knows its own meta/cat_dir; dw/dh scaled from its sprite size
+            sw = cat._meta["character"]["size"]["width"]
+            sh = cat._meta["character"]["size"]["height"]
+            cat.apply_scale(int(round(sw * s)), int(round(sh * s)))
 
     def set_language(self, lang):
         L10n.lang = lang
@@ -3185,10 +3458,14 @@ class CatAIApp(Gtk.Application):
         ctrl = self.settings_ctrl
         ctrl.get_configs = lambda: self.cat_configs
         ctrl.get_preview = self._get_preview
+        ctrl.get_catset_preview = self._get_catset_preview
         ctrl._get_anim_frames = self._get_anim_frames
         ctrl.on_add = self.add_cat
         ctrl.on_remove = self.remove_cat
         ctrl.on_rename = self.rename_cat
+        ctrl.on_add_catset = self.add_catset_char
+        ctrl.on_remove_catset = self.remove_catset_char
+        ctrl.on_rename_catset = self.rename_catset_char
         ctrl.on_scale_changed = self.apply_new_scale
         ctrl.on_model_changed = self.set_model
         ctrl.on_lang_changed = self.set_language
@@ -3225,6 +3502,21 @@ class CatAIApp(Gtk.Application):
             pil = load_and_tint(os.path.join(self.cat_dir, p), cd)
             textures.append(pil_to_texture(pil, size, size))
         return textures if textures else None
+
+    def _get_catset_preview(self, char_id):
+        """Get idle south sprite for a catset character."""
+        pkg_dir = os.path.dirname(os.path.abspath(__file__))
+        char_dir = os.path.join(pkg_dir, char_id)
+        if not os.path.isdir(char_dir):
+            return None
+        try:
+            meta = load_metadata(char_dir)
+            south_rel = meta["frames"]["rotations"].get("south")
+            if not south_rel:
+                return None
+            return Image.open(os.path.join(char_dir, south_rel)).convert("RGBA")
+        except Exception:
+            return None
 
 
 # ── Entry Point ────────────────────────────────────────────────────────────────

@@ -32,6 +32,50 @@ CAT_NAMES = {
     "cat05": "black_cat",
 }
 
+# ── Palette swap ───────────────────────────────────────────────────────────────
+
+# Orange gradient from dark to light (for palette swap)
+ORANGE_PALETTE = [
+    (45, 18, 0),
+    (90, 38, 5),
+    (145, 65, 10),
+    (195, 95, 25),
+    (230, 130, 45),
+    (255, 165, 65),
+    (255, 195, 100),
+    (255, 220, 145),
+    (255, 240, 195),
+]
+
+def palette_swap(img: Image.Image, target_palette: list) -> Image.Image:
+    """Map all non-transparent colors to target_palette by luminance order."""
+    def lum(rgb):
+        r, g, b = [x / 255.0 for x in rgb]
+        return 0.299 * r + 0.587 * g + 0.114 * b
+
+    pixels = list(img.getdata())
+    unique = sorted({p[:3] for p in pixels if p[3] > 10}, key=lum)
+    n = len(unique)
+    pal = target_palette
+
+    color_map = {}
+    for i, color in enumerate(unique):
+        t = i / max(1, n - 1)
+        idx = t * (len(pal) - 1)
+        lo, hi = int(idx), min(int(idx) + 1, len(pal) - 1)
+        f = idx - lo
+        r = int(pal[lo][0] + f * (pal[hi][0] - pal[lo][0]))
+        g = int(pal[lo][1] + f * (pal[hi][1] - pal[lo][1]))
+        b = int(pal[lo][2] + f * (pal[hi][2] - pal[lo][2]))
+        color_map[color] = (r, g, b)
+
+    out = Image.new("RGBA", img.size)
+    out.putdata([
+        (color_map[p[:3]] + (p[3],)) if p[3] > 10 else p
+        for p in pixels
+    ])
+    return out
+
 # catset anim → (catai_anim, directions, max_frames)
 # directions: list of CATAI directions to generate
 #   "east"  = catset frames as-is (face right)
@@ -56,16 +100,20 @@ ANIM_MAP = [
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def extract_frames(sheet_path: Path, n_frames: int, max_frames: int | None = None) -> list[Image.Image]:
-    """Slice a horizontal strip into individual RGBA frames, upscaled 2×."""
+def extract_frames(sheet_path: Path, n_frames: int, max_frames: int | None = None,
+                   recolor=None) -> list[Image.Image]:
+    """Slice a horizontal strip into individual RGBA frames, upscaled 2×.
+    If recolor is a palette list, apply palette_swap to each frame."""
     img = Image.open(sheet_path).convert("RGBA")
     w, h = img.size
-    fw = w // n_frames  # frame width (should equal h = 40)
+    fw = w // n_frames
     frames = []
     limit = min(n_frames, max_frames) if max_frames else n_frames
     for i in range(limit):
         frame = img.crop((i * fw, 0, (i + 1) * fw, h))
         frame = frame.resize((TARGET, TARGET), Image.NEAREST)
+        if recolor:
+            frame = palette_swap(frame, recolor)
         frames.append(frame)
     return frames
 
@@ -91,7 +139,7 @@ def find_sheet(cat_dir: Path, anim_name: str) -> tuple[Path, int] | None:
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
-def convert_cat(cat_src_dir: Path, cat_out_dir: Path, cat_id: str):
+def convert_cat(cat_src_dir: Path, cat_out_dir: Path, cat_id: str, recolor=None):
     name = CAT_NAMES.get(cat_id, cat_id)
     print(f"\n── {cat_id} → {name} ({'→'.join([str(cat_src_dir.name), str(cat_out_dir.name)])})")
 
@@ -111,8 +159,8 @@ def convert_cat(cat_src_dir: Path, cat_out_dir: Path, cat_id: str):
     if not idle_info:
         print(f"  ERROR: no idle sheet found in {cat_src_dir}")
         return
-    idle_frames = extract_frames(*idle_info)
-    sit_frames  = extract_frames(*sit_info) if sit_info else idle_frames
+    idle_frames = extract_frames(*idle_info, recolor=recolor)
+    sit_frames  = extract_frames(*sit_info, recolor=recolor) if sit_info else idle_frames
 
     east_rot  = idle_frames[0]
     west_rot  = east_rot.transpose(Image.FLIP_LEFT_RIGHT)
@@ -144,7 +192,7 @@ def convert_cat(cat_src_dir: Path, cat_out_dir: Path, cat_id: str):
             print(f"  skip {catset_anim} (not found)")
             continue
         sheet_path, n_frames = info
-        frames_east = extract_frames(sheet_path, n_frames, max_frames)
+        frames_east = extract_frames(sheet_path, n_frames, max_frames, recolor=recolor)
         frames_west = flip_frames(frames_east)
 
         anim_meta[catai_anim] = {}
@@ -201,6 +249,13 @@ def main():
         cat_id = cat_src.name.replace("_spritesheets", "")  # cat01
         cat_out = out_root / cat_id
         convert_cat(cat_src, cat_out, cat_id)
+
+    # Generate orange cat: palette-swap of cat01 with orange/yellow tones
+    cat01_src = src_root / "cat01_spritesheets"
+    if cat01_src.exists():
+        print("\n── cat_orange (cat01 + orange palette swap)")
+        CAT_NAMES["cat_orange"] = "orange_cat"
+        convert_cat(cat01_src, out_root / "cat_orange", "cat_orange", recolor=ORANGE_PALETTE)
 
     print(f"\nDone. Characters written to {out_root}")
     print("Next: open sprite_viewer.html and point it at one of the cat directories.")
