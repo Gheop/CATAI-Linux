@@ -84,6 +84,16 @@ class CatState(enum.Enum):
     SURPRISED = "surprised"
     JUMPING = "jumping"
     CLIMBING = "climbing"
+    DASHING = "dashing"
+    DYING = "dying"
+    FALLING = "falling"
+    HURTING = "hurting"
+    LANDING = "landing"
+    LEDGECLIMB_STRUGGLE = "ledgeclimb_struggle"
+    LEDGEGRAB = "ledgegrab"
+    LEDGEIDLE = "ledgeidle"
+    WALLCLIMB = "wallclimb"
+    WALLGRAB = "wallgrab"
 
 
 ANIM_KEYS = {
@@ -106,13 +116,67 @@ ANIM_KEYS = {
     CatState.SURPRISED: "surprised",
     CatState.JUMPING: "jumping",
     CatState.CLIMBING: "climbing",
+    CatState.DASHING: "dash",
+    CatState.DYING: "die",
+    CatState.FALLING: "fall",
+    CatState.HURTING: "hurt",
+    CatState.LANDING: "land",
+    CatState.LEDGECLIMB_STRUGGLE: "ledgeclimb-struggle",
+    CatState.LEDGEGRAB: "ledgegrab",
+    CatState.LEDGEIDLE: "ledgeidle",
+    CatState.WALLCLIMB: "wallclimb",
+    CatState.WALLGRAB: "wallgrab",
 }
 ONE_SHOT_STATES = {
     CatState.EATING, CatState.DRINKING, CatState.ANGRY, CatState.WAKING_UP,
     CatState.CHASING_MOUSE, CatState.PLAYING_BALL, CatState.BUTTERFLY,
     CatState.SCRATCHING_TREE, CatState.PEEING, CatState.POOPING,
     CatState.FLAT, CatState.LOVE, CatState.GROOMING, CatState.ROLLING,
-    CatState.SURPRISED, CatState.JUMPING,
+    CatState.SURPRISED, CatState.JUMPING, CatState.CLIMBING,
+    CatState.FALLING,
+    CatState.LANDING, CatState.LEDGECLIMB_STRUGGLE, CatState.LEDGEGRAB,
+    CatState.WALLCLIMB,
+}
+
+
+# ── Sequences ─────────────────────────────────────────────────────────────────
+
+class SequenceStep:
+    __slots__ = ('state', 'direction_mode', 'pause_after', 'loop_count')
+    def __init__(self, state, direction_mode="inherit", pause_after=0, loop_count=1):
+        self.state = state
+        self.direction_mode = direction_mode  # "inherit" | "south"
+        self.pause_after = pause_after        # ticks to hold on last frame
+        self.loop_count = loop_count          # how many times to play
+
+SEQUENCES = {
+    "wall_adventure": [
+        SequenceStep(CatState.WALLCLIMB),
+        SequenceStep(CatState.WALLGRAB, pause_after=8),
+        SequenceStep(CatState.FALLING, direction_mode="south"),
+        SequenceStep(CatState.LANDING, direction_mode="south"),
+    ],
+    "ledge_adventure": [
+        SequenceStep(CatState.LEDGEGRAB),
+        SequenceStep(CatState.LEDGEIDLE, loop_count=2),
+        SequenceStep(CatState.LEDGECLIMB_STRUGGLE),
+        SequenceStep(CatState.CLIMBING),
+    ],
+    "dash_crash": [
+        SequenceStep(CatState.DASHING),
+        SequenceStep(CatState.HURTING, direction_mode="south"),
+    ],
+    "full_jump": [
+        SequenceStep(CatState.JUMPING, direction_mode="south"),
+        SequenceStep(CatState.FALLING, direction_mode="south"),
+        SequenceStep(CatState.LANDING, direction_mode="south"),
+    ],
+    "drama_queen": [
+        SequenceStep(CatState.HURTING, direction_mode="south"),
+        SequenceStep(CatState.DYING, direction_mode="south"),
+        SequenceStep(CatState.HURTING, direction_mode="south", loop_count=3),
+        SequenceStep(CatState.WAKING_UP, direction_mode="south"),
+    ],
 }
 
 # ── Localization ───────────────────────────────────────────────────────────────
@@ -438,33 +502,41 @@ def _sprite_center_x(img):
     return sum(xs) / len(xs) if xs else w / 2.0
 
 
-def _climb_offset(meta, cat_dir):
-    """Return (y_offset, x_offset_east, x_offset_west) in sprite pixels.
-    y_offset  > 0 → shift self.y up (decrease) after climbing
-    x_offset* > 0 → shift self.x right (increase) after climbing
+OFFSET_ANIMS = {
+    "climbing", "wallclimb", "wallgrab", "fall", "ledgegrab",
+    "ledgeidle", "ledgeclimb-struggle", "die", "land", "dash", "hurt",
+}
+
+def _compute_anim_offsets(meta, cat_dir):
+    """Return dict: anim_key -> {direction -> (y_off, x_off)} in sprite pixels.
+    y_off > 0 means the sprite's floor moved UP relative to idle (shift self.y down to compensate).
+    x_off > 0 means the sprite shifted RIGHT relative to idle.
     """
+    offsets = {}
     try:
         south_rel = meta["frames"]["rotations"].get("south", "")
         ref_img = Image.open(os.path.join(cat_dir, south_rel)).convert("RGBA")
         ref_floor = _sprite_floor_y(ref_img)
         ref_cx = _sprite_center_x(ref_img)
+    except Exception:
+        return offsets
 
-        y_off, x_east, x_west = 0, 0, 0
-
-        for direction in ("east", "west"):
-            paths = meta["frames"]["animations"].get("climbing", {}).get(direction, [])
+    for anim_key in OFFSET_ANIMS:
+        anim_data = meta["frames"]["animations"].get(anim_key, {})
+        if not anim_data:
+            continue
+        offsets[anim_key] = {}
+        for direction, paths in anim_data.items():
             if not paths:
                 continue
-            last_img = Image.open(os.path.join(cat_dir, paths[-1])).convert("RGBA")
-            if direction == "east":
+            try:
+                last_img = Image.open(os.path.join(cat_dir, paths[-1])).convert("RGBA")
                 y_off = ref_floor - _sprite_floor_y(last_img)
-                x_east = _sprite_center_x(last_img) - ref_cx   # + → cat shifted right
-            else:
-                x_west = _sprite_center_x(last_img) - ref_cx   # - → cat shifted left
-
-        return y_off, x_east, x_west
-    except Exception:
-        return 0, 0, 0
+                x_off = _sprite_center_x(last_img) - ref_cx
+                offsets[anim_key][direction] = (y_off, x_off)
+            except Exception:
+                offsets[anim_key][direction] = (0, 0)
+    return offsets
 
 
 def pil_to_surface(img, target_w, target_h):
@@ -1239,16 +1311,118 @@ def _draw_zzz(ctx, cat_x, cat_y, cat_w):
     """Draw floating ZzZ letters above a sleeping cat."""
     t = time.monotonic()
     ctx.select_font_face("monospace", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-    # Three Z's at different phases, drifting upward
+    base_y = cat_y + cat_w * 0.25  # just above head
     for i, (size, phase, dx) in enumerate([(10, 0.0, 4), (8, 1.0, 10), (6, 2.0, 14)]):
-        offset_y = ((t * 0.6 + phase) % 3.0) / 3.0  # 0..1 float cycle
-        alpha = 1.0 - offset_y * 0.7  # fade out as it rises
+        offset_y = ((t * 0.6 + phase) % 3.0) / 3.0
+        alpha = 1.0 - offset_y * 0.7
         x = cat_x + cat_w // 2 + dx
-        y = cat_y - 8 - int(offset_y * 22)
+        y = base_y - int(offset_y * 18)
         ctx.set_font_size(size)
         ctx.set_source_rgba(0.3, 0.2, 0.1, alpha)
         ctx.move_to(x, y)
         ctx.show_text("Z")
+
+
+def _draw_exclamation(ctx, cat_x, cat_y, cat_w, cat_h):
+    """Draw shaking !!! just above a surprised cat's head."""
+    t = time.monotonic()
+    ctx.select_font_face("monospace", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+    head_y = cat_y + cat_h * 0.3  # just above head
+    for i, (size, dx) in enumerate([(11, -6), (9, 2), (7, 8)]):
+        shake = math.sin(t * 12 + i * 2) * 2
+        x = cat_x + cat_w // 2 + dx + shake
+        y = head_y - i * 3
+        r = 0.9 - i * 0.2
+        ctx.set_font_size(size)
+        ctx.set_source_rgba(r, 0.7 - i * 0.2, 0.0, 1.0)
+        ctx.move_to(x, y)
+        ctx.show_text("!")
+
+
+def _draw_pango_symbol(ctx, text, x, y, size, r, g, b, a):
+    """Render a single Unicode symbol via PangoCairo (handles emoji/symbols)."""
+    ctx.save()
+    ctx.move_to(x, y)
+    ctx.set_source_rgba(r, g, b, a)
+    lay = PangoCairo.create_layout(ctx)
+    lay.set_font_description(Pango.FontDescription(f"sans bold {size}"))
+    lay.set_text(text, -1)
+    PangoCairo.show_layout(ctx, lay)
+    ctx.restore()
+
+
+def _draw_hearts(ctx, cat_x, cat_y, cat_w, cat_h):
+    """Draw floating hearts above a loving cat."""
+    t = time.monotonic()
+    head_y = cat_y + cat_h * 0.3
+    for i, (size, phase, dx) in enumerate([(10, 0.0, -2), (8, 1.2, 6), (7, 2.4, 12)]):
+        offset_y = ((t * 0.5 + phase) % 3.0) / 3.0
+        alpha = 1.0 - offset_y * 0.8
+        x = cat_x + cat_w // 2 + dx
+        y = head_y - int(offset_y * 18)
+        r = 0.9 - i * 0.15
+        _draw_pango_symbol(ctx, "\u2665", x, y, size, r, 0.2, 0.3, alpha)
+
+
+def _draw_hurt_stars(ctx, cat_x, cat_y, cat_w, cat_h):
+    """Draw spinning pain stars around a hurt cat's head."""
+    t = time.monotonic()
+    cx = cat_x + cat_w * 0.5
+    cy = cat_y + cat_h * 0.3
+    r = cat_w * 0.18
+    sz = max(6, int(cat_w * 0.08))
+    for i in range(3):
+        angle = t * 3 + i * (2 * math.pi / 3)
+        x = cx + math.cos(angle) * r
+        y = cy + math.sin(angle) * r * 0.5
+        sym = "\u2726" if i % 2 == 0 else "\u2727"
+        _draw_pango_symbol(ctx, sym, x, y, sz, 0.95, 0.85, 0.1, 0.9)
+
+
+def _draw_skull(ctx, cat_x, cat_y, cat_w, cat_h):
+    """Draw a floating skull above a dying cat, rising and fading."""
+    t = time.monotonic()
+    offset_y = ((t * 0.4) % 2.5) / 2.5  # slow rise cycle
+    alpha = 1.0 - offset_y * 0.9
+    head_y = cat_y + cat_h * 0.3
+    _draw_pango_symbol(ctx, "\U0001f480", cat_x + cat_w // 2 - 6, head_y - int(offset_y * 20), 12, 0.5, 0.4, 0.4, alpha)
+
+
+def _draw_sparkle(ctx, cat_x, cat_y, cat_w, cat_h):
+    """Draw a pulsing sparkle above a grooming cat."""
+    t = time.monotonic()
+    pulse = 0.6 + 0.4 * math.sin(t * 3)
+    _draw_pango_symbol(ctx, "\u2728", cat_x + cat_w // 2 + 4, cat_y + cat_h * 0.3, 10, 0.7, 0.85, 0.95, pulse)
+
+
+def _draw_anger(ctx, cat_x, cat_y, cat_w, cat_h):
+    """Draw a shaking anger symbol above an angry cat."""
+    t = time.monotonic()
+    shake = math.sin(t * 14) * 2
+    _draw_pango_symbol(ctx, "\U0001f4a2", cat_x + cat_w // 2 + shake, cat_y + cat_h * 0.25, 11, 0.85, 0.15, 0.1, 1.0)
+
+
+def _draw_speed_lines(ctx, cat_x, cat_y, cat_w, cat_h, direction):
+    """Draw speed lines behind a dashing cat."""
+    t = time.monotonic()
+    # Behind = opposite side of facing direction
+    if direction == "east":
+        base_x = cat_x - 4  # left edge of cat
+    else:
+        base_x = cat_x + cat_w + 4  # right edge of cat
+    ctx.set_line_width(2)
+    for i in range(5):
+        phase = (t * 8 + i * 0.4) % 1.0
+        alpha = 0.7 - phase * 0.6
+        y = cat_y + cat_h * 0.25 + i * (cat_h * 0.13)
+        length = 12 + phase * 10
+        ctx.set_source_rgba(0.6, 0.5, 0.4, max(0, alpha))
+        ctx.move_to(base_x, y)
+        if direction == "east":
+            ctx.line_to(base_x - length, y)  # trail to the left
+        else:
+            ctx.line_to(base_x + length, y)  # trail to the right
+        ctx.stroke()
 
 
 def _cairo_ellipse(ctx, cx, cy, rx, ry):
@@ -1767,9 +1941,12 @@ class CatInstance:
         self._app = None
         self._meta = None
         self._cat_dir = ""
-        self._climb_y_offset = 0       # display-px to shift Y up after climbing anim
-        self._climb_x_offset_east = 0  # display-px to shift X right after east climb
-        self._climb_x_offset_west = 0  # display-px to shift X right after west climb
+        self._anim_offsets = {}         # anim_key -> {direction -> (dy, dx)} in display-px
+        self._sequence = None           # list[SequenceStep] or None
+        self._sequence_index = 0
+        self._sequence_direction = None # locked east/west for the whole sequence
+        self._sequence_pause_ticks = 0
+        self._sequence_loop_counter = 1
         # Meow bubble state (drawn on canvas)
         self.meow_text = ""
         self.meow_visible = False
@@ -1802,12 +1979,14 @@ class CatInstance:
         # Compute sprite-pixel offsets to align next anim after climbing
         sprite_w = meta["character"]["size"]["width"]
         sprite_h = meta["character"]["size"]["height"]
-        y_off, x_east, x_west = _climb_offset(meta, cat_dir)
+        raw_offsets = _compute_anim_offsets(meta, cat_dir)
         scale_x = dw / sprite_w
         scale_y = dh / sprite_h
-        self._climb_y_offset = round(y_off * scale_y)
-        self._climb_x_offset_east = round(x_east * scale_x)   # shift right after east climb
-        self._climb_x_offset_west = round(x_west * scale_x)   # shift (negative) after west
+        self._anim_offsets = {}
+        for anim_key, dirs in raw_offsets.items():
+            self._anim_offsets[anim_key] = {}
+            for direction, (y_off, x_off) in dirs.items():
+                self._anim_offsets[anim_key][direction] = (round(y_off * scale_y), round(x_off * scale_x))
 
     def setup_chat(self, model, lang):
         char_id = self.config.get("char_id")
@@ -1923,6 +2102,95 @@ class CatInstance:
                 self.frame_index += 1
             self.x = max(0, min(self.x, self.screen_w - self.display_w))
             self.y = max(0, min(self.y, self.screen_h - self.display_h))
+        elif self.state == CatState.DASHING:
+            # Fast horizontal movement with dash animation
+            speed = WALK_SPEED * 3
+            if self.direction == "east":
+                self.x += speed
+            else:
+                self.x -= speed
+            self.x = max(0, min(self.x, self.screen_w - self.display_w))
+            frames = self.animations.get("dash", {}).get(self.direction, [])
+            if not frames or self.x <= 0 or self.x >= self.screen_w - self.display_w:
+                self._end_current_step()
+            else:
+                self.frame_index = (self.frame_index + 1) % len(frames)
+        elif self.state == CatState.DYING:
+            # Stay dead for 5-10s, slow frame loop, then resurrect
+            frames = self.animations.get("die", {}).get(self.direction, [])
+            if not frames:
+                self._end_current_step()
+            else:
+                self._state_tick = getattr(self, '_state_tick', 0) + 1
+                if not hasattr(self, '_die_threshold'):
+                    self._die_threshold = random.randint(40, 80)
+                # Slow loop on last frames
+                if self._state_tick % 6 == 0:
+                    half = len(frames) // 2
+                    self.frame_index = half + (self.frame_index - half + 1) % (len(frames) - half)
+                # After 5-10s, resurrect
+                if self._state_tick > self._die_threshold:
+                    self._state_tick = 0
+                    del self._die_threshold
+                    if self._sequence:
+                        self._end_current_step()
+                    else:
+                        # Direct transition: hurt → waking up via _die_resurrect counter
+                        self._die_resurrect = 3
+                        self.state = CatState.HURTING
+                        self.direction = "south"
+                        self.frame_index = 0
+                        log.warning("RESURRECT: %s → HURTING (frames=%d)",
+                                 self.config.get("char_id", "?"),
+                                 len(self.animations.get("hurt", {}).get("south", [])))
+        elif self.state == CatState.HURTING:
+            # Custom handler: supports resurrection loop (_die_resurrect counter)
+            frames = self.animations.get("hurt", {}).get(self.direction, [])
+            if not frames:
+                log.warning("HURTING: no frames for dir=%s, anims_keys=%s", self.direction, list(self.animations.keys()))
+                self._end_current_step()
+            elif self.frame_index >= len(frames) - 1:
+                resurrect = getattr(self, '_die_resurrect', 0)
+                if resurrect > 1:
+                    # Loop hurt animation again
+                    self._die_resurrect = resurrect - 1
+                    self.frame_index = 0
+                elif resurrect == 1:
+                    # Last loop done → waking up
+                    self._die_resurrect = 0
+                    self.state = CatState.WAKING_UP
+                    self.direction = "south"
+                    self.frame_index = 0
+                else:
+                    # Normal one-shot (in sequence or standalone)
+                    self._end_current_step()
+            else:
+                self.frame_index += 1
+        elif self.state == CatState.WALLGRAB:
+            # Slide slowly downward, loop animation, then let go
+            frames = self.animations.get("wallgrab", {}).get(self.direction, [])
+            if not frames:
+                self._end_current_step()
+            else:
+                self._state_tick = getattr(self, '_state_tick', 0) + 1
+                self.y += 1  # slide down 1px per tick
+                self.frame_index = (self.frame_index + 1) % len(frames)
+                # After ~3s or hitting bottom, let go
+                if self._state_tick > random.randint(20, 30) or self.y >= self.screen_h - self.display_h:
+                    self._state_tick = 0
+                    self._end_current_step()
+        elif self.state == CatState.LEDGEIDLE:
+            # Hang for a bit then move on
+            frames = self.animations.get("ledgeidle", {}).get(self.direction, [])
+            if not frames:
+                self._end_current_step()
+            else:
+                self._state_tick = getattr(self, '_state_tick', 0) + 1
+                self.frame_index = (self.frame_index + 1) % len(frames)
+                # After ~2-3s, move on
+                if self._state_tick > random.randint(16, 24):
+                    self._state_tick = 0
+                    self._end_current_step()
         elif self.state == CatState.SLEEPING_BALL:
             # Advance breathing frame every 6 render ticks (~0.75s per frame, ~3s per breath)
             self._sleep_tick = getattr(self, '_sleep_tick', 0) + 1
@@ -1930,41 +2198,106 @@ class CatInstance:
                 self._sleep_tick = 0
                 self.frame_index = (self.frame_index + 1) % 4
         elif self.state in ONE_SHOT_STATES:
+            # Handle sequence pause (hold on last frame between steps)
+            if self._sequence and self._sequence_pause_ticks > 0:
+                self._sequence_pause_ticks -= 1
+                return
             key = ANIM_KEYS.get(self.state)
             if key:
                 frames = self.animations.get(key, {}).get(self.direction, [])
                 if not frames:
-                    # Animation absent for this character — fall back to IDLE immediately
-                    self.state = CatState.IDLE
-                    self.frame_index = 0
-                    self.idle_ticks = 0
+                    self._end_current_step()
                 elif self.frame_index >= len(frames) - 1:
-                    self.state = CatState.IDLE
-                    self.frame_index = 0
-                    self.idle_ticks = 0
+                    self._end_current_step()
                 else:
                     self.frame_index += 1
-        elif self.state == CatState.CLIMBING:
-            frames = self.animations.get("climbing", {}).get(self.direction, [])
-            if not frames:
-                self.state = CatState.IDLE
+
+    def _end_current_step(self):
+        """Called when the current animation finishes. Advance sequence or go IDLE."""
+        if self._sequence and self._sequence_index < len(self._sequence):
+            step = self._sequence[self._sequence_index]
+            # Handle loop_count
+            if self._sequence_loop_counter < step.loop_count:
+                self._sequence_loop_counter += 1
                 self.frame_index = 0
-                self.idle_ticks = 0
-            elif self.frame_index >= len(frames) - 1:
-                # Compensate for visual floor/center shift within the sprite
-                self.y -= self._climb_y_offset
-                if self.direction == "east":
-                    self.x += self._climb_x_offset_east
-                else:
-                    self.x += self._climb_x_offset_west
-                self.x = max(0, min(self.x, self.screen_w - self.display_w))
-                if self.y < 0:
-                    self.y = self.screen_h - self.display_h
-                self.state = CatState.IDLE
+                return
+            # Handle pause_after
+            if step.pause_after > 0 and self._sequence_pause_ticks == 0:
+                self._sequence_pause_ticks = step.pause_after
+                return
+            # Advance to next step
+            self._sequence_index += 1
+            self._sequence_loop_counter = 1
+            self._sequence_pause_ticks = 0
+            if self._sequence_index < len(self._sequence):
+                next_step = self._sequence[self._sequence_index]
+                next_key = ANIM_KEYS.get(next_step.state)
+                next_dir = "south" if next_step.direction_mode == "south" else self._sequence_direction
+                frames = self.animations.get(next_key, {}).get(next_dir, [])
+                if not frames:
+                    log.warning("SEQUENCE: skip %s dir=%s (no frames, loaded=%s)", next_step.state, next_dir, list(self.animations.keys()))
+                    self._end_current_step()
+                    return
+                self.state = next_step.state
+                self.direction = next_dir
                 self.frame_index = 0
-                self.idle_ticks = 0
-            else:
-                self.frame_index += 1
+                return
+        # Sequence finished (or no sequence) → compensate offsets → IDLE
+        self._apply_sequence_offset_compensation()
+        self._sequence = None
+        self._sequence_index = 0
+        self._sequence_direction = None
+        self._sequence_pause_ticks = 0
+        self._sequence_loop_counter = 1
+        self.state = CatState.IDLE
+        self.frame_index = 0
+        self.idle_ticks = 0
+
+    def _apply_sequence_offset_compensation(self):
+        """Apply accumulated offset from all steps played."""
+        if self._sequence:
+            total_y, total_x = 0, 0
+            for i in range(self._sequence_index + 1):
+                if i >= len(self._sequence):
+                    break
+                step = self._sequence[i]
+                step_key = ANIM_KEYS.get(step.state, "")
+                step_dir = "south" if step.direction_mode == "south" else self._sequence_direction
+                dy, dx = self._anim_offsets.get(step_key, {}).get(step_dir, (0, 0))
+                total_y += dy
+                total_x += dx
+        else:
+            key = ANIM_KEYS.get(self.state, "")
+            dy, dx = self._anim_offsets.get(key, {}).get(self.direction, (0, 0))
+            total_y, total_x = dy, dx
+        self.y -= total_y
+        self.x += total_x
+        self.x = max(0, min(self.x, self.screen_w - self.display_w))
+        if self.y < 0:
+            self.y = self.screen_h - self.display_h
+
+    def _start_sequence(self, seq_name):
+        """Begin a multi-step animation sequence."""
+        seq = SEQUENCES.get(seq_name)
+        if not seq:
+            return
+        direction = random.choice(["east", "west"])
+        self._sequence = list(seq)
+        self._sequence_index = 0
+        self._sequence_direction = direction
+        self._sequence_loop_counter = 1
+        self._sequence_pause_ticks = 0
+        first_step = self._sequence[0]
+        first_dir = "south" if first_step.direction_mode == "south" else direction
+        first_key = ANIM_KEYS.get(first_step.state)
+        frames = self.animations.get(first_key, {}).get(first_dir, [])
+        if not frames:
+            self._sequence = None
+            return
+        self.state = first_step.state
+        self.direction = first_dir
+        self.frame_index = 0
+        self.idle_ticks = 0
 
     def behavior_tick(self):
         if self.chat_visible or self.dragging or self.in_encounter:
@@ -2018,14 +2351,24 @@ class CatInstance:
                 self.state = CatState.JUMPING
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.80:
+            elif r < 0.68:
                 self.state = CatState.CLIMBING
                 self.frame_index = 0
                 self.direction = random.choice(["east", "west"])
-            elif r < 0.85:
+            elif r < 0.72:
                 self.state = CatState.ANGRY
                 self.frame_index = 0
                 self.direction = "south"
+            elif r < 0.76:
+                self._start_sequence("wall_adventure")
+            elif r < 0.80:
+                self._start_sequence("ledge_adventure")
+            elif r < 0.84:
+                self._start_sequence("dash_crash")
+            elif r < 0.88:
+                self._start_sequence("full_jump")
+            elif r < 0.92:
+                self._start_sequence("drama_queen")
         elif self.state == CatState.SLEEPING_BALL:
             self.idle_ticks += 1
             if self.idle_ticks > random.randint(5, 15):
@@ -2092,9 +2435,22 @@ class CatInstance:
         return False
 
     def apply_scale(self, new_w, new_h, meta=None, cat_dir=None):
+        m = meta or self._meta
+        d = cat_dir or self._cat_dir
         self.display_w = new_w
         self.display_h = new_h
-        self.load_assets(meta or self._meta, cat_dir or self._cat_dir, lazy=False)
+        self.load_assets(m, d, lazy=False)
+        # Recompute anim offsets at new scale
+        sprite_w = m["character"]["size"]["width"]
+        sprite_h = m["character"]["size"]["height"]
+        raw_offsets = _compute_anim_offsets(m, d)
+        scale_x = new_w / sprite_w
+        scale_y = new_h / sprite_h
+        self._anim_offsets = {}
+        for anim_key, dirs in raw_offsets.items():
+            self._anim_offsets[anim_key] = {}
+            for direction, (y_off, x_off) in dirs.items():
+                self._anim_offsets[anim_key][direction] = (round(y_off * scale_y), round(x_off * scale_x))
 
     def cleanup(self):
         if self.chat_backend:
@@ -2983,9 +3339,23 @@ class CatAIApp(Gtk.Application):
             ctx.paint()
             ctx.restore()
 
-            # Draw ZzZ if sleeping in a ball
+            # Draw overlays above cat
             if cat.state == CatState.SLEEPING_BALL:
                 _draw_zzz(ctx, cat.x, cat.y, cat.display_w)
+            elif cat.state == CatState.SURPRISED:
+                _draw_exclamation(ctx, cat.x, cat.y, cat.display_w, cat.display_h)
+            elif cat.state == CatState.LOVE:
+                _draw_hearts(ctx, cat.x, cat.y, cat.display_w, cat.display_h)
+            elif cat.state == CatState.HURTING:
+                _draw_hurt_stars(ctx, cat.x, cat.y, cat.display_w, cat.display_h)
+            elif cat.state == CatState.DYING:
+                _draw_skull(ctx, cat.x, cat.y, cat.display_w, cat.display_h)
+            elif cat.state == CatState.GROOMING:
+                _draw_sparkle(ctx, cat.x, cat.y, cat.display_w, cat.display_h)
+            elif cat.state == CatState.ANGRY:
+                _draw_anger(ctx, cat.x, cat.y, cat.display_w, cat.display_h)
+            elif cat.state == CatState.DASHING:
+                _draw_speed_lines(ctx, cat.x, cat.y, cat.display_w, cat.display_h, cat.direction)
 
             # Foreground props (drawn AFTER tinted sprite — correct colour for all skins)
             if cat.state == CatState.SCRATCHING_TREE:
@@ -3299,7 +3669,10 @@ class CatAIApp(Gtk.Application):
     def _render_tick(self):
         t0 = time.monotonic()
         for cat in self.cat_instances:
-            cat.render_tick()
+            try:
+                cat.render_tick()
+            except Exception:
+                log.exception("render_tick crashed for %s", cat.config.get("char_id", "?"))
         self._check_encounters()
         # Reposition chat entry if following a walking cat
         if self._active_chat_cat and self._chat_entry.get_visible():
@@ -3317,7 +3690,10 @@ class CatAIApp(Gtk.Application):
 
     def _behavior_tick(self):
         for cat in self.cat_instances:
-            cat.behavior_tick()
+            try:
+                cat.behavior_tick()
+            except Exception:
+                log.exception("behavior_tick crashed for %s", cat.config.get("char_id", "?"))
         return True
 
     def _check_encounters(self):

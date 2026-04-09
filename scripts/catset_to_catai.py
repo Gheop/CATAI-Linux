@@ -96,6 +96,16 @@ ANIM_MAP = [
     ("walk",            "waking-getting-up",   ["south"],              None),
     ("jump",            "jumping",             ["south"],              None),
     ("ledgeclimb",      "climbing",            ["east", "west"],       None),
+    ("dash",                "dash",                ["east", "west"],       None),
+    ("die",                 "die",                 ["south"],              None),
+    ("fall",                "fall",                ["south"],              None),
+    ("hurt",                "hurt",                ["south"],              None),
+    ("land",                "land",                ["south"],              None),
+    ("ledgeclimb_struggle", "ledgeclimb-struggle", ["east", "west"],       None),
+    ("ledgegrab",           "ledgegrab",           ["east", "west"],       None),
+    ("ledgeidle",           "ledgeidle",           ["east", "west"],       None),
+    ("wallclimb",           "wallclimb",           ["east", "west"],       None),
+    ("wallgrab",            "wallgrab",            ["east", "west"],       None),
 ]
 
 # ── Helpers ────────────────────────────────────────────────────────────────────

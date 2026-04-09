@@ -1,6 +1,6 @@
 {
   "character": {
-    "id": "2cec6c9c-2f5f-4c1d-9e95-9bc23b255694",
+    "id": "387c9cb9-c71c-4a26-9171-4bef106a058c",
     "name": "orange_cat",
     "prompt": "orange cat",
     "size": {
@@ -211,6 +211,175 @@
           "animations/climbing/west/frame_008.png",
           "animations/climbing/west/frame_009.png",
           "animations/climbing/west/frame_010.png"
+        ]
+      },
+      "dash": {
+        "east": [
+          "animations/dash/east/frame_000.png",
+          "animations/dash/east/frame_001.png",
+          "animations/dash/east/frame_002.png",
+          "animations/dash/east/frame_003.png",
+          "animations/dash/east/frame_004.png",
+          "animations/dash/east/frame_005.png",
+          "animations/dash/east/frame_006.png",
+          "animations/dash/east/frame_007.png",
+          "animations/dash/east/frame_008.png"
+        ],
+        "west": [
+          "animations/dash/west/frame_000.png",
+          "animations/dash/west/frame_001.png",
+          "animations/dash/west/frame_002.png",
+          "animations/dash/west/frame_003.png",
+          "animations/dash/west/frame_004.png",
+          "animations/dash/west/frame_005.png",
+          "animations/dash/west/frame_006.png",
+          "animations/dash/west/frame_007.png",
+          "animations/dash/west/frame_008.png"
+        ]
+      },
+      "die": {
+        "south": [
+          "animations/die/south/frame_000.png",
+          "animations/die/south/frame_001.png",
+          "animations/die/south/frame_002.png",
+          "animations/die/south/frame_003.png",
+          "animations/die/south/frame_004.png",
+          "animations/die/south/frame_005.png",
+          "animations/die/south/frame_006.png",
+          "animations/die/south/frame_007.png"
+        ]
+      },
+      "fall": {
+        "south": [
+          "animations/fall/south/frame_000.png",
+          "animations/fall/south/frame_001.png",
+          "animations/fall/south/frame_002.png"
+        ]
+      },
+      "hurt": {
+        "south": [
+          "animations/hurt/south/frame_000.png",
+          "animations/hurt/south/frame_001.png",
+          "animations/hurt/south/frame_002.png",
+          "animations/hurt/south/frame_003.png"
+        ]
+      },
+      "land": {
+        "south": [
+          "animations/land/south/frame_000.png",
+          "animations/land/south/frame_001.png"
+        ]
+      },
+      "ledgeclimb-struggle": {
+        "east": [
+          "animations/ledgeclimb-struggle/east/frame_000.png",
+          "animations/ledgeclimb-struggle/east/frame_001.png",
+          "animations/ledgeclimb-struggle/east/frame_002.png",
+          "animations/ledgeclimb-struggle/east/frame_003.png",
+          "animations/ledgeclimb-struggle/east/frame_004.png",
+          "animations/ledgeclimb-struggle/east/frame_005.png",
+          "animations/ledgeclimb-struggle/east/frame_006.png",
+          "animations/ledgeclimb-struggle/east/frame_007.png",
+          "animations/ledgeclimb-struggle/east/frame_008.png",
+          "animations/ledgeclimb-struggle/east/frame_009.png",
+          "animations/ledgeclimb-struggle/east/frame_010.png",
+          "animations/ledgeclimb-struggle/east/frame_011.png"
+        ],
+        "west": [
+          "animations/ledgeclimb-struggle/west/frame_000.png",
+          "animations/ledgeclimb-struggle/west/frame_001.png",
+          "animations/ledgeclimb-struggle/west/frame_002.png",
+          "animations/ledgeclimb-struggle/west/frame_003.png",
+          "animations/ledgeclimb-struggle/west/frame_004.png",
+          "animations/ledgeclimb-struggle/west/frame_005.png",
+          "animations/ledgeclimb-struggle/west/frame_006.png",
+          "animations/ledgeclimb-struggle/west/frame_007.png",
+          "animations/ledgeclimb-struggle/west/frame_008.png",
+          "animations/ledgeclimb-struggle/west/frame_009.png",
+          "animations/ledgeclimb-struggle/west/frame_010.png",
+          "animations/ledgeclimb-struggle/west/frame_011.png"
+        ]
+      },
+      "ledgegrab": {
+        "east": [
+          "animations/ledgegrab/east/frame_000.png",
+          "animations/ledgegrab/east/frame_001.png",
+          "animations/ledgegrab/east/frame_002.png",
+          "animations/ledgegrab/east/frame_003.png",
+          "animations/ledgegrab/east/frame_004.png"
+        ],
+        "west": [
+          "animations/ledgegrab/west/frame_000.png",
+          "animations/ledgegrab/west/frame_001.png",
+          "animations/ledgegrab/west/frame_002.png",
+          "animations/ledgegrab/west/frame_003.png",
+          "animations/ledgegrab/west/frame_004.png"
+        ]
+      },
+      "ledgeidle": {
+        "east": [
+          "animations/ledgeidle/east/frame_000.png",
+          "animations/ledgeidle/east/frame_001.png",
+          "animations/ledgeidle/east/frame_002.png",
+          "animations/ledgeidle/east/frame_003.png",
+          "animations/ledgeidle/east/frame_004.png",
+          "animations/ledgeidle/east/frame_005.png",
+          "animations/ledgeidle/east/frame_006.png",
+          "animations/ledgeidle/east/frame_007.png"
+        ],
+        "west": [
+          "animations/ledgeidle/west/frame_000.png",
+          "animations/ledgeidle/west/frame_001.png",
+          "animations/ledgeidle/west/frame_002.png",
+          "animations/ledgeidle/west/frame_003.png",
+          "animations/ledgeidle/west/frame_004.png",
+          "animations/ledgeidle/west/frame_005.png",
+          "animations/ledgeidle/west/frame_006.png",
+          "animations/ledgeidle/west/frame_007.png"
+        ]
+      },
+      "wallclimb": {
+        "east": [
+          "animations/wallclimb/east/frame_000.png",
+          "animations/wallclimb/east/frame_001.png",
+          "animations/wallclimb/east/frame_002.png",
+          "animations/wallclimb/east/frame_003.png",
+          "animations/wallclimb/east/frame_004.png",
+          "animations/wallclimb/east/frame_005.png",
+          "animations/wallclimb/east/frame_006.png",
+          "animations/wallclimb/east/frame_007.png"
+        ],
+        "west": [
+          "animations/wallclimb/west/frame_000.png",
+          "animations/wallclimb/west/frame_001.png",
+          "animations/wallclimb/west/frame_002.png",
+          "animations/wallclimb/west/frame_003.png",
+          "animations/wallclimb/west/frame_004.png",
+          "animations/wallclimb/west/frame_005.png",
+          "animations/wallclimb/west/frame_006.png",
+          "animations/wallclimb/west/frame_007.png"
+        ]
+      },
+      "wallgrab": {
+        "east": [
+          "animations/wallgrab/east/frame_000.png",
+          "animations/wallgrab/east/frame_001.png",
+          "animations/wallgrab/east/frame_002.png",
+          "animations/wallgrab/east/frame_003.png",
+          "animations/wallgrab/east/frame_004.png",
+          "animations/wallgrab/east/frame_005.png",
+          "animations/wallgrab/east/frame_006.png",
+          "animations/wallgrab/east/frame_007.png"
+        ],
+        "west": [
+          "animations/wallgrab/west/frame_000.png",
+          "animations/wallgrab/west/frame_001.png",
+          "animations/wallgrab/west/frame_002.png",
+          "animations/wallgrab/west/frame_003.png",
+          "animations/wallgrab/west/frame_004.png",
+          "animations/wallgrab/west/frame_005.png",
+          "animations/wallgrab/west/frame_006.png",
+          "animations/wallgrab/west/frame_007.png"
         ]
       }
     }

@@ -16,7 +16,9 @@ Port of [CATAI](https://github.com/wil-pe/CATAI) (macOS/Swift) to Linux.
 - **Click-through** -- Cats float above all windows, clicks pass through to apps below
 - **6 unique characters** -- Pre-colored 80×80 sprites from the catset collection, each with a distinct look and personality
 - **AI chat** -- Click a cat to open a pixel-art chat bubble, powered by [Claude](https://claude.ai) or [Ollama](https://ollama.ai)
-- **Rich animations** -- Running, sleeping, grooming, rolling, climbing walls, jumping, love loaf, flat sit, and more
+- **Rich animations** -- 23 animation states including running, dashing, sleeping, grooming, climbing, wall grab, ledge climbing, dying & resurrection, and more
+- **Animation sequences** -- Multi-step scripted behaviors: wall adventures, ledge climbing, dash crashes, dramatic deaths with resurrection
+- **Visual overlays** -- Floating ZzZ, hearts, speed lines, hurt stars, skulls, sparkles above cats during animations
 - **Random meows** -- Cats spontaneously say "Miaou~", "Prrr...", "Mrrp!" in cute speech bubbles
 - **Drag & drop** -- Drag cats anywhere on your screen
 - **Cat encounters** -- When two cats cross paths, they stop and have a short AI-generated conversation
@@ -90,8 +92,9 @@ Right-click any cat to access Settings:
 - Single fullscreen transparent canvas with Cairo rendering
 - XShape / GDK input region passthrough -- clicks go through to apps below
 - 80×80 pre-colored PNG sprites (catset by seethingswarm, upscaled 2× with nearest-neighbor)
-- 16 animation states: running, sleeping, eating, grooming, rolling, climbing, jumping, flat, love loaf, surprised, angry, waking up, chasing mouse, and more
-- Climbing mechanic with pixel-accurate floor/centroid measurement for seamless transitions
+- 23 animation states with multi-step sequences (wall adventure, ledge climbing, dash crash, dramatic death)
+- Generalized pixel-accurate offset compensation for seamless transitions between any animation
+- Visual overlays via PangoCairo: ZzZ, hearts, speed lines, hurt stars, skulls, sparkles, anger marks
 - Claude API or Ollama for streaming AI chat
 - Lazy loading + disk cache for instant startup
 - Config persisted in `~/.config/catai/`
@@ -127,6 +130,8 @@ python3 scripts/catset_to_catai.py catset_assets/catset_spritesheets catai_linux
 │   └── cat05/            # Sprite assets — black cat
 ├── scripts/
 │   └── catset_to_catai.py  # Spritesheet conversion tool
+├── tools/
+│   └── sprite_preview.py   # Visual preview of all sprites + overlays
 ├── tests/
 │   └── e2e_test.py       # E2E test suite (socket-based)
 ├── pyproject.toml        # Package config + linter config
@@ -146,6 +151,17 @@ MIT
 ---
 
 ## Changelog
+
+### v0.3.1 — Animation sequences + visual overlays (2026-04-09)
+
+- **10 new animations**: dash, die, fall, hurt, land, wall climb, wall grab, ledge grab, ledge idle, ledge struggle
+- **Multi-step sequences**: wall adventure (climb → grab → fall → land), ledge adventure, dash crash, full jump, drama queen (hurt → die → resurrect)
+- **Visual overlays**: ZzZ (sleep), ♥ (love), !!! (surprised), ✦ (hurt), 💀 (dying), ✨ (grooming), 💢 (angry), speed lines (dash)
+- **Dashing**: cats sprint across the screen at 3× walk speed with speed lines behind them
+- **Dying & resurrection**: cats stay dead 5-10s with floating skull, then hurt animation plays 3× before waking up
+- **Wall grab sliding**: cats slide slowly downward while grabbing a wall, then let go
+- **Sprite preview tool**: `python3 tools/sprite_preview.py` — visual grid of all cats, animations, overlays, and bubbles
+- **Fix**: meow bubble and overlay positioning (relative to cat head, not bounding box top)
 
 ### v0.3.0 — Catset characters + new animations (2026-04-09)
 
