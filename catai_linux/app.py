@@ -1842,11 +1842,11 @@ class CatInstance:
                     self.direction = "north" if abs(dy) > abs(dx) else ("north-east" if step_x > 0 else "north-west")
                 else:
                     self.direction = "south" if abs(dy) > abs(dx) else ("south-east" if step_x > 0 else "south-west")
+                # Only east/west — catset sprites have no north/south/diagonal walk frames
+                self.direction = "east" if step_x >= 0 else "west"
                 self.frame_index += 1
             self.x = max(0, min(self.x, self.screen_w - self.display_w))
             self.y = max(0, min(self.y, self.screen_h - self.display_h))
-            # Reposition chat bubble if visible for this cat
-            pass  # chat bubble follows cat via canvas redraw
         elif self.state == CatState.SLEEPING_BALL:
             # Advance breathing frame every 6 render ticks (~0.75s per frame, ~3s per breath)
             self._sleep_tick = getattr(self, '_sleep_tick', 0) + 1
@@ -1906,18 +1906,14 @@ class CatInstance:
                 self.state = CatState.WALKING
                 self.frame_index = 0
                 self.dest_x = random.uniform(self.display_w, max(self.display_w + 1, self.screen_w - self.display_w))
-                self.dest_y = random.randint(int(self.screen_h * 0.3), self.screen_h - self.display_h)
+                self.dest_y = self.y  # walk horizontally only — no vertical drift
             elif r < 0.27:
                 self.state = CatState.EATING
                 self.frame_index = 0
                 self.direction = "south"
             elif r < 0.30:
-                self.state = CatState.DRINKING
-                self.frame_index = 0
-                self.direction = "south"
-            elif r < 0.33:
                 self._show_random_meow()
-            elif r < 0.37:
+            elif r < 0.35:
                 self.state = CatState.CHASING_MOUSE
                 self.frame_index = 0
                 self.direction = random.choice(["east", "west"])
@@ -1925,48 +1921,32 @@ class CatInstance:
                 self.state = CatState.FLAT
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.43:
+            elif r < 0.45:
                 self.state = CatState.GROOMING
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.46:
+            elif r < 0.50:
                 self.state = CatState.LOVE
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.49:
+            elif r < 0.55:
                 self.state = CatState.ROLLING
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.52:
+            elif r < 0.60:
                 self.state = CatState.SURPRISED
                 self.frame_index = 0
                 self.direction = random.choice(["east", "west"])
-            elif r < 0.55:
+            elif r < 0.65:
                 self.state = CatState.JUMPING
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.62:
+            elif r < 0.80:
                 self.state = CatState.CLIMBING
                 self.frame_index = 0
                 self.direction = random.choice(["east", "west"])
-            elif r < 0.65:
-                self.state = CatState.PLAYING_BALL
-                self.frame_index = 0
-                self.direction = "south"
-            elif r < 0.68:
-                self.state = CatState.BUTTERFLY
-                self.frame_index = 0
-                self.direction = "south"
-            elif r < 0.71:
-                self.state = CatState.SCRATCHING_TREE
-                self.frame_index = 0
-                self.direction = random.choice(["east", "west"])
-            elif r < 0.74:
-                self.state = CatState.PEEING
-                self.frame_index = 0
-                self.direction = random.choice(["east", "west"])
-            elif r < 0.77:
-                self.state = CatState.POOPING
+            elif r < 0.85:
+                self.state = CatState.ANGRY
                 self.frame_index = 0
                 self.direction = "south"
         elif self.state == CatState.SLEEPING_BALL:
@@ -2171,56 +2151,7 @@ class SettingsWindow:
         cats_label.set_margin_top(12)
         box.append(cats_label)
 
-        # Cat sprite selector
-        bubbles_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        bubbles_box.set_halign(Gtk.Align.CENTER)
         self._anim_pictures = []
-        for c in CAT_COLORS:
-            is_active = c.id in active_ids
-            is_sel = self.selected_color_id == c.id and is_active
-            cat_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-
-            btn = Gtk.Button()
-            sprite_size = 40
-            pic = Gtk.Picture()
-            pic.set_size_request(sprite_size, sprite_size)
-            pic.set_can_shrink(True)
-            if self.get_preview:
-                pil_img = self.get_preview(c.id)
-                if pil_img:
-                    pic.set_paintable(pil_to_texture(pil_img, sprite_size, sprite_size))
-            btn.set_child(pic)
-            btn_css = Gtk.CssProvider()
-            border_color = '#ffcc33' if is_sel else ('#4d3319' if is_active else 'transparent')
-            btn_css.load_from_data(f"""
-                button {{ background: transparent; padding: 2px;
-                         border: {3 if is_sel else 2}px solid {border_color};
-                         border-radius: 6px; opacity: {1.0 if is_active else 0.4}; }}
-                button:hover {{ opacity: 1.0; }}
-            """.encode())
-            btn.get_style_context().add_provider(btn_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-
-            if is_active:
-                btn.connect("clicked", self._on_bubble_select, c.id)
-                if self._get_anim_frames:
-                    frames = self._get_anim_frames(c.id, sprite_size)
-                    if frames:
-                        self._anim_pictures.append((pic, frames, [0]))
-            else:
-                btn.connect("clicked", self._on_bubble_add, c.id)
-            cat_box.append(btn)
-
-            if is_active and len(active_ids) > 1:
-                rm_btn = Gtk.Button(label="\u00d7")
-                rm_css = Gtk.CssProvider()
-                rm_css.load_from_data(b"button { background: #cc3333; color: white; border-radius: 50%; min-width: 16px; min-height: 16px; font-size: 10px; padding: 0; }")
-                rm_btn.get_style_context().add_provider(rm_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-                rm_btn.set_halign(Gtk.Align.CENTER)
-                rm_btn.connect("clicked", self._on_bubble_remove, c.id)
-                cat_box.append(rm_btn)
-
-            bubbles_box.append(cat_box)
-        box.append(bubbles_box)
 
         # ── Catset character row ──────────────────────────────────────────────
         catset_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -2270,47 +2201,6 @@ class SettingsWindow:
             self._anim_timer = None
         if self._anim_pictures:
             self._anim_timer = GLib.timeout_add(150, self._animate_previews)
-
-        # Selected cat details
-        if self.selected_color_id and self.selected_color_id in active_ids:
-            cd = color_def(self.selected_color_id)
-            cfg = next((c for c in configs if c.get("color_id") == self.selected_color_id), None)
-            if cd:
-                if self.get_preview:
-                    pil_img = self.get_preview(self.selected_color_id)
-                    if pil_img:
-                        pic = Gtk.Picture()
-                        pic.set_paintable(pil_to_texture(pil_img, 48, 48))
-                        pic.set_size_request(48, 48)
-                        pic.set_halign(Gtk.Align.CENTER)
-                        pic.set_margin_top(8)
-                        box.append(pic)
-
-                name_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-                name_box.set_margin_top(8)
-                nl = Gtk.Label(label=L10n.s("name"))
-                nl.add_css_class("pixel-label-small")
-                name_box.append(nl)
-                ne = Gtk.Entry()
-                ne.set_text(cfg["name"] if cfg else cd.names.get(L10n.lang, ""))
-                ne.set_max_length(30)
-                ne.add_css_class("pixel-entry")
-                ne.set_hexpand(True)
-                ne.connect("changed", self._on_name_changed, self.selected_color_id)
-                name_box.append(ne)
-                box.append(name_box)
-
-                trait = Gtk.Label(label=f"\u2726 {cd.traits.get(L10n.lang, '')}")
-                trait.add_css_class("pixel-trait")
-                trait.set_xalign(0)
-                trait.set_margin_start(4)
-                box.append(trait)
-
-                skill = Gtk.Label(label=cd.skills.get(L10n.lang, ""))
-                skill.add_css_class("pixel-trait")
-                skill.set_xalign(0)
-                skill.set_margin_start(4)
-                box.append(skill)
 
         # SIZE
         size_label = Gtk.Label(label=L10n.s("size"))
@@ -2505,12 +2395,19 @@ class CatEncounter:
     def _listener(self):
         return self.cat_b if self._step % 2 == 0 else self.cat_a
 
+    @staticmethod
+    def _cat_traits(cat, lang):
+        if cat.color_def is _CATSET_COLOR_DEF:
+            p = CATSET_PERSONALITIES.get(cat.config.get("char_id", "cat01"), CATSET_PERSONALITIES["cat01"])
+            return p["traits"].get(lang, p["traits"]["fr"])
+        return cat.color_def.traits.get(lang, cat.color_def.traits.get("fr", ""))
+
     def _build_prompt(self, speaker, listener):
         lang = L10n.lang
         s_name = speaker.config["name"]
         l_name = listener.config["name"]
-        s_traits = speaker.color_def.traits.get(lang, speaker.color_def.traits["fr"])
-        l_traits = listener.color_def.traits.get(lang, listener.color_def.traits["fr"])
+        s_traits = self._cat_traits(speaker, lang)
+        l_traits = self._cat_traits(listener, lang)
         if lang == "en":
             system = (f"You are {s_name}, a {s_traits} cat. You've just run into {l_name}, "
                       f"a {l_traits} cat. Reply with exactly 1 short sentence, in character, "
@@ -2680,12 +2577,19 @@ class CatAIApp(Gtk.Application):
         self.encounters_enabled = cfg.get("encounters", True)
         self.cat_configs = cfg.get("cats", [])
 
-        if not self.cat_configs:
+        # Migrate: drop any legacy color_id-only configs (replaced by catset chars)
+        catset_cfgs = [c for c in self.cat_configs if c.get("char_id")]
+        if not catset_cfgs:
+            p = CATSET_PERSONALITIES["cat_orange"]
             self.cat_configs = [{
                 "id": f"cat_{uuid.uuid4().hex[:8]}",
-                "color_id": "orange",
-                "name": CAT_COLORS[0].names.get(L10n.lang, "Citrouille"),
+                "char_id": "cat_orange",
+                "name": p["name"].get(L10n.lang, p["name"]["fr"]),
             }]
+            self._save_all()
+        elif len(catset_cfgs) < len(self.cat_configs):
+            # Some legacy cats removed — save cleaned config
+            self.cat_configs = catset_cfgs
             self._save_all()
 
         self._recompute_size()
@@ -2985,8 +2889,6 @@ class CatAIApp(Gtk.Application):
 
     def _update_input_regions(self):
         """Update XShape input regions to only cover cat bounding rects."""
-        if not self._canvas_xid:
-            return
         rects = []
         for cat in self.cat_instances:
             # Add some padding for easier clicking
@@ -3025,14 +2927,15 @@ class CatAIApp(Gtk.Application):
         if self._chat_entry and self._chat_entry.get_visible():
             rects.append((self._chat_entry.get_margin_start(),
                          self._chat_entry.get_margin_top(), 260, 30))
-        # XShape for X11 level
-        _update_input_shape(self._canvas_xid, rects)
+        # XShape for X11 level (skip if not X11)
+        if self._canvas_xid:
+            _update_input_shape(self._canvas_xid, rects)
 
-        # GDK surface input region (GTK4 level — needed for GTK to pass events through)
+        # GDK surface input region (GTK4 level — needed for GTK to pass events through,
+        # including on Wayland where XShape is unavailable)
         if self._canvas_window:
             surface = self._canvas_window.get_surface()
             if surface:
-                import cairo
                 region = cairo.Region()
                 for rx, ry, rw, rh in rects:
                     region.union(cairo.RectangleInt(int(rx), int(ry), max(1, int(rw)), max(1, int(rh))))
