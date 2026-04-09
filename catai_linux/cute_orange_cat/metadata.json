@@ -473,6 +473,102 @@
           "animations/waking-getting-up/west/frame_007.png",
           "animations/waking-getting-up/west/frame_008.png"
         ]
+      },
+      "sleeping-ball": {
+        "south": [
+          "animations/sleeping-ball/south/frame_000.png",
+          "animations/sleeping-ball/south/frame_001.png",
+          "animations/sleeping-ball/south/frame_002.png",
+          "animations/sleeping-ball/south/frame_003.png"
+        ]
+      },
+      "chasing-mouse": {
+        "east": [
+          "animations/chasing-mouse/east/frame_000.png",
+          "animations/chasing-mouse/east/frame_001.png",
+          "animations/chasing-mouse/east/frame_002.png",
+          "animations/chasing-mouse/east/frame_003.png",
+          "animations/chasing-mouse/east/frame_004.png",
+          "animations/chasing-mouse/east/frame_005.png"
+        ],
+        "west": [
+          "animations/chasing-mouse/west/frame_000.png",
+          "animations/chasing-mouse/west/frame_001.png",
+          "animations/chasing-mouse/west/frame_002.png",
+          "animations/chasing-mouse/west/frame_003.png",
+          "animations/chasing-mouse/west/frame_004.png",
+          "animations/chasing-mouse/west/frame_005.png"
+        ]
+      },
+      "playing-ball": {
+        "south": [
+          "animations/playing-ball/south/frame_000.png",
+          "animations/playing-ball/south/frame_001.png",
+          "animations/playing-ball/south/frame_002.png",
+          "animations/playing-ball/south/frame_003.png",
+          "animations/playing-ball/south/frame_004.png",
+          "animations/playing-ball/south/frame_005.png",
+          "animations/playing-ball/south/frame_006.png",
+          "animations/playing-ball/south/frame_007.png"
+        ]
+      },
+      "butterfly": {
+        "south": [
+          "animations/butterfly/south/frame_000.png",
+          "animations/butterfly/south/frame_001.png",
+          "animations/butterfly/south/frame_002.png",
+          "animations/butterfly/south/frame_003.png",
+          "animations/butterfly/south/frame_004.png",
+          "animations/butterfly/south/frame_005.png",
+          "animations/butterfly/south/frame_006.png",
+          "animations/butterfly/south/frame_007.png"
+        ]
+      },
+      "scratching-tree": {
+        "east": [
+          "animations/scratching-tree/east/frame_000.png",
+          "animations/scratching-tree/east/frame_001.png",
+          "animations/scratching-tree/east/frame_002.png",
+          "animations/scratching-tree/east/frame_003.png",
+          "animations/scratching-tree/east/frame_004.png",
+          "animations/scratching-tree/east/frame_005.png"
+        ],
+        "west": [
+          "animations/scratching-tree/west/frame_000.png",
+          "animations/scratching-tree/west/frame_001.png",
+          "animations/scratching-tree/west/frame_002.png",
+          "animations/scratching-tree/west/frame_003.png",
+          "animations/scratching-tree/west/frame_004.png",
+          "animations/scratching-tree/west/frame_005.png"
+        ]
+      },
+      "peeing": {
+        "east": [
+          "animations/peeing/east/frame_000.png",
+          "animations/peeing/east/frame_001.png",
+          "animations/peeing/east/frame_002.png",
+          "animations/peeing/east/frame_003.png",
+          "animations/peeing/east/frame_004.png",
+          "animations/peeing/east/frame_005.png"
+        ],
+        "west": [
+          "animations/peeing/west/frame_000.png",
+          "animations/peeing/west/frame_001.png",
+          "animations/peeing/west/frame_002.png",
+          "animations/peeing/west/frame_003.png",
+          "animations/peeing/west/frame_004.png",
+          "animations/peeing/west/frame_005.png"
+        ]
+      },
+      "pooping": {
+        "south": [
+          "animations/pooping/south/frame_000.png",
+          "animations/pooping/south/frame_001.png",
+          "animations/pooping/south/frame_002.png",
+          "animations/pooping/south/frame_003.png",
+          "animations/pooping/south/frame_004.png",
+          "animations/pooping/south/frame_005.png"
+        ]
       }
     }
   },

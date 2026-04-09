@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>CATAI Sprite Viewer</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #1a1a2e;
+  font-family: monospace;
+  color: #eee;
+  padding: 20px;
+}
+h1 {
+  font-size: 20px;
+  color: #ffcc44;
+  margin-bottom: 4px;
+  letter-spacing: 2px;
+}
+.subtitle { color: #888; font-size: 12px; margin-bottom: 24px; }
+.section-title {
+  font-size: 13px;
+  color: #ffaa22;
+  letter-spacing: 1px;
+  margin: 28px 0 12px;
+  border-bottom: 1px solid #333;
+  padding-bottom: 6px;
+}
+.grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+.cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.cell:hover canvas { outline: 2px solid #ffcc44; }
+canvas {
+  background: repeating-conic-gradient(#2a2a3a 0% 25%, #1e1e2e 0% 50%)
+              0 0 / 16px 16px;
+  image-rendering: pixelated;
+  border-radius: 4px;
+}
+.label {
+  font-size: 10px;
+  color: #aaa;
+  text-align: center;
+  max-width: 140px;
+}
+.dir-badge {
+  font-size: 9px;
+  background: #333;
+  color: #ffaa44;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.fps-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 20px;
+  font-size: 12px;
+  color: #aaa;
+}
+input[type=range] { accent-color: #ffcc44; }
+.new-badge {
+  font-size: 9px;
+  background: #2a4a1a;
+  color: #88ff44;
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid #44aa22;
+}
+</style>
+</head>
+<body>
+
+<h1>:: CATAI SPRITE VIEWER ::</h1>
+<p class="subtitle">Clic sur une animation pour la mettre en pause · <kbd>F</kbd> pour tout figer</p>
+
+<div class="fps-control">
+  <label>FPS: <span id="fps-val">8</span></label>
+  <input type="range" id="fps-range" min="1" max="24" value="8">
+</div>
+
+<div id="root"></div>
+
+<script>
+const NEW_ANIMS = new Set([
+  'sleeping-ball', 'chasing-mouse', 'playing-ball', 'butterfly',
+  'scratching-tree', 'peeing', 'pooping'
+]);
+
+const ANIMATIONS = [
+  // Existing
+  { name:'running-8-frames', dir:'south',  frames:8,  label:'Running (south)' },
+  { name:'running-8-frames', dir:'east',   frames:8,  label:'Running (east)' },
+  { name:'eating',           dir:'south',  frames:11, label:'Eating' },
+  { name:'drinking',         dir:'south',  frames:8,  label:'Drinking' },
+  { name:'angry',            dir:'south',  frames:9,  label:'Angry' },
+  { name:'waking-getting-up',dir:'south',  frames:9,  label:'Waking up' },
+  // New
+  { name:'sleeping-ball',    dir:'south',  frames:4,  label:'Sleeping ball' },
+  { name:'chasing-mouse',    dir:'east',   frames:6,  label:'Chasing mouse (east)' },
+  { name:'chasing-mouse',    dir:'west',   frames:6,  label:'Chasing mouse (west)' },
+  { name:'playing-ball',     dir:'south',  frames:8,  label:'Playing ball' },
+  { name:'butterfly',        dir:'south',  frames:8,  label:'Butterfly' },
+  { name:'scratching-tree',  dir:'east',   frames:6,  label:'Scratching tree (east)' },
+  { name:'scratching-tree',  dir:'west',   frames:6,  label:'Scratching tree (west)' },
+  { name:'peeing',           dir:'east',   frames:6,  label:'Peeing (east)' },
+  { name:'peeing',           dir:'west',   frames:6,  label:'Peeing (west)' },
+  { name:'pooping',          dir:'south',  frames:6,  label:'Pooping' },
+];
+
+const SCALE = 4;   // 68px × 4 = 272px display
+let fps = 8;
+let globalPaused = false;
+const pausedCells = new Set();
+const timers = [];
+
+document.getElementById('fps-range').addEventListener('input', e => {
+  fps = +e.target.value;
+  document.getElementById('fps-val').textContent = fps;
+  timers.forEach(t => { clearInterval(t.id); t.id = setInterval(t.fn, 1000/fps); });
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'f' || e.key === 'F') {
+    globalPaused = !globalPaused;
+    document.querySelector('.subtitle').textContent =
+      globalPaused ? '⏸ Tout figé — appuie sur F pour reprendre'
+                   : 'Clic sur une animation pour la mettre en pause · F pour tout figer';
+  }
+});
+
+function framePath(anim, dir, i) {
+  return `catai_linux/cute_orange_cat/animations/${anim}/${dir}/frame_${String(i).padStart(3,'0')}.png`;
+}
+
+function groupBy(arr, fn) {
+  return arr.reduce((acc, item) => {
+    const key = fn(item);
+    (acc[key] = acc[key] || []).push(item);
+    return acc;
+  }, {});
+}
+
+async function buildCell(anim) {
+  const { name, dir, frames: nframes, label } = anim;
+
+  const cell = document.createElement('div');
+  cell.className = 'cell';
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 68 * SCALE;
+  canvas.height = 68 * SCALE;
+  canvas.style.width = (68 * SCALE) + 'px';
+  canvas.style.height = (68 * SCALE) + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+
+  const labelDiv = document.createElement('div');
+  labelDiv.className = 'label';
+
+  const badges = document.createElement('div');
+  badges.style.display = 'flex'; badges.style.gap = '4px';
+  const dirBadge = document.createElement('span');
+  dirBadge.className = 'dir-badge';
+  dirBadge.textContent = dir;
+  badges.appendChild(dirBadge);
+  if (NEW_ANIMS.has(name)) {
+    const nb = document.createElement('span');
+    nb.className = 'new-badge';
+    nb.textContent = 'NEW';
+    badges.appendChild(nb);
+  }
+  labelDiv.textContent = label + ' ';
+  labelDiv.appendChild(badges);
+
+  // Pre-load all frames
+  const images = [];
+  for (let i = 0; i < nframes; i++) {
+    const img = new Image();
+    img.src = framePath(name, dir, i);
+    images.push(new Promise(res => { img.onload = () => res(img); img.onerror = () => res(null); }));
+  }
+  const loaded = await Promise.all(images);
+  const valid = loaded.filter(Boolean);
+  if (!valid.length) return null;
+
+  let fi = 0;
+  function draw() {
+    if (globalPaused || pausedCells.has(cell)) return;
+    const img = valid[fi % valid.length];
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, 68 * SCALE, 68 * SCALE);
+    fi++;
+  }
+
+  draw();
+  const t = { fn: draw, id: setInterval(draw, 1000/fps) };
+  timers.push(t);
+
+  canvas.addEventListener('click', () => {
+    if (pausedCells.has(cell)) pausedCells.delete(cell);
+    else pausedCells.add(cell);
+  });
+
+  cell.appendChild(canvas);
+  cell.appendChild(labelDiv);
+  return cell;
+}
+
+async function main() {
+  const root = document.getElementById('root');
+
+  const existingNames = ['running-8-frames', 'eating', 'drinking', 'angry', 'waking-getting-up'];
+  const existingAnims = ANIMATIONS.filter(a => existingNames.includes(a.name));
+  const newAnims      = ANIMATIONS.filter(a => NEW_ANIMS.has(a.name));
+
+  for (const [title, list] of [
+    ['🐈 Animations existantes', existingAnims],
+    ['✨ Nouvelles animations', newAnims],
+  ]) {
+    const h = document.createElement('div');
+    h.className = 'section-title';
+    h.textContent = title;
+    root.appendChild(h);
+
+    const grid = document.createElement('div');
+    grid.className = 'grid';
+    root.appendChild(grid);
+
+    for (const anim of list) {
+      const cell = await buildCell(anim);
+      if (cell) grid.appendChild(cell);
+    }
+  }
+}
+
+main();
+</script>
+</body>
+</html>

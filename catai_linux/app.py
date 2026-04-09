@@ -5,6 +5,7 @@ Single fullscreen transparent canvas with Cairo rendering.
 """
 
 # Force X11 backend — needed for XShape input passthrough + chat bubble positioning
+import math
 import os
 os.environ.setdefault("GDK_BACKEND", "x11")
 
@@ -67,7 +68,14 @@ class CatState(enum.Enum):
     ANGRY = "angry"
     SLEEPING = "sleeping"
     WAKING_UP = "waking_up"
-    SOCIALIZING = "socializing"  # frozen during cat-to-cat encounter
+    SOCIALIZING = "socializing"      # frozen during cat-to-cat encounter
+    SLEEPING_BALL = "sleeping_ball"  # curled in a ball, breathing slowly
+    CHASING_MOUSE = "chasing_mouse"
+    PLAYING_BALL = "playing_ball"
+    BUTTERFLY = "butterfly"
+    SCRATCHING_TREE = "scratching_tree"
+    PEEING = "peeing"
+    POOPING = "pooping"
 
 
 ANIM_KEYS = {
@@ -76,8 +84,19 @@ ANIM_KEYS = {
     CatState.DRINKING: "drinking",
     CatState.ANGRY: "angry",
     CatState.WAKING_UP: "waking-getting-up",
+    CatState.SLEEPING_BALL: "sleeping-ball",
+    CatState.CHASING_MOUSE: "chasing-mouse",
+    CatState.PLAYING_BALL: "playing-ball",
+    CatState.BUTTERFLY: "butterfly",
+    CatState.SCRATCHING_TREE: "scratching-tree",
+    CatState.PEEING: "peeing",
+    CatState.POOPING: "pooping",
 }
-ONE_SHOT_STATES = {CatState.EATING, CatState.DRINKING, CatState.ANGRY, CatState.WAKING_UP}
+ONE_SHOT_STATES = {
+    CatState.EATING, CatState.DRINKING, CatState.ANGRY, CatState.WAKING_UP,
+    CatState.CHASING_MOUSE, CatState.PLAYING_BALL, CatState.BUTTERFLY,
+    CatState.SCRATCHING_TREE, CatState.PEEING, CatState.POOPING,
+}
 
 # ── Localization ───────────────────────────────────────────────────────────────
 
@@ -1040,6 +1059,242 @@ def _draw_meow_bubble(ctx, text, cat_x, cat_y, cat_w):
     ctx.show_text(text)
 
 
+def _draw_zzz(ctx, cat_x, cat_y, cat_w):
+    """Draw floating ZzZ letters above a sleeping cat."""
+    t = time.monotonic()
+    ctx.select_font_face("monospace", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+    # Three Z's at different phases, drifting upward
+    for i, (size, phase, dx) in enumerate([(10, 0.0, 4), (8, 1.0, 10), (6, 2.0, 14)]):
+        offset_y = ((t * 0.6 + phase) % 3.0) / 3.0  # 0..1 float cycle
+        alpha = 1.0 - offset_y * 0.7  # fade out as it rises
+        x = cat_x + cat_w // 2 + dx
+        y = cat_y - 8 - int(offset_y * 22)
+        ctx.set_font_size(size)
+        ctx.set_source_rgba(0.3, 0.2, 0.1, alpha)
+        ctx.move_to(x, y)
+        ctx.show_text("Z")
+
+
+def _cairo_ellipse(ctx, cx, cy, rx, ry):
+    """Draw an axis-aligned ellipse path in Cairo (no native support)."""
+    ctx.save()
+    ctx.translate(cx, cy)
+    ctx.scale(rx, ry)
+    ctx.arc(0, 0, 1, 0, 2 * math.pi)
+    ctx.restore()
+
+
+def _draw_playing_ball_prop(ctx, cat):
+    """Red yarn ball in front of playing cat — drawn at canvas level to survive tinting."""
+    ball_xs = [31, 33, 35, 33, 31, 29, 31, 33]  # sprite-pixel X per frame
+    sc = cat.display_w / 68
+    fi = cat.frame_index % 8
+    cx = cat.x + ball_xs[fi] * sc
+    cy = cat.y + 58 * sc
+    r = 6 * sc
+    # Main red fill
+    ctx.set_source_rgb(0.80, 0.16, 0.12)
+    ctx.arc(cx, cy, r, 0, 2 * math.pi)
+    ctx.fill()
+    # Highlight
+    ctx.set_source_rgba(0.95, 0.38, 0.28, 0.55)
+    ctx.arc(cx - r * 0.25, cy - r * 0.3, r * 0.55, 0, 2 * math.pi)
+    ctx.fill()
+    # Yarn arc lines
+    ctx.set_source_rgba(0.55, 0.07, 0.05, 0.65)
+    ctx.set_line_width(max(1.0, sc * 0.8))
+    ctx.arc(cx, cy, r * 0.82, 0.35, 2.8)
+    ctx.stroke()
+    ctx.arc(cx, cy, r * 0.58, 2.1, 5.5)
+    ctx.stroke()
+
+
+_BUTTERFLY_YS   = [22, 18, 14, 10, 10, 14, 18, 22]  # sprite-pixel Y per frame
+_BUTTERFLY_FLAP = [0,  1,  2,  3,  2,  1,  0,  1]   # wing flap index per frame
+
+
+def _draw_butterfly_prop(ctx, cat):
+    """Blue-purple butterfly — drawn at canvas level to survive tinting."""
+    sc = cat.display_w / 68
+    fi = cat.frame_index % 8
+    bx = cat.x + 38 * sc
+    by = cat.y + _BUTTERFLY_YS[fi] * sc
+    flap = _BUTTERFLY_FLAP[fi]
+    wy = (3 - abs(flap - 1)) * sc   # wing vertical spread
+
+    # Upper wings
+    ctx.set_source_rgba(0.63, 0.57, 1.0, 0.88)
+    _cairo_ellipse(ctx, bx - 4 * sc, by, 3 * sc, wy + sc)
+    ctx.fill()
+    ctx.set_source_rgba(0.35, 0.29, 0.76, 0.88)
+    _cairo_ellipse(ctx, bx + 4 * sc, by, 3 * sc, wy + sc)
+    ctx.fill()
+    # Lower wings
+    ctx.set_source_rgba(0.35, 0.29, 0.76, 0.75)
+    _cairo_ellipse(ctx, bx - 3 * sc, by + 2 * sc, 2.5 * sc, max(sc, wy * 0.5 + sc))
+    ctx.fill()
+    ctx.set_source_rgba(0.63, 0.57, 1.0, 0.75)
+    _cairo_ellipse(ctx, bx + 3 * sc, by + 2 * sc, 2.5 * sc, max(sc, wy * 0.5 + sc))
+    ctx.fill()
+    # Body
+    ctx.set_source_rgb(0.12, 0.09, 0.04)
+    ctx.arc(bx, by, max(1.0, sc), 0, 2 * math.pi)
+    ctx.fill()
+
+
+def _draw_pee_drops(ctx, cat):
+    """Yellow pee stream — drawn at canvas level to survive tinting."""
+    fi = cat.frame_index
+    if fi < 2:
+        return
+    sc = cat.display_w / 68
+    # Stream origin: belly/crotch area at sprite x=22 (east) or x=46 (west mirror)
+    sx_sprite = 22 if cat.direction == "east" else 46
+    sx = cat.x + sx_sprite * sc
+    sy = cat.y + 52 * sc
+    ctx.set_source_rgba(1.0, 0.84, 0.08, 0.92)
+    for drop in range(min(fi, 5)):
+        dy = sy + drop * 5 * sc
+        if dy < cat.y + cat.display_h:
+            ctx.arc(sx, dy, max(1.0, sc * 1.2), 0, 2 * math.pi)
+            ctx.fill()
+
+
+def _draw_poop_drops(ctx, cat):
+    """Brown poop drops — drawn at canvas level to survive tinting."""
+    fi = cat.frame_index
+    if fi < 3:
+        return
+    sc = cat.display_w / 68
+    drops = fi - 2
+    for d_idx in range(drops):
+        drop_x = cat.x + 34 * sc
+        drop_y = cat.y + (62 - d_idx * 4) * sc
+        r = max(1.0, (3 - d_idx) * sc)
+        if cat.y < drop_y < cat.y + cat.display_h:
+            ctx.set_source_rgba(0.45, 0.27, 0.11, 0.95)
+            ctx.arc(drop_x, drop_y, r, 0, 2 * math.pi)
+            ctx.fill()
+            ctx.set_source_rgba(0.27, 0.15, 0.04, 0.8)
+            ctx.arc(drop_x, drop_y, r * 0.55, 0, 2 * math.pi)
+            ctx.fill()
+
+
+def _tree_tx(cat):
+    """Tree trunk left-edge X in screen coords, for east or west direction."""
+    sc = cat.display_w / 68
+    # East: trunk at sprite x=47..55  West (mirrored): sprite x=12..20
+    tx_sprite = 47 if cat.direction == "east" else 12
+    return cat.x + tx_sprite * sc, sc
+
+
+def _draw_tree_bg_cairo(ctx, cat):
+    """Upper trunk (behind cat) — drawn before the cat sprite."""
+    tx, sc = _tree_tx(cat)
+    y0 = cat.y + 15 * sc
+    y1 = cat.y + 42 * sc   # boundary where fg takes over
+    h = y1 - y0
+    w = 9 * sc
+    # Outer dark trunk
+    ctx.set_source_rgb(0.27, 0.15, 0.04)
+    ctx.rectangle(tx, y0, w, h)
+    ctx.fill()
+    # Inner lighter bark
+    ctx.set_source_rgb(0.45, 0.27, 0.11)
+    ctx.rectangle(tx + sc, y0, w - 2 * sc, h)
+    ctx.fill()
+    # Central dark stripe
+    ctx.set_source_rgb(0.27, 0.15, 0.04)
+    ctx.rectangle(tx + 3 * sc, y0, 3 * sc, h)
+    ctx.fill()
+    # Bark texture
+    ctx.set_source_rgba(0.20, 0.10, 0.02, 0.6)
+    ctx.set_line_width(max(1.0, sc))
+    for by in [y0 + 4 * sc, y0 + 12 * sc, y0 + 20 * sc]:
+        ctx.move_to(tx + sc, by)
+        ctx.line_to(tx + 2 * sc, by + 2 * sc)
+        ctx.stroke()
+        ctx.move_to(tx + 6 * sc, by + 3 * sc)
+        ctx.line_to(tx + 7 * sc, by + 5 * sc)
+        ctx.stroke()
+
+
+def _draw_tree_fg_cairo(ctx, cat):
+    """Lower trunk (in front of cat legs) + foliage + scratch marks."""
+    tx, sc = _tree_tx(cat)
+    y_split = cat.y + 42 * sc
+    y_bot   = cat.y + 67 * sc
+    h = y_bot - y_split
+    w = 9 * sc
+    # Lower trunk
+    ctx.set_source_rgb(0.27, 0.15, 0.04)
+    ctx.rectangle(tx, y_split, w, h)
+    ctx.fill()
+    ctx.set_source_rgb(0.45, 0.27, 0.11)
+    ctx.rectangle(tx + sc, y_split, w - 2 * sc, h)
+    ctx.fill()
+    ctx.set_source_rgb(0.27, 0.15, 0.04)
+    ctx.rectangle(tx + 3 * sc, y_split, 3 * sc, h)
+    ctx.fill()
+    # Bark texture (lower)
+    ctx.set_source_rgba(0.20, 0.10, 0.02, 0.6)
+    ctx.set_line_width(max(1.0, sc))
+    for by in [y_split + 2 * sc, y_split + 10 * sc, y_split + 18 * sc]:
+        ctx.move_to(tx + sc, by)
+        ctx.line_to(tx + 2 * sc, by + 2 * sc)
+        ctx.stroke()
+        ctx.move_to(tx + 6 * sc, by + 3 * sc)
+        ctx.line_to(tx + 7 * sc, by + 5 * sc)
+        ctx.stroke()
+    # Foliage (on top of everything)
+    ctx.set_source_rgba(0.25, 0.57, 0.16, 0.95)
+    _cairo_ellipse(ctx, tx + 5 * sc, cat.y + 10 * sc, 13 * sc, 10 * sc)
+    ctx.fill()
+    ctx.set_source_rgba(0.16, 0.38, 0.09, 0.95)
+    _cairo_ellipse(ctx, tx - 2 * sc, cat.y + 14 * sc, 9 * sc, 8 * sc)
+    ctx.fill()
+    ctx.set_source_rgba(0.25, 0.57, 0.16, 0.88)
+    _cairo_ellipse(ctx, tx + 12 * sc, cat.y + 12 * sc, 8 * sc, 7 * sc)
+    ctx.fill()
+    # Scratch marks (alternate high/low per frame)
+    dy = (cat.frame_index % 2) * 3 * sc
+    ctx.set_source_rgba(0.60, 0.38, 0.12, 0.85)
+    ctx.set_line_width(max(1.0, sc * 0.9))
+    for sx_off in [2 * sc, 4 * sc, 6 * sc]:
+        sy0 = cat.y + 22 * sc + dy
+        sy1 = cat.y + 40 * sc + dy
+        ctx.move_to(tx + sx_off, sy0)
+        ctx.line_to(tx + sx_off - sc, sy1)
+        ctx.stroke()
+
+
+def _draw_fly(ctx, cat_x, cat_y, cat_w, cat_h):
+    """Draw a small fly circling below a pooping cat."""
+    t = time.monotonic()
+    angle = t * 3.5  # radians/s — orbit speed
+    cx = cat_x + cat_w // 2
+    cy = cat_y + cat_h - 6   # just below the cat
+    rx, ry = 14, 5            # orbit ellipse radii
+    fx = cx + rx * math.cos(angle)
+    fy = cy + ry * math.sin(angle)
+    # Tiny black dot with wings
+    ctx.set_source_rgba(0.1, 0.1, 0.1, 0.9)
+    ctx.arc(fx, fy, 2.5, 0, 2 * math.pi)
+    ctx.fill()
+    # Wings (two small semi-transparent ovals)
+    wing_angle = angle + math.pi / 2
+    for sign in (-1, 1):
+        wx = fx + sign * 4 * math.cos(wing_angle)
+        wy = fy + sign * 4 * math.sin(wing_angle)
+        ctx.save()
+        ctx.translate(wx, wy)
+        ctx.scale(3, 1.5)
+        ctx.arc(0, 0, 1, 0, 2 * math.pi)
+        ctx.restore()
+        ctx.set_source_rgba(0.7, 0.7, 0.9, 0.5)
+        ctx.fill()
+
+
 def _draw_encounter_bubble(ctx, text, cat_x, cat_y, cat_w, cat_h):
     """Draw a short encounter speech bubble above a cat (word-wrapped, no entry)."""
     font_size = 11
@@ -1457,6 +1712,12 @@ class CatInstance:
         """Return (cairo.ImageSurface, data_ref) for the current frame."""
         if self.state in (CatState.IDLE, CatState.SLEEPING, CatState.SOCIALIZING):
             return self._fallback_surface()
+        # SLEEPING_BALL: loop 4 frames slowly; fall back to idle if not yet loaded
+        if self.state == CatState.SLEEPING_BALL:
+            frames = self.animations.get("sleeping-ball", {}).get("south", [])
+            if frames:
+                return frames[self.frame_index % len(frames)]
+            return self._fallback_surface()
         key = ANIM_KEYS.get(self.state)
         if key:
             frames = self.animations.get(key, {}).get(self.direction, [])
@@ -1497,6 +1758,12 @@ class CatInstance:
             self.y = max(0, min(self.y, self.screen_h - self.display_h))
             # Reposition chat bubble if visible for this cat
             pass  # chat bubble follows cat via canvas redraw
+        elif self.state == CatState.SLEEPING_BALL:
+            # Advance breathing frame every 6 render ticks (~0.75s per frame, ~3s per breath)
+            self._sleep_tick = getattr(self, '_sleep_tick', 0) + 1
+            if self._sleep_tick >= 6:
+                self._sleep_tick = 0
+                self.frame_index = (self.frame_index + 1) % 4
         elif self.state in ONE_SHOT_STATES:
             key = ANIM_KEYS.get(self.state)
             if key:
@@ -1516,7 +1783,10 @@ class CatInstance:
             self.idle_ticks += 1
             r = random.random()
             if self.idle_ticks > 15 and r < 0.05:
-                self.state = CatState.SLEEPING
+                self.state = CatState.SLEEPING_BALL
+                self.frame_index = 0
+                self._sleep_tick = 0
+                self.direction = "south"  # only south frames available
                 self.idle_ticks = 0
             elif r < 0.25:
                 self.state = CatState.WALKING
@@ -1531,7 +1801,31 @@ class CatInstance:
                 self.frame_index = 0
             elif r < 0.38:
                 self._show_random_meow()
-        elif self.state == CatState.SLEEPING:
+            elif r < 0.42:
+                self.state = CatState.CHASING_MOUSE
+                self.frame_index = 0
+                self.direction = random.choice(["east", "west"])
+            elif r < 0.45:
+                self.state = CatState.PLAYING_BALL
+                self.frame_index = 0
+                self.direction = "south"
+            elif r < 0.48:
+                self.state = CatState.BUTTERFLY
+                self.frame_index = 0
+                self.direction = "south"
+            elif r < 0.51:
+                self.state = CatState.SCRATCHING_TREE
+                self.frame_index = 0
+                self.direction = random.choice(["east", "west"])
+            elif r < 0.54:
+                self.state = CatState.PEEING
+                self.frame_index = 0
+                self.direction = random.choice(["east", "west"])
+            elif r < 0.57:
+                self.state = CatState.POOPING
+                self.frame_index = 0
+                self.direction = "south"
+        elif self.state == CatState.SLEEPING_BALL:
             self.idle_ticks += 1
             if self.idle_ticks > random.randint(5, 15):
                 self.state = CatState.WAKING_UP
@@ -2438,6 +2732,10 @@ class CatAIApp(Gtk.Application):
         ctx.set_operator(cairo.OPERATOR_OVER)
 
         for cat in self.cat_instances:
+            # Background props (drawn BEFORE tinted sprite)
+            if cat.state == CatState.SCRATCHING_TREE:
+                _draw_tree_bg_cairo(ctx, cat)
+
             surface, _data_ref = cat._current_surface()
             ctx.save()
             ctx.rectangle(cat.x, cat.y, cat.display_w, cat.display_h)
@@ -2445,6 +2743,23 @@ class CatAIApp(Gtk.Application):
             ctx.set_source_surface(surface, cat.x, cat.y)
             ctx.paint()
             ctx.restore()
+
+            # Draw ZzZ if sleeping in a ball
+            if cat.state == CatState.SLEEPING_BALL:
+                _draw_zzz(ctx, cat.x, cat.y, cat.display_w)
+
+            # Foreground props (drawn AFTER tinted sprite — correct colour for all skins)
+            if cat.state == CatState.SCRATCHING_TREE:
+                _draw_tree_fg_cairo(ctx, cat)
+            elif cat.state == CatState.PLAYING_BALL:
+                _draw_playing_ball_prop(ctx, cat)
+            elif cat.state == CatState.BUTTERFLY:
+                _draw_butterfly_prop(ctx, cat)
+            elif cat.state == CatState.PEEING:
+                _draw_pee_drops(ctx, cat)
+            elif cat.state == CatState.POOPING:
+                _draw_poop_drops(ctx, cat)
+                _draw_fly(ctx, cat.x, cat.y, cat.display_w, cat.display_h)
 
             # Draw meow bubble if visible
             if cat.meow_visible and cat.meow_text:
