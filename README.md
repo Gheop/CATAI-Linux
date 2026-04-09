@@ -14,26 +14,29 @@ Port of [CATAI](https://github.com/wil-pe/CATAI) (macOS/Swift) to Linux.
 
 - **Desktop companion** -- Cats roam freely across your screen with pixel-perfect animations
 - **Click-through** -- Cats float above all windows, clicks pass through to apps below
-- **Multi-cat** -- Up to 6 cats with distinct colors and personalities
+- **6 unique characters** -- Pre-colored 80×80 sprites from the catset collection, each with a distinct look and personality
 - **AI chat** -- Click a cat to open a pixel-art chat bubble, powered by [Claude](https://claude.ai) or [Ollama](https://ollama.ai)
+- **Rich animations** -- Running, sleeping, grooming, rolling, climbing walls, jumping, love loaf, flat sit, and more
 - **Random meows** -- Cats spontaneously say "Miaou~", "Prrr...", "Mrrp!" in cute speech bubbles
 - **Drag & drop** -- Drag cats anywhere on your screen
+- **Cat encounters** -- When two cats cross paths, they stop and have a short AI-generated conversation
 - **Multilingual** -- French, English, Spanish
-- **Cat encounters** -- When two cats cross paths, they stop, face each other, and have a short AI-generated conversation (1–3 exchanges) before going their separate ways
 - **Persistent** -- Cats remember their conversations between sessions
 
-## Cat Personalities
+## Cat Characters
 
-Each cat has a unique personality that shapes how it responds in conversations:
+Each character is a pre-colored sprite with a unique personality:
 
-| Color | Name | Personality | Specialty |
-|-------|------|-------------|-----------|
-| Orange | Citrouille | Playful & mischievous | Jokes & puns |
-| Black | Ombre | Mysterious & philosophical | Deep questions |
-| White | Neige | Elegant & poetic | Poetry & grace |
-| Grey | Einstein | Wise & scholarly | Science facts |
-| Brown | Indiana | Adventurous storyteller | Epic tales |
-| Cream | Caramel | Cuddly & comforting | Emotional support |
+| Sprite | Name (default) | Personality | Specialty |
+|--------|---------------|-------------|-----------|
+| 🟠 Orange | Mandarine | Espiègle et joueur | Bêtises et mouvement |
+| 🟤 Tabby | Tabby | Curieux et aventurier | Explorer chaque recoin |
+| ⬛ Dark | Ombre | Mystérieux et silencieux | Paroles rares mais profondes |
+| 🟫 Brown | Noisette | Doux et réconfortant | Câlins et bonne humeur |
+| 🩶 Grey | Brume | Sage et philosophe | Pensées profondes sur la vie |
+| 🖤 Black | Minuit | Élégant et nocturne | Histoires mystérieuses |
+
+Names and languages adapt to your selected language (FR / EN / ES).
 
 ## AI Backend
 
@@ -75,8 +78,8 @@ catai
 Right-click any cat to access Settings:
 
 - **Language** -- French / English / Spanish
-- **Cats** -- Click a sprite to add, click x to remove
-- **Name** -- Rename each cat
+- **Characters** -- Click a sprite to add it, click again to select it (shows name + personality), click × to remove
+- **Name** -- Rename each cat directly in the settings panel
 - **Size** -- Scale slider
 - **Model** -- Choose between Claude and Ollama models
 - **Autostart** -- Launch at login
@@ -85,10 +88,11 @@ Right-click any cat to access Settings:
 ## How It Works
 
 - Single fullscreen transparent canvas with Cairo rendering
-- XShape input passthrough -- clicks go through to apps below
-- Pillow for sprite loading and per-pixel HSB color tinting
+- XShape / GDK input region passthrough -- clicks go through to apps below
+- 80×80 pre-colored PNG sprites (catset by seethingswarm, upscaled 2× with nearest-neighbor)
+- 16 animation states: running, sleeping, eating, grooming, rolling, climbing, jumping, flat, love loaf, surprised, angry, waking up, chasing mouse, and more
+- Climbing mechanic with pixel-accurate floor/centroid measurement for seamless transitions
 - Claude API or Ollama for streaming AI chat
-- 368 hand-drawn sprites (8 directions x 5 animations)
 - Lazy loading + disk cache for instant startup
 - Config persisted in `~/.config/catai/`
 
@@ -102,6 +106,12 @@ make run     # Launch the app
 make build   # Build wheel + sdist
 ```
 
+Sprite conversion (catset spritesheets → CATAI character directories):
+
+```bash
+python3 scripts/catset_to_catai.py catset_assets/catset_spritesheets catai_linux/
+```
+
 ## Project Structure
 
 ```
@@ -109,7 +119,14 @@ make build   # Build wheel + sdist
 ├── catai_linux/          # Python package
 │   ├── app.py            # Main application
 │   ├── __main__.py       # Entry point (python -m catai_linux)
-│   └── cute_orange_cat/  # Sprite assets (68x68 PNG)
+│   ├── cat_orange/       # Sprite assets — orange cat (80×80 PNG)
+│   ├── cat01/            # Sprite assets — tabby
+│   ├── cat02/            # Sprite assets — dark cat
+│   ├── cat03/            # Sprite assets — brown cat
+│   ├── cat04/            # Sprite assets — grey cat
+│   └── cat05/            # Sprite assets — black cat
+├── scripts/
+│   └── catset_to_catai.py  # Spritesheet conversion tool
 ├── tests/
 │   └── e2e_test.py       # E2E test suite (socket-based)
 ├── pyproject.toml        # Package config + linter config
@@ -120,8 +137,46 @@ make build   # Build wheel + sdist
 ## Credits
 
 - Original macOS version: [wil-pe/CATAI](https://github.com/wil-pe/CATAI)
-- Sprite assets from the original project
+- Catset sprites: [seethingswarm/catset](https://github.com/seethingswarm/catset) (CC0)
 
 ## License
 
 MIT
+
+---
+
+## Changelog
+
+### v0.3.0 — Catset characters + new animations (2026-04-09)
+
+- **6 pre-colored characters** replacing the old single-sprite + color-tinting system: orange, tabby, dark, brown, grey, black (80×80 catset sprites)
+- **New animation states**: flat/sit, love loaf, grooming, rolling, surprised, jumping, climbing
+- **Climbing mechanic**: cats climb walls with pixel-accurate floor/centroid measurement so transitions to the next animation are seamless
+- **Settings rework**: click a cat sprite to select it and see its name (editable), personality trait, and description
+- **Walk directions**: east/west only — catset sprites don't have north/south/diagonal walk frames
+- **Removed**: old color-tinting system, drinking, playing ball, butterfly, scratching tree, peeing, pooping animations (not in catset)
+- **Fix**: click-to-chat bubble not triggering on Wayland (GDK input region was skipped)
+- **Fix**: meow bubble squished — height now based on actual Pango text metrics, not a hardcoded `24px`
+
+### v0.2.2 — Emoji in bubbles + bubble overflow fix (2026-04-04)
+
+- Speech bubbles now render emoji correctly via PangoCairo (COLRv1 fonts)
+- Chat bubble no longer overflows screen edges — clamps and wraps text properly
+
+### v0.2.1 — Cat encounters (2026-04-01)
+
+- When two cats cross paths they stop, face each other, and exchange 1–3 AI-generated lines before going their separate ways
+- Encounter bubbles shown above each cat with pixel-art style
+
+### v0.2.0 — Multi-cat + drag & drop (2026-03-28)
+
+- Up to 6 simultaneous cats, each with a distinct color and AI personality
+- Drag cats anywhere on screen
+- Persistent chat memory per cat across sessions
+
+### v0.1.0 — Initial release (2026-03-20)
+
+- Single desktop cat with pixel-art animations
+- AI chat via Claude or Ollama
+- Click-through transparent window (XShape)
+- French / English / Spanish support

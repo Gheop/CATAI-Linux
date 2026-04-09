@@ -1179,15 +1179,30 @@ def _pango_show_text(ctx, text, r=0.3, g=0.2, b=0.1, a=1.0):
     lay.set_text(text, -1)
     PangoCairo.show_layout(ctx, lay)
 
-def _draw_meow_bubble(ctx, text, cat_x, cat_y, cat_w):
-    """Draw a meow speech bubble above a cat on the Cairo canvas."""
-    font_size = 11
-    text_w = _pango_text_width(ctx, text)
-    pad_x = 12
+def _pango_text_size(ctx, text):
+    """Return (width, height) in pixels for text using current bubble font."""
+    layout = PangoCairo.create_layout(ctx)
+    layout.set_font_description(Pango.FontDescription(_BUBBLE_FONT))
+    layout.set_text(text, -1)
+    return layout.get_pixel_size()  # (w, h)
+
+def _draw_meow_bubble(ctx, text, cat_x, cat_y, cat_w, cat_h=80, screen_h=None):
+    """Draw a meow speech bubble above (or below) a cat on the Cairo canvas."""
+    text_w, text_h = _pango_text_size(ctx, text)
+    pad_x, pad_y = 12, 8
     bw = max(80, text_w + pad_x * 2)
-    bh = 24
+    bh = text_h + pad_y * 2
+
     bx = cat_x + cat_w / 2 - bw / 2
-    by = cat_y - 40
+    by = cat_y - bh - 8  # 8px gap above cat
+
+    # Flip below cat if bubble goes off-screen top
+    if by < 0:
+        by = cat_y + cat_h + 8
+    # Clamp horizontally
+    if screen_h is not None and by + bh > screen_h:
+        by = cat_y - bh - 8  # back above (last resort)
+    bx = max(4, bx)
 
     # Background
     ctx.set_source_rgba(0.95, 0.9, 0.8, 1)
@@ -1212,10 +1227,10 @@ def _draw_meow_bubble(ctx, text, cat_x, cat_y, cat_w):
     for cx, cy in [(bx, by), (bx + bw - px, by), (bx, by + bh - px), (bx + bw - px, by + bh - px)]:
         ctx.rectangle(cx, cy, px, px); ctx.fill()
 
-    # Text
+    # Text (centered)
     ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
     tx = bx + (bw - text_w) / 2
-    ty = by + bh / 2 - font_size / 2
+    ty = by + (bh - text_h) / 2
     ctx.move_to(tx, ty)
     _pango_show_text(ctx, text)
 
@@ -2106,6 +2121,7 @@ class SettingsWindow:
         self.app = app
         self.window = None
         self.selected_color_id = None
+        self.selected_char_id = None
         self.current_scale = DEFAULT_SCALE
         self.current_model = ""
         self._scale_timer = None
@@ -2140,12 +2156,15 @@ class SettingsWindow:
             self.window.set_resizable(False)
             self.window.add_css_class("settings-window")
             self.window.connect("close-request", self._on_close)
-        if not self.selected_color_id:
-            cfgs = self.get_configs() if self.get_configs else []
-            # Find first legacy (color_id) config to pre-select
+        cfgs = self.get_configs() if self.get_configs else []
+        if not self.selected_color_id and not self.selected_char_id:
             legacy = next((c for c in cfgs if c.get("color_id")), None)
             if legacy:
                 self.selected_color_id = legacy["color_id"]
+            else:
+                first_catset = next((c for c in cfgs if c.get("char_id")), None)
+                if first_catset:
+                    self.selected_char_id = first_catset["char_id"]
         self._build()
 
     def _on_close(self, *args):
@@ -2222,6 +2241,7 @@ class SettingsWindow:
         total_cats = len(active_ids) + len(active_char_ids)
         for char_id, emoji in CATSET_CHARS:
             is_active = char_id in active_char_ids
+            is_selected = char_id == self.selected_char_id
             cbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
             btn = Gtk.Button()
             sprite_size = 40
@@ -2234,7 +2254,12 @@ class SettingsWindow:
                     pic.set_paintable(pil_to_texture(pil_img, sprite_size, sprite_size))
             btn.set_child(pic)
             btn_css = Gtk.CssProvider()
-            border_color = '#4d3319' if is_active else 'transparent'
+            if is_selected:
+                border_color = '#ffaa22'
+            elif is_active:
+                border_color = '#4d3319'
+            else:
+                border_color = 'transparent'
             btn_css.load_from_data(f"""
                 button {{ background: transparent; padding: 2px;
                          border: 2px solid {border_color};
@@ -2243,7 +2268,7 @@ class SettingsWindow:
             """.encode())
             btn.get_style_context().add_provider(btn_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
             if is_active:
-                pass  # no select-highlight for catset (no details panel)
+                btn.connect("clicked", self._on_catset_select, char_id)
             else:
                 btn.connect("clicked", self._on_catset_add, char_id)
             cbox.append(btn)
@@ -2257,6 +2282,39 @@ class SettingsWindow:
                 cbox.append(rm_btn)
             catset_box.append(cbox)
         box.append(catset_box)
+
+        # ── Detail panel for selected catset char ─────────────────────────────
+        if self.selected_char_id and self.selected_char_id in active_char_ids:
+            char_id = self.selected_char_id
+            p = CATSET_PERSONALITIES.get(char_id, CATSET_PERSONALITIES["cat01"])
+            cfg = next((c for c in configs if c.get("char_id") == char_id), None)
+
+            name_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            name_box.set_margin_top(8)
+            nl = Gtk.Label(label=L10n.s("name"))
+            nl.add_css_class("pixel-label-small")
+            name_box.append(nl)
+            ne = Gtk.Entry()
+            ne.set_text(cfg["name"] if cfg else p["name"].get(L10n.lang, p["name"]["fr"]))
+            ne.set_max_length(30)
+            ne.add_css_class("pixel-entry")
+            ne.set_hexpand(True)
+            ne.connect("changed", self._on_catset_name_changed, char_id)
+            name_box.append(ne)
+            box.append(name_box)
+
+            trait_lbl = Gtk.Label(label=f"\u2726 {p['traits'].get(L10n.lang, p['traits']['fr'])}")
+            trait_lbl.add_css_class("pixel-trait")
+            trait_lbl.set_xalign(0)
+            trait_lbl.set_margin_start(4)
+            box.append(trait_lbl)
+
+            skill_lbl = Gtk.Label(label=p["skills"].get(L10n.lang, p["skills"]["fr"]))
+            skill_lbl.add_css_class("pixel-trait")
+            skill_lbl.set_xalign(0)
+            skill_lbl.set_wrap(True)
+            skill_lbl.set_margin_start(4)
+            box.append(skill_lbl)
 
         if getattr(self, '_anim_timer', None):
             GLib.source_remove(self._anim_timer)
@@ -2369,6 +2427,11 @@ class SettingsWindow:
         if self.on_remove:
             self.on_remove(color_id)
 
+    def _on_catset_select(self, btn, char_id):
+        self.selected_char_id = char_id
+        self.selected_color_id = None
+        self._build()
+
     def _on_catset_add(self, btn, char_id):
         if self.on_add_catset:
             self.on_add_catset(char_id)
@@ -2376,6 +2439,10 @@ class SettingsWindow:
     def _on_catset_remove(self, btn, char_id):
         if self.on_remove_catset:
             self.on_remove_catset(char_id)
+
+    def _on_catset_name_changed(self, entry, char_id):
+        if self.on_rename_catset:
+            self.on_rename_catset(char_id, entry.get_text())
 
     def _on_lang_click(self, btn, lang_code):
         if self.on_lang_changed:
@@ -2935,7 +3002,7 @@ class CatAIApp(Gtk.Application):
 
             # Draw meow bubble if visible
             if cat.meow_visible and cat.meow_text:
-                _draw_meow_bubble(ctx, cat.meow_text, cat.x, cat.y, cat.display_w)
+                _draw_meow_bubble(ctx, cat.meow_text, cat.x, cat.y, cat.display_w, cat.display_h, self.screen_h)
 
             # Draw chat response bubble if visible
             if cat.chat_visible and cat.chat_response:
@@ -3349,6 +3416,8 @@ class CatAIApp(Gtk.Application):
         self._save_all()
         self._create_instance(cfg, len(self.cat_instances))
         if self.settings_ctrl:
+            self.settings_ctrl.selected_char_id = char_id
+            self.settings_ctrl.selected_color_id = None
             self.settings_ctrl.refresh()
 
     def remove_catset_char(self, char_id):
@@ -3368,6 +3437,8 @@ class CatAIApp(Gtk.Application):
         delete_memory(cat.config["id"])
         self._save_all()
         if self.settings_ctrl:
+            if self.settings_ctrl.selected_char_id == char_id:
+                self.settings_ctrl.selected_char_id = None
             self.settings_ctrl.refresh()
 
     def rename_catset_char(self, char_id, name):

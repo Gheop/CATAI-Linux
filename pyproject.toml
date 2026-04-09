@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "catai-linux"
-version = "0.2.2"
+version = "0.3.0"
 description = "Virtual desktop pet cats for Linux — pixel art cats that roam your screen and chat via AI"
 readme = "PYPI_README.md"
 license = "MIT"
@@ -46,7 +46,14 @@ catai = "catai_linux.app:main"
 include = ["catai_linux*"]
 
 [tool.setuptools.package-data]
-catai_linux = ["cute_orange_cat/**/*.png", "cute_orange_cat/**/*.json"]
+catai_linux = [
+    "cat_orange/**/*.png", "cat_orange/**/*.json",
+    "cat01/**/*.png", "cat01/**/*.json",
+    "cat02/**/*.png", "cat02/**/*.json",
+    "cat03/**/*.png", "cat03/**/*.json",
+    "cat04/**/*.png", "cat04/**/*.json",
+    "cat05/**/*.png", "cat05/**/*.json",
+]
 
 [tool.ruff]
 line-length = 140
