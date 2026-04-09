@@ -17,7 +17,38 @@ h1 {
   margin-bottom: 4px;
   letter-spacing: 2px;
 }
-.subtitle { color: #888; font-size: 12px; margin-bottom: 24px; }
+.subtitle { color: #888; font-size: 12px; margin-bottom: 16px; }
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 20px;
+  font-size: 12px;
+  color: #aaa;
+  flex-wrap: wrap;
+}
+.char-selector {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.char-btn {
+  background: #2a2a3e;
+  border: 1px solid #444;
+  color: #ccc;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: monospace;
+  font-size: 11px;
+}
+.char-btn.active {
+  background: #3a3a1e;
+  border-color: #ffcc44;
+  color: #ffcc44;
+}
+.char-btn:hover { border-color: #888; }
+input[type=range] { accent-color: #ffcc44; }
 .section-title {
   font-size: 13px;
   color: #ffaa22;
@@ -62,18 +93,6 @@ canvas {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 20px;
-  font-size: 12px;
-  color: #aaa;
-}
-input[type=range] { accent-color: #ffcc44; }
-.new-badge {
-  font-size: 9px;
-  background: #2a4a1a;
-  color: #88ff44;
-  padding: 1px 5px;
-  border-radius: 3px;
-  border: 1px solid #44aa22;
 }
 </style>
 </head>
@@ -82,41 +101,64 @@ input[type=range] { accent-color: #ffcc44; }
 <h1>:: CATAI SPRITE VIEWER ::</h1>
 <p class="subtitle">Clic sur une animation pour la mettre en pause · <kbd>F</kbd> pour tout figer</p>
 
-<div class="fps-control">
-  <label>FPS: <span id="fps-val">8</span></label>
-  <input type="range" id="fps-range" min="1" max="24" value="8">
+<div class="controls">
+  <div class="char-selector" id="char-selector"></div>
+  <div class="fps-control">
+    <label>FPS: <span id="fps-val">8</span></label>
+    <input type="range" id="fps-range" min="1" max="24" value="8">
+  </div>
 </div>
 
 <div id="root"></div>
 
 <script>
-const NEW_ANIMS = new Set([
-  'sleeping-ball', 'chasing-mouse', 'playing-ball', 'butterfly',
-  'scratching-tree', 'peeing', 'pooping'
-]);
+const CHARACTERS = [
+  { id: 'cat_orange', label: '🟠 orange', dir: 'catai_linux/cat_orange', size: 80 },
+  { id: 'cat01',      label: '🟤 tabby',  dir: 'catai_linux/cat01',      size: 80 },
+  { id: 'cat02',      label: '⬛ dark',    dir: 'catai_linux/cat02',      size: 80 },
+  { id: 'cat03',      label: '🟫 brown',  dir: 'catai_linux/cat03',      size: 80 },
+  { id: 'cat04',      label: '🩶 grey',   dir: 'catai_linux/cat04',      size: 80 },
+  { id: 'cat05',      label: '🖤 black',  dir: 'catai_linux/cat05',      size: 80 },
+];
 
-const ANIMATIONS = [
-  // Existing
-  { name:'running-8-frames', dir:'south',  frames:8,  label:'Running (south)' },
+// Animations for the orange cat (original)
+const ANIMS_ORANGE = [
   { name:'running-8-frames', dir:'east',   frames:8,  label:'Running (east)' },
+  { name:'running-8-frames', dir:'south',  frames:8,  label:'Running (south)' },
   { name:'eating',           dir:'south',  frames:11, label:'Eating' },
   { name:'drinking',         dir:'south',  frames:8,  label:'Drinking' },
   { name:'angry',            dir:'south',  frames:9,  label:'Angry' },
   { name:'waking-getting-up',dir:'south',  frames:9,  label:'Waking up' },
-  // New
   { name:'sleeping-ball',    dir:'south',  frames:4,  label:'Sleeping ball' },
-  { name:'chasing-mouse',    dir:'east',   frames:6,  label:'Chasing mouse (east)' },
-  { name:'chasing-mouse',    dir:'west',   frames:6,  label:'Chasing mouse (west)' },
+  { name:'chasing-mouse',    dir:'east',   frames:6,  label:'Chasing mouse' },
   { name:'playing-ball',     dir:'south',  frames:8,  label:'Playing ball' },
   { name:'butterfly',        dir:'south',  frames:8,  label:'Butterfly' },
-  { name:'scratching-tree',  dir:'east',   frames:6,  label:'Scratching tree (east)' },
-  { name:'scratching-tree',  dir:'west',   frames:6,  label:'Scratching tree (west)' },
-  { name:'peeing',           dir:'east',   frames:6,  label:'Peeing (east)' },
-  { name:'peeing',           dir:'west',   frames:6,  label:'Peeing (west)' },
+  { name:'scratching-tree',  dir:'east',   frames:6,  label:'Scratching tree' },
+  { name:'peeing',           dir:'east',   frames:6,  label:'Peeing' },
   { name:'pooping',          dir:'south',  frames:6,  label:'Pooping' },
 ];
 
-const SCALE = 4;   // 68px × 4 = 272px display
+// Animations for catset characters
+const ANIMS_CATSET = [
+  { name:'running-8-frames', dir:'east',   frames:4,  label:'Running (east)' },
+  { name:'running-8-frames', dir:'west',   frames:4,  label:'Running (west)' },
+  { name:'sleeping-ball',    dir:'south',  frames:8,  label:'Sleeping' },
+  { name:'flat',             dir:'south',  frames:8,  label:'Flat / Sit' },
+  { name:'angry',            dir:'south',  frames:7,  label:'Angry' },
+  { name:'chasing-mouse',    dir:'east',   frames:8,  label:'Chasing (east)' },
+  { name:'chasing-mouse',    dir:'west',   frames:8,  label:'Chasing (west)' },
+  { name:'surprised',        dir:'east',   frames:8,  label:'Surprised' },
+  { name:'eating',           dir:'south',  frames:8,  label:'Eating (crouch)' },
+  { name:'love',             dir:'south',  frames:8,  label:'Love / Loaf' },
+  { name:'grooming',         dir:'south',  frames:8,  label:'Grooming' },
+  { name:'rolling',          dir:'south',  frames:8,  label:'Rolling' },
+  { name:'waking-getting-up',dir:'south',  frames:8,  label:'Walk / Waking' },
+  { name:'jumping',          dir:'south',  frames:4,  label:'Jumping' },
+  { name:'climbing',         dir:'east',   frames:11, label:'Climbing (east)' },
+  { name:'climbing',         dir:'west',   frames:11, label:'Climbing (west)' },
+];
+
+let currentChar = CHARACTERS[0];
 let fps = 8;
 let globalPaused = false;
 const pausedCells = new Set();
@@ -137,55 +179,37 @@ document.addEventListener('keydown', e => {
   }
 });
 
-function framePath(anim, dir, i) {
-  return `catai_linux/cute_orange_cat/animations/${anim}/${dir}/frame_${String(i).padStart(3,'0')}.png`;
+function framePath(charDir, anim, dir, i) {
+  return `${charDir}/animations/${anim}/${dir}/frame_${String(i).padStart(3,'0')}.png`;
 }
 
-function groupBy(arr, fn) {
-  return arr.reduce((acc, item) => {
-    const key = fn(item);
-    (acc[key] = acc[key] || []).push(item);
-    return acc;
-  }, {});
-}
-
-async function buildCell(anim) {
+async function buildCell(char, anim) {
   const { name, dir, frames: nframes, label } = anim;
-
   const cell = document.createElement('div');
   cell.className = 'cell';
 
+  const sz = char.size;
+  const SCALE = Math.floor(256 / sz);  // ~3x for 80px, ~3x for 68px
   const canvas = document.createElement('canvas');
-  canvas.width = 68 * SCALE;
-  canvas.height = 68 * SCALE;
-  canvas.style.width = (68 * SCALE) + 'px';
-  canvas.style.height = (68 * SCALE) + 'px';
+  canvas.width = sz * SCALE;
+  canvas.height = sz * SCALE;
+  canvas.style.width = (sz * SCALE) + 'px';
+  canvas.style.height = (sz * SCALE) + 'px';
   const ctx = canvas.getContext('2d');
   ctx.imageSmoothingEnabled = false;
 
   const labelDiv = document.createElement('div');
   labelDiv.className = 'label';
-
-  const badges = document.createElement('div');
-  badges.style.display = 'flex'; badges.style.gap = '4px';
   const dirBadge = document.createElement('span');
   dirBadge.className = 'dir-badge';
   dirBadge.textContent = dir;
-  badges.appendChild(dirBadge);
-  if (NEW_ANIMS.has(name)) {
-    const nb = document.createElement('span');
-    nb.className = 'new-badge';
-    nb.textContent = 'NEW';
-    badges.appendChild(nb);
-  }
   labelDiv.textContent = label + ' ';
-  labelDiv.appendChild(badges);
+  labelDiv.appendChild(dirBadge);
 
-  // Pre-load all frames
   const images = [];
   for (let i = 0; i < nframes; i++) {
     const img = new Image();
-    img.src = framePath(name, dir, i);
+    img.src = framePath(char.dir, name, dir, i);
     images.push(new Promise(res => { img.onload = () => res(img); img.onerror = () => res(null); }));
   }
   const loaded = await Promise.all(images);
@@ -197,14 +221,13 @@ async function buildCell(anim) {
     if (globalPaused || pausedCells.has(cell)) return;
     const img = valid[fi % valid.length];
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(img, 0, 0, 68 * SCALE, 68 * SCALE);
+    ctx.drawImage(img, 0, 0, sz * SCALE, sz * SCALE);
     fi++;
   }
 
   draw();
   const t = { fn: draw, id: setInterval(draw, 1000/fps) };
   timers.push(t);
-
   canvas.addEventListener('click', () => {
     if (pausedCells.has(cell)) pausedCells.delete(cell);
     else pausedCells.add(cell);
@@ -215,34 +238,47 @@ async function buildCell(anim) {
   return cell;
 }
 
-async function main() {
+async function renderChar(char) {
+  timers.forEach(t => clearInterval(t.id));
+  timers.length = 0;
+  pausedCells.clear();
+
   const root = document.getElementById('root');
+  root.innerHTML = '';
 
-  const existingNames = ['running-8-frames', 'eating', 'drinking', 'angry', 'waking-getting-up'];
-  const existingAnims = ANIMATIONS.filter(a => existingNames.includes(a.name));
-  const newAnims      = ANIMATIONS.filter(a => NEW_ANIMS.has(a.name));
+  const anims = ANIMS_CATSET;
 
-  for (const [title, list] of [
-    ['🐈 Animations existantes', existingAnims],
-    ['✨ Nouvelles animations', newAnims],
-  ]) {
-    const h = document.createElement('div');
-    h.className = 'section-title';
-    h.textContent = title;
-    root.appendChild(h);
+  const h = document.createElement('div');
+  h.className = 'section-title';
+  h.textContent = `Animations — ${char.label}`;
+  root.appendChild(h);
 
-    const grid = document.createElement('div');
-    grid.className = 'grid';
-    root.appendChild(grid);
+  const grid = document.createElement('div');
+  grid.className = 'grid';
+  root.appendChild(grid);
 
-    for (const anim of list) {
-      const cell = await buildCell(anim);
-      if (cell) grid.appendChild(cell);
-    }
+  for (const anim of anims) {
+    const cell = await buildCell(char, anim);
+    if (cell) grid.appendChild(cell);
   }
 }
 
-main();
+// Build character selector buttons
+const sel = document.getElementById('char-selector');
+CHARACTERS.forEach(char => {
+  const btn = document.createElement('button');
+  btn.className = 'char-btn' + (char === currentChar ? ' active' : '');
+  btn.textContent = char.label;
+  btn.addEventListener('click', () => {
+    currentChar = char;
+    sel.querySelectorAll('.char-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderChar(char);
+  });
+  sel.appendChild(btn);
+});
+
+renderChar(currentChar);
 </script>
 </body>
 </html>

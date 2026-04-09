@@ -1,0 +1,218 @@
+{
+  "character": {
+    "id": "e865d848-a69a-4e06-a1e2-32e1fc241601",
+    "name": "dark_cat",
+    "prompt": "dark cat",
+    "size": {
+      "width": 80,
+      "height": 80
+    },
+    "template_id": "catset",
+    "directions": 8,
+    "view": "side",
+    "created_at": "2026-04-09T00:00:00Z"
+  },
+  "frames": {
+    "rotations": {
+      "east": "rotations/east.png",
+      "north-east": "rotations/north-east.png",
+      "south-east": "rotations/south-east.png",
+      "west": "rotations/west.png",
+      "north-west": "rotations/north-west.png",
+      "south-west": "rotations/south-west.png",
+      "south": "rotations/south.png",
+      "north": "rotations/north.png"
+    },
+    "animations": {
+      "running-8-frames": {
+        "east": [
+          "animations/running-8-frames/east/frame_000.png",
+          "animations/running-8-frames/east/frame_001.png",
+          "animations/running-8-frames/east/frame_002.png",
+          "animations/running-8-frames/east/frame_003.png"
+        ],
+        "west": [
+          "animations/running-8-frames/west/frame_000.png",
+          "animations/running-8-frames/west/frame_001.png",
+          "animations/running-8-frames/west/frame_002.png",
+          "animations/running-8-frames/west/frame_003.png"
+        ]
+      },
+      "sleeping-ball": {
+        "south": [
+          "animations/sleeping-ball/south/frame_000.png",
+          "animations/sleeping-ball/south/frame_001.png",
+          "animations/sleeping-ball/south/frame_002.png",
+          "animations/sleeping-ball/south/frame_003.png",
+          "animations/sleeping-ball/south/frame_004.png",
+          "animations/sleeping-ball/south/frame_005.png",
+          "animations/sleeping-ball/south/frame_006.png",
+          "animations/sleeping-ball/south/frame_007.png"
+        ]
+      },
+      "flat": {
+        "south": [
+          "animations/flat/south/frame_000.png",
+          "animations/flat/south/frame_001.png",
+          "animations/flat/south/frame_002.png",
+          "animations/flat/south/frame_003.png",
+          "animations/flat/south/frame_004.png",
+          "animations/flat/south/frame_005.png",
+          "animations/flat/south/frame_006.png",
+          "animations/flat/south/frame_007.png"
+        ]
+      },
+      "angry": {
+        "south": [
+          "animations/angry/south/frame_000.png",
+          "animations/angry/south/frame_001.png",
+          "animations/angry/south/frame_002.png",
+          "animations/angry/south/frame_003.png",
+          "animations/angry/south/frame_004.png",
+          "animations/angry/south/frame_005.png",
+          "animations/angry/south/frame_006.png"
+        ]
+      },
+      "chasing-mouse": {
+        "east": [
+          "animations/chasing-mouse/east/frame_000.png",
+          "animations/chasing-mouse/east/frame_001.png",
+          "animations/chasing-mouse/east/frame_002.png",
+          "animations/chasing-mouse/east/frame_003.png",
+          "animations/chasing-mouse/east/frame_004.png",
+          "animations/chasing-mouse/east/frame_005.png",
+          "animations/chasing-mouse/east/frame_006.png",
+          "animations/chasing-mouse/east/frame_007.png"
+        ],
+        "west": [
+          "animations/chasing-mouse/west/frame_000.png",
+          "animations/chasing-mouse/west/frame_001.png",
+          "animations/chasing-mouse/west/frame_002.png",
+          "animations/chasing-mouse/west/frame_003.png",
+          "animations/chasing-mouse/west/frame_004.png",
+          "animations/chasing-mouse/west/frame_005.png",
+          "animations/chasing-mouse/west/frame_006.png",
+          "animations/chasing-mouse/west/frame_007.png"
+        ]
+      },
+      "surprised": {
+        "east": [
+          "animations/surprised/east/frame_000.png",
+          "animations/surprised/east/frame_001.png",
+          "animations/surprised/east/frame_002.png",
+          "animations/surprised/east/frame_003.png",
+          "animations/surprised/east/frame_004.png",
+          "animations/surprised/east/frame_005.png",
+          "animations/surprised/east/frame_006.png",
+          "animations/surprised/east/frame_007.png"
+        ],
+        "west": [
+          "animations/surprised/west/frame_000.png",
+          "animations/surprised/west/frame_001.png",
+          "animations/surprised/west/frame_002.png",
+          "animations/surprised/west/frame_003.png",
+          "animations/surprised/west/frame_004.png",
+          "animations/surprised/west/frame_005.png",
+          "animations/surprised/west/frame_006.png",
+          "animations/surprised/west/frame_007.png"
+        ]
+      },
+      "eating": {
+        "south": [
+          "animations/eating/south/frame_000.png",
+          "animations/eating/south/frame_001.png",
+          "animations/eating/south/frame_002.png",
+          "animations/eating/south/frame_003.png",
+          "animations/eating/south/frame_004.png",
+          "animations/eating/south/frame_005.png",
+          "animations/eating/south/frame_006.png",
+          "animations/eating/south/frame_007.png"
+        ]
+      },
+      "love": {
+        "south": [
+          "animations/love/south/frame_000.png",
+          "animations/love/south/frame_001.png",
+          "animations/love/south/frame_002.png",
+          "animations/love/south/frame_003.png",
+          "animations/love/south/frame_004.png",
+          "animations/love/south/frame_005.png",
+          "animations/love/south/frame_006.png",
+          "animations/love/south/frame_007.png"
+        ]
+      },
+      "grooming": {
+        "south": [
+          "animations/grooming/south/frame_000.png",
+          "animations/grooming/south/frame_001.png",
+          "animations/grooming/south/frame_002.png",
+          "animations/grooming/south/frame_003.png",
+          "animations/grooming/south/frame_004.png",
+          "animations/grooming/south/frame_005.png",
+          "animations/grooming/south/frame_006.png",
+          "animations/grooming/south/frame_007.png"
+        ]
+      },
+      "rolling": {
+        "south": [
+          "animations/rolling/south/frame_000.png",
+          "animations/rolling/south/frame_001.png",
+          "animations/rolling/south/frame_002.png",
+          "animations/rolling/south/frame_003.png",
+          "animations/rolling/south/frame_004.png",
+          "animations/rolling/south/frame_005.png",
+          "animations/rolling/south/frame_006.png",
+          "animations/rolling/south/frame_007.png"
+        ]
+      },
+      "waking-getting-up": {
+        "south": [
+          "animations/waking-getting-up/south/frame_000.png",
+          "animations/waking-getting-up/south/frame_001.png",
+          "animations/waking-getting-up/south/frame_002.png",
+          "animations/waking-getting-up/south/frame_003.png",
+          "animations/waking-getting-up/south/frame_004.png",
+          "animations/waking-getting-up/south/frame_005.png",
+          "animations/waking-getting-up/south/frame_006.png",
+          "animations/waking-getting-up/south/frame_007.png"
+        ]
+      },
+      "jumping": {
+        "south": [
+          "animations/jumping/south/frame_000.png",
+          "animations/jumping/south/frame_001.png",
+          "animations/jumping/south/frame_002.png",
+          "animations/jumping/south/frame_003.png"
+        ]
+      },
+      "climbing": {
+        "east": [
+          "animations/climbing/east/frame_000.png",
+          "animations/climbing/east/frame_001.png",
+          "animations/climbing/east/frame_002.png",
+          "animations/climbing/east/frame_003.png",
+          "animations/climbing/east/frame_004.png",
+          "animations/climbing/east/frame_005.png",
+          "animations/climbing/east/frame_006.png",
+          "animations/climbing/east/frame_007.png",
+          "animations/climbing/east/frame_008.png",
+          "animations/climbing/east/frame_009.png",
+          "animations/climbing/east/frame_010.png"
+        ],
+        "west": [
+          "animations/climbing/west/frame_000.png",
+          "animations/climbing/west/frame_001.png",
+          "animations/climbing/west/frame_002.png",
+          "animations/climbing/west/frame_003.png",
+          "animations/climbing/west/frame_004.png",
+          "animations/climbing/west/frame_005.png",
+          "animations/climbing/west/frame_006.png",
+          "animations/climbing/west/frame_007.png",
+          "animations/climbing/west/frame_008.png",
+          "animations/climbing/west/frame_009.png",
+          "animations/climbing/west/frame_010.png"
+        ]
+      }
+    }
+  }
+}
