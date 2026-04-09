@@ -1874,17 +1874,17 @@ class CatInstance:
                 self.state = CatState.IDLE
                 self.frame_index = 0
                 self.idle_ticks = 0
-            elif self.frame_index >= len(frames) - 1:
-                # One climbing cycle done — move cat up by its own height
-                self.y -= self.display_h
-                if self.y < 0:
-                    # Wrap: reappear at the bottom
-                    self.y = self.screen_h - self.display_h
-                self.state = CatState.IDLE
-                self.frame_index = 0
-                self.idle_ticks = 0
             else:
-                self.frame_index += 1
+                # Move up gradually: one step per frame so the motion is smooth
+                self.y -= self.display_h / len(frames)
+                if self.y < 0:
+                    self.y = self.screen_h - self.display_h
+                if self.frame_index >= len(frames) - 1:
+                    self.state = CatState.IDLE
+                    self.frame_index = 0
+                    self.idle_ticks = 0
+                else:
+                    self.frame_index += 1
 
     def behavior_tick(self):
         if self.chat_visible or self.dragging or self.in_encounter:
