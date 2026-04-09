@@ -419,6 +419,36 @@ def tint_sprite(img, color_def):
     return out
 
 
+def _sprite_floor_y(img):
+    """Return Y of the lowest non-transparent pixel in a PIL RGBA image (sprite 'floor')."""
+    data = img.load()
+    w, h = img.size
+    for y in range(h - 1, -1, -1):
+        for x in range(w):
+            if data[x, y][3] > 10:
+                return y
+    return h - 1
+
+
+def _climb_offset(meta, cat_dir):
+    """Measure display-px Y offset: how much to shift Y after climbing animation.
+    = (floor in reference idle frame) - (floor in last climbing frame), in sprite px."""
+    try:
+        south_rel = meta["frames"]["rotations"].get("south", "")
+        ref_img = Image.open(os.path.join(cat_dir, south_rel)).convert("RGBA")
+        ref_floor = _sprite_floor_y(ref_img)
+
+        climb_paths = meta["frames"]["animations"].get("climbing", {}).get("east", [])
+        if not climb_paths:
+            return 0
+        last_img = Image.open(os.path.join(cat_dir, climb_paths[-1])).convert("RGBA")
+        last_floor = _sprite_floor_y(last_img)
+
+        return ref_floor - last_floor   # positive → cat is higher at end of climb
+    except Exception:
+        return 0
+
+
 def pil_to_surface(img, target_w, target_h):
     """Convert PIL Image to cairo.ImageSurface, scaled nearest-neighbor.
     Returns (surface, data_ref) — data_ref MUST be kept alive while surface is used."""
@@ -1704,6 +1734,7 @@ class CatInstance:
         self._app = None
         self._meta = None
         self._cat_dir = ""
+        self._climb_y_offset = 0  # display-px to shift Y up after climbing anim
         # Meow bubble state (drawn on canvas)
         self.meow_text = ""
         self.meow_visible = False
@@ -1732,6 +1763,11 @@ class CatInstance:
 
         self.load_assets(meta, cat_dir)
         self.setup_chat(model, lang)
+
+        # Compute how much Y to shift after climbing so the next anim aligns
+        sprite_h = meta["character"]["size"]["height"]
+        offset_px = _climb_offset(meta, cat_dir)
+        self._climb_y_offset = int(round(offset_px * dh / sprite_h))
 
     def setup_chat(self, model, lang):
         char_id = self.config.get("char_id")
@@ -1874,17 +1910,16 @@ class CatInstance:
                 self.state = CatState.IDLE
                 self.frame_index = 0
                 self.idle_ticks = 0
-            else:
-                # Move up gradually: one step per frame so the motion is smooth
-                self.y -= self.display_h / len(frames)
+            elif self.frame_index >= len(frames) - 1:
+                # Compensate for visual floor shift within the sprite
+                self.y -= self._climb_y_offset
                 if self.y < 0:
                     self.y = self.screen_h - self.display_h
-                if self.frame_index >= len(frames) - 1:
-                    self.state = CatState.IDLE
-                    self.frame_index = 0
-                    self.idle_ticks = 0
-                else:
-                    self.frame_index += 1
+                self.state = CatState.IDLE
+                self.frame_index = 0
+                self.idle_ticks = 0
+            else:
+                self.frame_index += 1
 
     def behavior_tick(self):
         if self.chat_visible or self.dragging or self.in_encounter:
