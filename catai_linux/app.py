@@ -67,6 +67,7 @@ class CatState(enum.Enum):
     ANGRY = "angry"
     SLEEPING = "sleeping"
     WAKING_UP = "waking_up"
+    SOCIALIZING = "socializing"  # frozen during cat-to-cat encounter
 
 
 ANIM_KEYS = {
@@ -98,6 +99,7 @@ class L10n:
         "err_auth": {"fr": "Mrrp... token expiré, relance 'claude' pour renouveler", "en": "Mrrp... token expired, run 'claude' to renew", "es": "Mrrp... token expirado, ejecuta 'claude' para renovar"},
         "lang_label": {"fr": "LANGUE", "en": "LANGUAGE", "es": "IDIOMA"},
         "autostart": {"fr": "Lancer au démarrage", "en": "Start at login", "es": "Iniciar al arrancar"},
+        "encounters": {"fr": "Rencontres entre chats", "en": "Cat encounters", "es": "Encuentros entre gatos"},
     }
     meows = {
         "fr": ["Miaou~", "Mrrp!", "Prrrr...", "Miaou miaou!", "Nyaa~", "*ronron*", "Mew!", "Prrrt?"],
@@ -1038,6 +1040,58 @@ def _draw_meow_bubble(ctx, text, cat_x, cat_y, cat_w):
     ctx.show_text(text)
 
 
+def _draw_encounter_bubble(ctx, text, cat_x, cat_y, cat_w, cat_h):
+    """Draw a short encounter speech bubble above a cat (word-wrapped, no entry)."""
+    font_size = 11
+    ctx.select_font_face("monospace", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+    ctx.set_font_size(font_size)
+
+    # Word wrap at 32 chars
+    max_chars = 32
+    words = text.split()
+    lines, line = [], ""
+    for w in words:
+        candidate = f"{line} {w}" if line else w
+        if len(candidate) > max_chars and line:
+            lines.append(line)
+            line = w
+        else:
+            line = candidate
+    if line:
+        lines.append(line)
+    if not lines:
+        lines = [""]
+    lines = lines[:6]
+
+    line_h = font_size + 3
+    pad_x, pad_y = 10, 6
+    max_line_w = max(ctx.text_extents(ln).width for ln in lines)
+    bw = max(90, max_line_w + pad_x * 2)
+    bh = pad_y * 2 + len(lines) * line_h
+    bx = cat_x + cat_w / 2 - bw / 2
+    by = cat_y - bh - 8
+    if by < 4:
+        by = cat_y + cat_h + 8
+
+    ctx.set_source_rgba(0.95, 0.9, 0.8, 1)
+    ctx.rectangle(bx, by, bw, bh)
+    ctx.fill()
+    px = 2
+    ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
+    for rx, ry, rw, rh in [(bx, by, bw, px), (bx, by + bh - px, bw, px),
+                            (bx, by, px, bh), (bx + bw - px, by, px, bh)]:
+        ctx.rectangle(rx, ry, rw, rh); ctx.fill()
+    # Corner cleanup
+    ctx.set_source_rgba(0.95, 0.9, 0.8, 1)
+    for cx, cy in [(bx, by), (bx + bw - px, by), (bx, by + bh - px), (bx + bw - px, by + bh - px)]:
+        ctx.rectangle(cx, cy, px, px); ctx.fill()
+
+    ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
+    for i, ln in enumerate(lines):
+        ctx.move_to(bx + pad_x, by + pad_y + (i + 1) * line_h)
+        ctx.show_text(ln)
+
+
 def _draw_chat_bubble(ctx, text, cat_x, cat_y, cat_w, cat_h):
     """Draw a chat response bubble above a cat on the Cairo canvas."""
     font_size = 11
@@ -1319,6 +1373,11 @@ class CatInstance:
         # Chat bubble state (drawn on canvas, entry via overlay)
         self.chat_visible = False
         self.chat_response = ""
+        # Encounter state (cat-to-cat conversation)
+        self.in_encounter = False
+        self.encounter_text = ""
+        self.encounter_visible = False
+        self._encounter_cooldown_until = 0.0  # monotonic timestamp
 
     def setup(self, app, meta, cat_dir, dw, dh, model, lang, start_x, screen_w, screen_h):
         self._app = app
@@ -1396,7 +1455,7 @@ class CatInstance:
 
     def _current_surface(self):
         """Return (cairo.ImageSurface, data_ref) for the current frame."""
-        if self.state in (CatState.IDLE, CatState.SLEEPING):
+        if self.state in (CatState.IDLE, CatState.SLEEPING, CatState.SOCIALIZING):
             return self._fallback_surface()
         key = ANIM_KEYS.get(self.state)
         if key:
@@ -1450,9 +1509,7 @@ class CatInstance:
                     self.frame_index += 1
 
     def behavior_tick(self):
-        if self.chat_visible:
-            return
-        if self.dragging:
+        if self.chat_visible or self.dragging or self.in_encounter:
             return
 
         if self.state == CatState.IDLE:
@@ -1547,6 +1604,8 @@ class CatInstance:
             GLib.source_remove(self._meow_timer_id)
             self._meow_timer_id = None
         self.meow_visible = False
+        self.in_encounter = False
+        self.encounter_visible = False
         self._app = None
         self.chat_backend = None
 
@@ -1573,6 +1632,7 @@ class SettingsWindow:
         self.on_scale_changed = None
         self.on_model_changed = None
         self.on_lang_changed = None
+        self.on_encounters_changed = None
         self.get_configs = None
         self.get_preview = None
         self._get_anim_frames = None
@@ -1588,7 +1648,7 @@ class SettingsWindow:
             self.window.set_decorated(False)
             set_notification_type(self.window)
             set_always_on_top(self.window)
-            self.window.set_default_size(340, 680)
+            self.window.set_default_size(340, 720)
             self.window.set_resizable(False)
             self.window.add_css_class("settings-window")
             self.window.connect("close-request", self._on_close)
@@ -1831,6 +1891,17 @@ class SettingsWindow:
         autostart_check.connect("toggled", lambda btn: set_autostart(btn.get_active()))
         box.append(autostart_check)
 
+        # ENCOUNTERS
+        enc_enabled = True
+        if self.on_encounters_changed and hasattr(self.app, 'encounters_enabled'):
+            enc_enabled = self.app.encounters_enabled
+        enc_check = Gtk.CheckButton(label=L10n.s("encounters"))
+        enc_check.set_active(enc_enabled)
+        enc_check.add_css_class("pixel-label-small")
+        enc_check.set_margin_top(4)
+        enc_check.connect("toggled", lambda btn: self.on_encounters_changed(btn.get_active()) if self.on_encounters_changed else None)
+        box.append(enc_check)
+
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.set_child(box)
@@ -1894,6 +1965,152 @@ class SettingsWindow:
                 move_window(self.window, cx, cy)
 
 
+# ── Cat Encounter (cat-to-cat AI conversation) ────────────────────────────────
+
+class CatEncounter:
+    """Manages a short AI-generated conversation between two nearby cats."""
+
+    PROXIMITY = 180    # px — horizontal distance to trigger
+    MSG_DURATION = 4500  # ms to display each message
+
+    def __init__(self, cat_a, cat_b, app):
+        self.cat_a = cat_a   # initiator
+        self.cat_b = cat_b   # responder
+        self.app = app
+        self.n_exchanges = random.randint(1, 3)
+        self._step = 0       # 0=A speaks, 1=B replies, 2=A again, …
+        self._total_steps = self.n_exchanges * 2
+        self._last_text = ""
+        self._timer_id = None
+        self.active = True
+
+    def start(self):
+        """Freeze cats and begin the conversation."""
+        for cat in (self.cat_a, self.cat_b):
+            cat.in_encounter = True
+            cat.state = CatState.SOCIALIZING
+            cat.meow_visible = False
+        # Face each other
+        if self.cat_b.x > self.cat_a.x:
+            self.cat_a.direction = "east"
+            self.cat_b.direction = "west"
+        else:
+            self.cat_a.direction = "west"
+            self.cat_b.direction = "east"
+        self._generate_next()
+
+    def _speaker(self):
+        return self.cat_a if self._step % 2 == 0 else self.cat_b
+
+    def _listener(self):
+        return self.cat_b if self._step % 2 == 0 else self.cat_a
+
+    def _build_prompt(self, speaker, listener):
+        lang = L10n.lang
+        s_name = speaker.config["name"]
+        l_name = listener.config["name"]
+        s_traits = speaker.color_def.traits.get(lang, speaker.color_def.traits["fr"])
+        l_traits = listener.color_def.traits.get(lang, listener.color_def.traits["fr"])
+        if lang == "en":
+            system = (f"You are {s_name}, a {s_traits} cat. You've just run into {l_name}, "
+                      f"a {l_traits} cat. Reply with exactly 1 short sentence, in character, "
+                      f"using cat sounds (meow, purr, mrrp). No quotation marks.")
+            user = (f"Say hello to {l_name}." if self._step == 0 else
+                    f"{l_name} just said: '{self._last_text}'. Reply briefly.")
+        elif lang == "es":
+            system = (f"Eres {s_name}, un gato {s_traits}. Acabas de cruzarte con {l_name}, "
+                      f"un gato {l_traits}. Responde con exactamente 1 frase corta, en personaje, "
+                      f"con sonidos de gato (miau, purr, mrrp). Sin comillas.")
+            user = (f"Saluda a {l_name}." if self._step == 0 else
+                    f"{l_name} acaba de decir: '{self._last_text}'. Respóndele brevemente.")
+        else:
+            system = (f"Tu es {s_name}, un chat {s_traits}. Tu croises {l_name}, "
+                      f"un chat {l_traits}. Réponds avec exactement 1 courte phrase, dans le personnage, "
+                      f"avec des sons de chat (miaou, purr, mrrp). Sans guillemets.")
+            user = (f"Dis quelque chose à {l_name}." if self._step == 0 else
+                    f"{l_name} vient de dire : '{self._last_text}'. Réponds-lui brièvement.")
+        return system, user
+
+    def _generate_next(self):
+        if not self.active:
+            return
+        speaker = self._speaker()
+        listener = self._listener()
+        system, user = self._build_prompt(speaker, listener)
+
+        backend = create_chat(self.app.selected_model)
+        backend.messages = [{"role": "system", "content": system}]
+
+        collected = []
+        _spk = speaker
+        _lst = listener
+
+        def on_token(tok):
+            collected.append(tok)
+            return False
+
+        def on_done():
+            if not self.active:
+                return False
+            text = "".join(collected).strip()
+            if not text:
+                text = L10n.random_meow()
+            self._last_text = text
+            _spk.encounter_text = text
+            _spk.encounter_visible = True
+            _lst.encounter_visible = False
+            self._timer_id = GLib.timeout_add(self.MSG_DURATION, self._advance)
+            return False
+
+        def on_error(msg):
+            if not self.active:
+                return False
+            _spk.encounter_text = L10n.random_meow()
+            _spk.encounter_visible = True
+            self._timer_id = GLib.timeout_add(self.MSG_DURATION, self._advance)
+            return False
+
+        backend.send(user, on_token, on_done, on_error)
+
+    def _advance(self):
+        self._timer_id = None
+        self._speaker().encounter_visible = False
+        self._step += 1
+        if self._step >= self._total_steps or not self.active:
+            self._end()
+        else:
+            # Brief pause before next line
+            self._timer_id = GLib.timeout_add(400, lambda: self._generate_next() or False)
+        return False
+
+    COOLDOWN = 120.0  # seconds before same cat can encounter again
+
+    def _end(self):
+        self.active = False
+        cooldown_until = time.monotonic() + self.COOLDOWN
+        for cat in (self.cat_a, self.cat_b):
+            cat.state = CatState.IDLE
+            cat.in_encounter = False
+            cat.encounter_visible = False
+            cat.encounter_text = ""
+            cat.idle_ticks = 0
+            cat._encounter_cooldown_until = cooldown_until
+        self.app._active_encounter = None
+
+    def cancel(self):
+        self.active = False
+        if self._timer_id:
+            GLib.source_remove(self._timer_id)
+            self._timer_id = None
+        cooldown_until = time.monotonic() + self.COOLDOWN
+        for cat in (self.cat_a, self.cat_b):
+            cat.state = CatState.IDLE
+            cat.in_encounter = False
+            cat.encounter_visible = False
+            cat.encounter_text = ""
+            cat._encounter_cooldown_until = cooldown_until
+
+
 # ── Main Application ───────────────────────────────────────────────────────────
 
 class CatAIApp(Gtk.Application):
@@ -1924,6 +2141,10 @@ class CatAIApp(Gtk.Application):
         self._timers = []
         # Drag state for canvas
         self._drag_cat = None
+        # Encounter state
+        self._active_encounter = None
+        self.encounters_enabled = True
+        self._last_encounter_check = 0.0
 
     def do_activate(self):
         _setup_logging()
@@ -1956,6 +2177,7 @@ class CatAIApp(Gtk.Application):
         self.cat_scale = cfg.get("scale", DEFAULT_SCALE)
         self.selected_model = cfg.get("model", "gemma3:1b")
         L10n.lang = cfg.get("lang", "fr")
+        self.encounters_enabled = cfg.get("encounters", True)
         self.cat_configs = cfg.get("cats", [])
 
         if not self.cat_configs:
@@ -2232,6 +2454,10 @@ class CatAIApp(Gtk.Application):
             if cat.chat_visible and cat.chat_response:
                 _draw_chat_bubble(ctx, cat.chat_response, cat.x, cat.y, cat.display_w, cat.display_h)
 
+            # Draw encounter bubble if visible
+            if cat.encounter_visible and cat.encounter_text:
+                _draw_encounter_bubble(ctx, cat.encounter_text, cat.x, cat.y, cat.display_w, cat.display_h)
+
         # Draw context menu if visible
         if self._menu_visible:
             _draw_context_menu(ctx, self._menu_x, self._menu_y, L10n.s("settings"), L10n.s("quit"))
@@ -2261,6 +2487,15 @@ class CatAIApp(Gtk.Application):
                 if by < 0:
                     by = cat.y + cat.display_h + 10
                 rects.append((bx, by, bw, bh))
+            # Include encounter bubble area if visible
+            if cat.encounter_visible and cat.encounter_text:
+                enc_bw = max(90, len(cat.encounter_text) * 7 + 20)
+                enc_bh = 60  # approximate (up to 4 lines)
+                enc_bx = cat.x + cat.display_w / 2 - enc_bw / 2
+                enc_by = cat.y - enc_bh - 8
+                if enc_by < 4:
+                    enc_by = cat.y + cat.display_h + 8
+                rects.append((enc_bx, enc_by, enc_bw, enc_bh))
         # Include context menu if visible
         if self._menu_visible:
             rects.append((self._menu_x, self._menu_y, 120, 50))
@@ -2441,6 +2676,9 @@ class CatAIApp(Gtk.Application):
 
     def do_shutdown(self):
         """Clean shutdown: stop timers, cleanup cats, close windows."""
+        if self._active_encounter:
+            self._active_encounter.cancel()
+            self._active_encounter = None
         for tid in self._timers:
             GLib.source_remove(tid)
         self._timers.clear()
@@ -2490,12 +2728,14 @@ class CatAIApp(Gtk.Application):
             "scale": self.cat_scale,
             "model": self.selected_model,
             "lang": L10n.lang,
+            "encounters": self.encounters_enabled,
         })
 
     def _render_tick(self):
         t0 = time.monotonic()
         for cat in self.cat_instances:
             cat.render_tick()
+        self._check_encounters()
         # Reposition chat entry if following a walking cat
         if self._active_chat_cat and self._chat_entry.get_visible():
             self._position_chat_entry(self._active_chat_cat)
@@ -2514,6 +2754,47 @@ class CatAIApp(Gtk.Application):
         for cat in self.cat_instances:
             cat.behavior_tick()
         return True
+
+    def _check_encounters(self):
+        """Detect two nearby cats and maybe start an encounter (called at render rate)."""
+        if not self.encounters_enabled or self._active_encounter:
+            return
+        now = time.monotonic()
+        # Throttle to once every 250ms to avoid spamming but keep it reactive
+        if now - self._last_encounter_check < 0.25:
+            return
+        self._last_encounter_check = now
+
+        ok_states = {CatState.IDLE, CatState.WALKING}
+        now = time.monotonic()
+        candidates = [c for c in self.cat_instances
+                      if not c.in_encounter and not c.chat_visible
+                      and not c.dragging and c.state in ok_states
+                      and now >= c._encounter_cooldown_until]
+        if len(candidates) < 2:
+            return
+        for i in range(len(candidates)):
+            for j in range(i + 1, len(candidates)):
+                ca, cb = candidates[i], candidates[j]
+                # Euclidean distance (cats can overlap in Y too)
+                dist = ((ca.x - cb.x) ** 2 + (ca.y - cb.y) ** 2) ** 0.5
+                if dist < CatEncounter.PROXIMITY and random.random() < 0.30:
+                    # Stop both cats where they are
+                    ca.state = CatState.IDLE
+                    cb.state = CatState.IDLE
+                    enc = CatEncounter(ca, cb, self)
+                    self._active_encounter = enc
+                    enc.start()
+                    log.debug("Encounter started: %s ↔ %s (dist=%.0f)",
+                              ca.config["name"], cb.config["name"], dist)
+                    return
+
+    def set_encounters_enabled(self, enabled):
+        self.encounters_enabled = enabled
+        if not enabled and self._active_encounter:
+            self._active_encounter.cancel()
+            self._active_encounter = None
+        self._save_all()
 
     def add_cat(self, color_id):
         cd = color_def(color_id)
@@ -2606,6 +2887,7 @@ class CatAIApp(Gtk.Application):
         ctrl.on_scale_changed = self.apply_new_scale
         ctrl.on_model_changed = self.set_model
         ctrl.on_lang_changed = self.set_language
+        ctrl.on_encounters_changed = self.set_encounters_enabled
         ctrl.setup(self.cat_scale, self.selected_model)
         ctrl.show()
 

@@ -31,6 +31,7 @@ catai
 
 - Animated pixel-art cats roaming freely across your screen
 - 6 cat personalities with AI chat (Claude API or Ollama)
+- **Cat encounters**: when two cats cross paths, they stop and have a short AI-generated conversation
 - Click-through: cats float above windows, clicks pass through
 - Drag & drop, random meows, settings UI
 - Multilingual (FR/EN/ES), autostart at login

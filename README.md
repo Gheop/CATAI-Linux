@@ -19,6 +19,7 @@ Port of [CATAI](https://github.com/wil-pe/CATAI) (macOS/Swift) to Linux.
 - **Random meows** -- Cats spontaneously say "Miaou~", "Prrr...", "Mrrp!" in cute speech bubbles
 - **Drag & drop** -- Drag cats anywhere on your screen
 - **Multilingual** -- French, English, Spanish
+- **Cat encounters** -- When two cats cross paths, they stop, face each other, and have a short AI-generated conversation (1–3 exchanges) before going their separate ways
 - **Persistent** -- Cats remember their conversations between sessions
 
 ## Cat Personalities
@@ -79,6 +80,7 @@ Right-click any cat to access Settings:
 - **Size** -- Scale slider
 - **Model** -- Choose between Claude and Ollama models
 - **Autostart** -- Launch at login
+- **Cat encounters** -- Enable/disable random cat-to-cat conversations
 
 ## How It Works
 
