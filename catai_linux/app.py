@@ -430,23 +430,41 @@ def _sprite_floor_y(img):
     return h - 1
 
 
+def _sprite_center_x(img):
+    """Return X centroid of non-transparent pixels."""
+    data = img.load()
+    w, h = img.size
+    xs = [x for y in range(h) for x in range(w) if data[x, y][3] > 10]
+    return sum(xs) / len(xs) if xs else w / 2.0
+
+
 def _climb_offset(meta, cat_dir):
-    """Measure display-px Y offset: how much to shift Y after climbing animation.
-    = (floor in reference idle frame) - (floor in last climbing frame), in sprite px."""
+    """Return (y_offset, x_offset_east, x_offset_west) in sprite pixels.
+    y_offset  > 0 → shift self.y up (decrease) after climbing
+    x_offset* > 0 → shift self.x right (increase) after climbing
+    """
     try:
         south_rel = meta["frames"]["rotations"].get("south", "")
         ref_img = Image.open(os.path.join(cat_dir, south_rel)).convert("RGBA")
         ref_floor = _sprite_floor_y(ref_img)
+        ref_cx = _sprite_center_x(ref_img)
 
-        climb_paths = meta["frames"]["animations"].get("climbing", {}).get("east", [])
-        if not climb_paths:
-            return 0
-        last_img = Image.open(os.path.join(cat_dir, climb_paths[-1])).convert("RGBA")
-        last_floor = _sprite_floor_y(last_img)
+        y_off, x_east, x_west = 0, 0, 0
 
-        return ref_floor - last_floor   # positive → cat is higher at end of climb
+        for direction in ("east", "west"):
+            paths = meta["frames"]["animations"].get("climbing", {}).get(direction, [])
+            if not paths:
+                continue
+            last_img = Image.open(os.path.join(cat_dir, paths[-1])).convert("RGBA")
+            if direction == "east":
+                y_off = ref_floor - _sprite_floor_y(last_img)
+                x_east = _sprite_center_x(last_img) - ref_cx   # + → cat shifted right
+            else:
+                x_west = _sprite_center_x(last_img) - ref_cx   # - → cat shifted left
+
+        return y_off, x_east, x_west
     except Exception:
-        return 0
+        return 0, 0, 0
 
 
 def pil_to_surface(img, target_w, target_h):
@@ -1734,7 +1752,9 @@ class CatInstance:
         self._app = None
         self._meta = None
         self._cat_dir = ""
-        self._climb_y_offset = 0  # display-px to shift Y up after climbing anim
+        self._climb_y_offset = 0       # display-px to shift Y up after climbing anim
+        self._climb_x_offset_east = 0  # display-px to shift X right after east climb
+        self._climb_x_offset_west = 0  # display-px to shift X right after west climb
         # Meow bubble state (drawn on canvas)
         self.meow_text = ""
         self.meow_visible = False
@@ -1764,10 +1784,15 @@ class CatInstance:
         self.load_assets(meta, cat_dir)
         self.setup_chat(model, lang)
 
-        # Compute how much Y to shift after climbing so the next anim aligns
+        # Compute sprite-pixel offsets to align next anim after climbing
+        sprite_w = meta["character"]["size"]["width"]
         sprite_h = meta["character"]["size"]["height"]
-        offset_px = _climb_offset(meta, cat_dir)
-        self._climb_y_offset = int(round(offset_px * dh / sprite_h))
+        y_off, x_east, x_west = _climb_offset(meta, cat_dir)
+        scale_x = dw / sprite_w
+        scale_y = dh / sprite_h
+        self._climb_y_offset = round(y_off * scale_y)
+        self._climb_x_offset_east = round(x_east * scale_x)   # shift right after east climb
+        self._climb_x_offset_west = round(x_west * scale_x)   # shift (negative) after west
 
     def setup_chat(self, model, lang):
         char_id = self.config.get("char_id")
@@ -1911,8 +1936,13 @@ class CatInstance:
                 self.frame_index = 0
                 self.idle_ticks = 0
             elif self.frame_index >= len(frames) - 1:
-                # Compensate for visual floor shift within the sprite
+                # Compensate for visual floor/center shift within the sprite
                 self.y -= self._climb_y_offset
+                if self.direction == "east":
+                    self.x += self._climb_x_offset_east
+                else:
+                    self.x += self._climb_x_offset_west
+                self.x = max(0, min(self.x, self.screen_w - self.display_w))
                 if self.y < 0:
                     self.y = self.screen_h - self.display_h
                 self.state = CatState.IDLE
