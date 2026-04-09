@@ -40,7 +40,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 gi.require_version("GdkX11", "4.0")
-from gi.repository import Gdk, GdkX11, Gio, GLib, Gtk, Pango
+from gi.repository import Gdk, GdkX11, Gio, GLib, Gtk, Pango, PangoCairo
 
 from PIL import Image
 import httpx
@@ -800,7 +800,15 @@ def _get_anthropic_client():
     global _anthropic_client
     if _anthropic_client is None:
         import anthropic
-        _anthropic_client = anthropic.Anthropic(api_key=_get_claude_api_key())
+        key = _get_claude_api_key()
+        if key and not key.startswith('sk-ant-'):
+            # OAuth token from claude.ai — must be sent as Bearer, not x-api-key
+            _anthropic_client = anthropic.Anthropic(
+                api_key="placeholder",
+                default_headers={"Authorization": f"Bearer {key}"},
+            )
+        else:
+            _anthropic_client = anthropic.Anthropic(api_key=key)
     return _anthropic_client
 
 
@@ -832,7 +840,13 @@ class ClaudeChat(ChatBackend):
                 if new_key:
                     import anthropic
                     global _anthropic_client
-                    _anthropic_client = anthropic.Anthropic(api_key=new_key)
+                    if new_key.startswith('sk-ant-'):
+                        _anthropic_client = anthropic.Anthropic(api_key=new_key)
+                    else:
+                        _anthropic_client = anthropic.Anthropic(
+                            api_key="placeholder",
+                            default_headers={"Authorization": f"Bearer {new_key}"},
+                        )
                     self.client = _anthropic_client
                     with self.client.messages.stream(
                         model=self.model, max_tokens=256,
@@ -1015,13 +1029,28 @@ def draw_pixel_tail(ctx, w, h, px=3):
 
 # ── Meow bubble drawing on canvas ────────────────────────────────────────────
 
+_BUBBLE_FONT = "monospace bold 11"
+
+def _pango_text_width(ctx, text):
+    """Measure text width in pixels using Pango (supports emoji)."""
+    layout = PangoCairo.create_layout(ctx)
+    layout.set_font_description(Pango.FontDescription(_BUBBLE_FONT))
+    layout.set_text(text, -1)
+    w, _h = layout.get_pixel_size()
+    return w
+
+def _pango_show_text(ctx, text, r=0.3, g=0.2, b=0.1, a=1.0):
+    """Render text with PangoCairo (supports COLRv1 emoji)."""
+    ctx.set_source_rgba(r, g, b, a)
+    lay = PangoCairo.create_layout(ctx)
+    lay.set_font_description(Pango.FontDescription(_BUBBLE_FONT))
+    lay.set_text(text, -1)
+    PangoCairo.show_layout(ctx, lay)
+
 def _draw_meow_bubble(ctx, text, cat_x, cat_y, cat_w):
     """Draw a meow speech bubble above a cat on the Cairo canvas."""
     font_size = 11
-    ctx.select_font_face("monospace", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-    ctx.set_font_size(font_size)
-    extents = ctx.text_extents(text)
-    text_w = extents.width
+    text_w = _pango_text_width(ctx, text)
     pad_x = 12
     bw = max(80, text_w + pad_x * 2)
     bh = 24
@@ -1054,9 +1083,9 @@ def _draw_meow_bubble(ctx, text, cat_x, cat_y, cat_w):
     # Text
     ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
     tx = bx + (bw - text_w) / 2
-    ty = by + bh / 2 + font_size / 3
+    ty = by + bh / 2 - font_size / 2
     ctx.move_to(tx, ty)
-    ctx.show_text(text)
+    _pango_show_text(ctx, text)
 
 
 def _draw_zzz(ctx, cat_x, cat_y, cat_w):
@@ -1297,32 +1326,19 @@ def _draw_fly(ctx, cat_x, cat_y, cat_w, cat_h):
 
 def _draw_encounter_bubble(ctx, text, cat_x, cat_y, cat_w, cat_h):
     """Draw a short encounter speech bubble above a cat (word-wrapped, no entry)."""
-    font_size = 11
-    ctx.select_font_face("monospace", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-    ctx.set_font_size(font_size)
-
-    # Word wrap at 32 chars
-    max_chars = 32
-    words = text.split()
-    lines, line = [], ""
-    for w in words:
-        candidate = f"{line} {w}" if line else w
-        if len(candidate) > max_chars and line:
-            lines.append(line)
-            line = w
-        else:
-            line = candidate
-    if line:
-        lines.append(line)
-    if not lines:
-        lines = [""]
-    lines = lines[:6]
-
-    line_h = font_size + 3
     pad_x, pad_y = 10, 6
-    max_line_w = max(ctx.text_extents(ln).width for ln in lines)
-    bw = max(90, max_line_w + pad_x * 2)
-    bh = pad_y * 2 + len(lines) * line_h
+    max_content_w = 260  # max text width in pixels
+
+    lay = PangoCairo.create_layout(ctx)
+    lay.set_font_description(Pango.FontDescription(_BUBBLE_FONT))
+    lay.set_text(text, -1)
+    lay.set_width(max_content_w * Pango.SCALE)
+    lay.set_wrap(Pango.WrapMode.WORD_CHAR)
+    lay.set_height(-6)  # max 6 lines
+    tw, th = lay.get_pixel_size()
+
+    bw = max(90, tw + pad_x * 2)
+    bh = pad_y * 2 + th
     bx = cat_x + cat_w / 2 - bw / 2
     by = cat_y - bh - 8
     if by < 4:
@@ -1336,49 +1352,31 @@ def _draw_encounter_bubble(ctx, text, cat_x, cat_y, cat_w, cat_h):
     for rx, ry, rw, rh in [(bx, by, bw, px), (bx, by + bh - px, bw, px),
                             (bx, by, px, bh), (bx + bw - px, by, px, bh)]:
         ctx.rectangle(rx, ry, rw, rh); ctx.fill()
-    # Corner cleanup
     ctx.set_source_rgba(0.95, 0.9, 0.8, 1)
     for cx, cy in [(bx, by), (bx + bw - px, by), (bx, by + bh - px), (bx + bw - px, by + bh - px)]:
         ctx.rectangle(cx, cy, px, px); ctx.fill()
 
+    ctx.move_to(bx + pad_x, by + pad_y)
     ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
-    for i, ln in enumerate(lines):
-        ctx.move_to(bx + pad_x, by + pad_y + (i + 1) * line_h)
-        ctx.show_text(ln)
+    PangoCairo.show_layout(ctx, lay)
 
 
 def _draw_chat_bubble(ctx, text, cat_x, cat_y, cat_w, cat_h):
     """Draw a chat response bubble above a cat on the Cairo canvas."""
-    font_size = 11
-    ctx.select_font_face("monospace", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-    ctx.set_font_size(font_size)
-
-    # Word-wrap text to ~35 chars per line
-    max_chars = 35
-    words = text.split()
-    lines = []
-    line = ""
-    for w in words:
-        if len(line) + len(w) + 1 > max_chars:
-            if line:
-                lines.append(line)
-            line = w
-        else:
-            line = f"{line} {w}" if line else w
-    if line:
-        lines.append(line)
-    if not lines:
-        lines = [""]
-
-    # Limit visible lines
-    max_lines = 8
-    if len(lines) > max_lines:
-        lines = lines[-max_lines:]
-
-    line_h = font_size + 4
     pad = 12
-    bw = 280
-    bh = pad * 2 + len(lines) * line_h + 42  # 30 entry + 12 padding
+    content_w = 256  # text area = bw - 2*pad
+
+    lay = PangoCairo.create_layout(ctx)
+    lay.set_font_description(Pango.FontDescription(_BUBBLE_FONT))
+    lay.set_text(text, -1)
+    lay.set_width(content_w * Pango.SCALE)
+    lay.set_wrap(Pango.WrapMode.WORD_CHAR)
+    lay.set_height(-8)  # max 8 lines
+    lay.set_ellipsize(Pango.EllipsizeMode.END)
+    _tw, th = lay.get_pixel_size()
+
+    bw = content_w + pad * 2  # 280
+    bh = pad * 2 + th + 42   # text + 30 entry + 12 pad
     bx = cat_x + cat_w / 2 - bw / 2
     by = cat_y - bh - 15
     if by < 0:
@@ -1397,11 +1395,10 @@ def _draw_chat_bubble(ctx, text, cat_x, cat_y, cat_w, cat_h):
     ctx.rectangle(bx, by, px, bh); ctx.fill()
     ctx.rectangle(bx + bw - px, by, px, bh); ctx.fill()
 
-    # Text lines
+    # Text via Pango (handles emoji width correctly)
+    ctx.move_to(bx + pad, by + pad)
     ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
-    for i, ln in enumerate(lines):
-        ctx.move_to(bx + pad, by + pad + (i + 1) * line_h)
-        ctx.show_text(ln)
+    PangoCairo.show_layout(ctx, lay)
 
     # Tail (small triangle pointing down)
     tx = bx + bw / 2
@@ -2862,38 +2859,31 @@ class CatAIApp(Gtk.Application):
 
     def _position_chat_entry(self, cat):
         """Position the entry inside the chat bubble (same layout as _draw_chat_bubble)."""
-        # Replicate exact same sizing as _draw_chat_bubble
         text = cat.chat_response or ""
-        max_chars = 35
-        words = text.split()
-        lines = []
-        line = ""
-        for w in words:
-            if len(line) + len(w) + 1 > max_chars:
-                if line:
-                    lines.append(line)
-                line = w
-            else:
-                line = f"{line} {w}" if line else w
-        if line:
-            lines.append(line)
-        if not lines:
-            lines = [""]
-        if len(lines) > 8:
-            lines = lines[-8:]
-
-        line_h = 15  # font_size(11) + 4
         pad = 12
-        bw = 280
-        bh = pad * 2 + len(lines) * line_h + 42
+        content_w = 256
+
+        # Measure text height with Pango — must match _draw_chat_bubble exactly
+        tmp = cairo.ImageSurface(cairo.FORMAT_ARGB32, 1, 1)
+        tctx = cairo.Context(tmp)
+        lay = PangoCairo.create_layout(tctx)
+        lay.set_font_description(Pango.FontDescription(_BUBBLE_FONT))
+        lay.set_text(text, -1)
+        lay.set_width(content_w * Pango.SCALE)
+        lay.set_wrap(Pango.WrapMode.WORD_CHAR)
+        lay.set_height(-8)
+        lay.set_ellipsize(Pango.EllipsizeMode.END)
+        _tw, th = lay.get_pixel_size()
+
+        bw = content_w + pad * 2  # 280
+        bh = pad * 2 + th + 42
         bx = cat.x + cat.display_w / 2 - bw / 2
         by = cat.y - bh - 15
         if by < 0:
             by = cat.y + cat.display_h + 10
 
-        # Entry sits in the 30px space at bottom of bubble (using margins in canvas coords)
         entry_x = int(bx + pad)
-        entry_y = int(by + bh - 36)  # centered in 42px space (6px top + 30px entry + 6px bottom)
+        entry_y = int(by + bh - 36)
         self._chat_entry.set_margin_start(max(0, entry_x))
         self._chat_entry.set_margin_top(max(0, entry_y))
 
