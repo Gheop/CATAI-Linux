@@ -1,0 +1,119 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  # Opt into Node.js 24 for JavaScript-based actions (Node 20 is deprecated,
+  # will be removed from runners on 2026-09-16).
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    name: Unit tests + import smoke
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # GTK4 + Cairo system deps — needed so PyGObject can load the typelibs
+      # for Gdk / Gtk / Pango / PangoCairo. No display required; the tests
+      # are all headless (offscreen cairo surfaces, no Gdk.Display).
+      - name: Install GTK4 + Cairo system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-gi python3-gi-cairo \
+            gir1.2-gtk-4.0 gir1.2-pango-1.0 gir1.2-gdkpixbuf-2.0 \
+            libcairo2-dev libgirepository1.0-dev pkg-config
+
+      - name: Install the package (no optional extras)
+        run: pip install -e .
+
+      - name: Run headless unit tests
+        run: python3 tests/test_modules.py
+
+  build-check:
+    runs-on: ubuntu-latest
+    name: Build wheel + sanity checks
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: pip install build twine
+
+      - name: Build the wheel + sdist
+        run: python3 -m build
+
+      - name: Validate distribution metadata
+        run: twine check dist/*
+
+      - name: Inspect the wheel
+        # Sanity checks that would catch the 3 biggest historical
+        # packaging regressions:
+        #   - cute_orange_cat/ legacy sprites slipping back in (v0.4.x bug)
+        #   - wheel size ballooning (typical when assets are added without
+        #     updating .gitignore / package-data rules)
+        #   - package-data rules not including the catset sprites (would
+        #     ship a wheel that can't start because the sprite dirs are
+        #     empty)
+        run: |
+          python3 -c '
+          import glob, sys, zipfile
+          wheels = glob.glob("dist/*.whl")
+          assert len(wheels) == 1, f"expected 1 wheel, got {wheels}"
+          wheel = wheels[0]
+          print(f"wheel: {wheel}")
+
+          with zipfile.ZipFile(wheel) as z:
+              names = z.namelist()
+              total_size = sum(i.file_size for i in z.infolist())
+              compressed = sum(i.compress_size for i in z.infolist())
+
+          print(f"  files: {len(names)}")
+          print(f"  compressed: {compressed // 1024} KB")
+          print(f"  uncompressed: {total_size // 1024} KB")
+
+          # 1. No legacy cute_orange_cat leftovers
+          cute = [n for n in names if "cute_orange_cat" in n]
+          assert not cute, f"cute_orange_cat leaked back in: {len(cute)} files"
+          print("  \u2713 no cute_orange_cat leftovers")
+
+          # 2. All 6 adult catset characters present
+          for char in ["cat_orange", "cat01", "cat02", "cat03", "cat04", "cat05"]:
+              meta = f"catai_linux/{char}/metadata.json"
+              assert meta in names, f"missing {meta}"
+              sprites = [n for n in names if n.startswith(f"catai_linux/{char}/") and n.endswith(".png")]
+              assert len(sprites) > 50, f"{char}: only {len(sprites)} PNGs (expected 50+)"
+          print("  \u2713 all 6 adult catset chars present with sprites")
+
+          # 3. All 6 kitten characters present
+          for kit in ["kitten_orange", "kitten01", "kitten02", "kitten03", "kitten04", "kitten05"]:
+              meta = f"catai_linux/{kit}/metadata.json"
+              assert meta in names, f"missing {meta}"
+          print("  \u2713 all 6 kitten chars present")
+
+          # 4. Nyan cat assets (easter egg)
+          assert "catai_linux/nyan_cat.png" in names, "nyan_cat.png missing"
+          assert "catai_linux/nyan_rainbow.png" in names, "nyan_rainbow.png missing"
+          print("  \u2713 nyan cat assets present")
+
+          # 5. All the extracted Python modules
+          for mod in ["app", "chat_backend", "voice", "drawing", "x11_helpers", "l10n"]:
+              path = f"catai_linux/{mod}.py"
+              assert path in names, f"missing {path}"
+          print("  \u2713 all 6 python modules present")
+
+          # 6. Wheel size sanity: fail if > 3 MB (current ~1.6 MB, leaves
+          #    margin for growth, catches runaway asset inclusion)
+          size_mb = compressed / 1024 / 1024
+          assert size_mb < 3.0, f"wheel too big: {size_mb:.2f} MB (cap 3.0 MB)"
+          print(f"  \u2713 wheel size {size_mb:.2f} MB < 3.0 MB cap")
+          '
