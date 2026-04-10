@@ -127,3 +127,74 @@ jobs:
           assert size_mb < 3.0, f"wheel too big: {size_mb:.2f} MB (cap 3.0 MB)"
           print(f"  \u2713 wheel size {size_mb:.2f} MB < 3.0 MB cap")
           '
+
+  e2e-tests:
+    runs-on: ubuntu-latest
+    name: Full E2E via Xvfb + metacity
+    timeout-minutes: 5
+    env:
+      # Redirect HOME to a tempdir so the CI never touches a contributor's
+      # real ~/.config/catai. App reads CONFIG_DIR = ~/.config/catai via
+      # os.path.expanduser, which follows $HOME.
+      HOME: /tmp/catai_ci_home
+      DISPLAY: ":99"
+      # Activates MockChat in chat_backend.create_chat() — no real AI
+      # backend needed for T6 'Got AI response'.
+      CATAI_MOCK_CHAT: "1"
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install GTK4 + Cairo + X11 test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-gi python3-gi-cairo \
+            gir1.2-gtk-4.0 gir1.2-pango-1.0 gir1.2-gdkpixbuf-2.0 \
+            gir1.2-gstreamer-1.0 \
+            libcairo2 python3-cairo \
+            xvfb metacity xdotool x11-utils imagemagick \
+            fonts-liberation
+
+      - name: Install pure-Python deps via --user
+        run: |
+          python3 -m pip install --user --break-system-packages \
+            Pillow httpx anthropic
+
+      - name: Seed CI home + fixture config
+        run: |
+          mkdir -p "$HOME/.config/catai"
+          cp tests/fixtures/ci_config.json "$HOME/.config/catai/config.json"
+          ls -la "$HOME/.config/catai/"
+          echo "--- config.json ---"
+          cat "$HOME/.config/catai/config.json"
+
+      - name: Start Xvfb virtual display
+        run: |
+          Xvfb :99 -screen 0 1920x1080x24 &
+          sleep 2
+          # Sanity: the X server should respond
+          xdpyinfo -display :99 >/dev/null || (echo "Xvfb failed to start"; exit 1)
+          echo "Xvfb ready on :99"
+
+      - name: Start metacity window manager
+        run: |
+          # --sm-disable avoids the (missing) session manager on a CI runner;
+          # --replace is idempotent in case a previous retry left a WM behind.
+          # Background & detach; metacity forks into a daemon on its own.
+          metacity --display=:99 --sm-disable --replace &
+          sleep 1
+          echo "metacity attached to :99"
+
+      - name: Run full E2E suite
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: python3 tests/e2e_test.py
+
+      - name: Upload screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: e2e-screenshots
+          path: /tmp/catai_e2e/
+          retention-days: 7
+          if-no-files-found: ignore
