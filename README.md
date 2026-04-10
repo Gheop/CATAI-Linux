@@ -120,10 +120,17 @@ Right-click any cat to access Settings:
 ```bash
 make lint    # Run ruff linter
 make fix     # Auto-fix lint issues
-make e2e     # Run E2E test suite (26 tests)
+make test    # Run headless unit tests (59 assertions, no GTK display needed)
+make e2e     # Run the full E2E test suite (48 assertions via Unix socket)
 make run     # Launch the app
 make build   # Build wheel + sdist
 ```
+
+`make e2e` runs locally against a real GDK display + a real AI backend. In
+CI, the same suite runs inside the `e2e-tests` job of
+`.github/workflows/test.yml` via Xvfb + metacity + a `MockChat` backend
+activated by `CATAI_MOCK_CHAT=1`, so every PR gets the 48 assertions
+validated against a fresh Ubuntu runner before merge.
 
 Sprite conversion (catset spritesheets → CATAI character directories):
 
