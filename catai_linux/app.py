@@ -605,6 +605,7 @@ from catai_linux.x11_helpers import (  # noqa: E402
 )
 
 from catai_linux.reactions import ReactionPool  # noqa: E402
+from catai_linux.mood import CatMood  # noqa: E402
 
 
 from catai_linux.chat_backend import (  # noqa: E402
@@ -684,6 +685,10 @@ class CatInstance:
         self.in_encounter = False
         self.encounter_text = ""
         self.encounter_visible = False
+        # Invisible mood system — loaded/created on setup() once we know
+        # the cat's ID. Default sentinel prevents crashes from code paths
+        # that touch mood before setup() runs.
+        self.mood = CatMood()
         self._encounter_cooldown_until = 0.0  # monotonic timestamp
 
     def setup(self, app, meta, cat_dir, dw, dh, model, lang, start_x, screen_w, screen_h):
@@ -701,6 +706,8 @@ class CatInstance:
         # Default offsets + padding until bg thread computes them
         self._anim_offsets = {}
         self._sprite_bottom_padding = 0
+        # Load persisted mood state (fresh default on any error / first run)
+        self.mood = CatMood.load(self.config["id"])
 
         # Everything heavy (sprite loading, anim offset computation, pixel
         # scans, chat backend creation which may do HTTP + subprocess) goes
@@ -1100,12 +1107,17 @@ class CatInstance:
         self.y = max(0, min(self.y, max_y))
 
     def behavior_tick(self):
+        # Mood stats always tick, even when busy — a cat dragged around
+        # still gets tired, a cat in a chat bubble still gets hungry over
+        # time. The tick itself is dirt cheap.
+        self.mood.tick(self.state.value)
+
         if self.chat_visible or self.dragging or self.in_encounter:
             return
 
         if self.state == CatState.IDLE:
             self.idle_ticks += 1
-            r = random.random()
+            r = self._roll_mood_adjusted()
             if self.idle_ticks > 15 and r < 0.05:
                 self.state = CatState.SLEEPING_BALL
                 self.frame_index = 0
@@ -1290,6 +1302,11 @@ class CatInstance:
             return False
 
         self.chat_backend.send(text, on_token, on_done, on_error, on_status=on_status)
+        # Mood: chatting with the user bumps happiness and clears boredom.
+        try:
+            self.mood.on_chat_sent()
+        except Exception:
+            pass
 
     def update_system_prompt(self, lang):
         p = _catset_prompt(self.config["char_id"], self.config["name"], lang)
@@ -1315,6 +1332,33 @@ class CatInstance:
             # South frames are east-facing originals → flip for west
             self.direction = "south"
             self._flip_h = not should_face_east
+
+    def _roll_mood_adjusted(self) -> float:
+        """Return a random [0, 1) biased by the cat's current mood. Used in
+        the IDLE branch of behavior_tick instead of a raw random.random()
+        so the emergent behavior reflects the invisible stats.
+
+        Biases are layered: a single mood can only win (most extreme first).
+        The effect is visible but not overwhelming — ~50% of rolls are
+        still uniform when the cat is in the default 'neutral' zone.
+        """
+        r = random.random()
+        m = self.mood
+        if m.wants_rest():
+            # Halve the range so low-r branches (SLEEPING_BALL at 0.05,
+            # WALKING at 0.22) become much more likely, biasing toward rest.
+            return r * 0.5
+        if m.is_bored():
+            # Map [0,1) → [0.28, 0.78) so CHASING_MOUSE (0.35), JUMPING
+            # (0.65), CLIMBING (0.75) dominate.
+            return 0.28 + r * 0.50
+        if m.is_grumpy():
+            # Narrow band around ANGRY (0.75–0.78).
+            return 0.70 + r * 0.10
+        if m.is_affectionate():
+            # Narrow band around LOVE (0.45–0.50).
+            return 0.35 + r * 0.20
+        return r
 
     def _show_random_meow(self):
         if self.chat_visible:
@@ -2216,6 +2260,8 @@ class CatAIApp(Gtk.Application):
         self._fullscreen_applause_active = False
         # Petting state
         self._petting_timer_id = None
+        # Mood system save interval (60 s periodic + on shutdown)
+        self._mood_save_timer_id = None
 
     def do_activate(self):
         _setup_logging()
@@ -2315,6 +2361,9 @@ class CatAIApp(Gtk.Application):
             # _NET_WM_STATE_FULLSCREEN atom. Uses xprop subprocess so
             # polling is a bit more expensive — hence slower rate.
             GLib.timeout_add(1500, self._check_fullscreen),
+            # Mood save — persist all cats' mood state to disk every 60s
+            # (plus on shutdown and on key mood events).
+            GLib.timeout_add(60000, self._save_all_moods),
         ]
 
         # Test socket for E2E tests (--test-socket flag)
@@ -2580,6 +2629,74 @@ class CatAIApp(Gtk.Application):
                 f"hidden={hidden_cats} boss={boss_cats} beam={beam_cats} "
                 f"rm_rf={rm_rf_active}")
 
+    def _on_petting_start(self, cat) -> None:
+        """Mood hook — called by _try_enter_petting when a petting session
+        begins. Delegates to the cat's mood instance."""
+        try:
+            cat.mood.on_petting_start()
+        except Exception:
+            log.exception("mood.on_petting_start failed")
+
+    def _on_petting_end(self, cat) -> None:
+        try:
+            cat.mood.on_petting_end()
+            # Persist immediately so a happy moment isn't lost to a crash
+            cat.mood.save(cat.config["id"])
+        except Exception:
+            log.exception("mood.on_petting_end failed")
+
+    def _save_all_moods(self) -> bool:
+        """Persist all cats' mood state. Called by the 60 s save timer and
+        by do_shutdown. Returns True so the GLib timeout keeps firing."""
+        for cat in self.cat_instances:
+            try:
+                cat.mood.save(cat.config["id"])
+            except Exception:
+                log.debug("mood save failed for %s", cat.config.get("id"), exc_info=True)
+        return True
+
+    def _cmd_mood_state(self, parts):
+        """Return the mood snapshot for every cat. Usage: mood_state [idx]
+        If an index is provided, returns just that cat's stats."""
+        if len(parts) >= 2:
+            cat, err = self._get_cat_at_idx(parts)
+            if err:
+                return err
+            snap = cat.mood.snapshot()
+            return (f"OK idx={parts[1]} happiness={snap['happiness']} "
+                    f"energy={snap['energy']} bored={snap['bored']} "
+                    f"hunger={snap['hunger']}")
+        # All cats
+        parts_out = []
+        for i, c in enumerate(self.cat_instances):
+            snap = c.mood.snapshot()
+            parts_out.append(
+                f"[{i}] h={snap['happiness']:.0f} e={snap['energy']:.0f} "
+                f"b={snap['bored']:.0f} f={snap['hunger']:.0f}"
+            )
+        return "OK " + " | ".join(parts_out)
+
+    def _cmd_mood_set(self, parts):
+        """Force a specific mood stat on a cat. Usage:
+        mood_set <idx> <happiness|energy|bored|hunger> <value>
+        E2E helper so tests can exercise the mood-biased IDLE branch
+        without waiting for natural decay."""
+        if len(parts) < 4:
+            return "ERR: usage: mood_set <idx> <stat> <value>"
+        cat, err = self._get_cat_at_idx(parts)
+        if err:
+            return err
+        stat = parts[2]
+        if stat not in ("happiness", "energy", "bored", "hunger"):
+            return f"ERR: unknown stat {stat}"
+        try:
+            value = float(parts[3])
+        except ValueError:
+            return "ERR: value must be a number"
+        value = max(0.0, min(100.0, value))
+        setattr(cat.mood, stat, value)
+        return f"OK cat {parts[1]} {stat}={value}"
+
     def _cmd_pet_cat(self, parts):
         """E2E hook: simulate a long-press on a cat to enter petting mode,
         without actually waiting for the PETTING_THRESHOLD_MS timer.
@@ -2671,6 +2788,8 @@ class CatAIApp(Gtk.Application):
                 "pet_cat": self._cmd_pet_cat,
                 "unpet_cat": self._cmd_unpet_cat,
                 "petting_state": self._cmd_petting_state,
+                "mood_state": self._cmd_mood_state,
+                "mood_set": self._cmd_mood_set,
                 "get_chat_response": self._cmd_get_chat_response,
                 "screenshot": self._cmd_screenshot,
             }
@@ -3471,6 +3590,11 @@ class CatAIApp(Gtk.Application):
         if self._active_encounter:
             self._active_encounter.cancel()
             self._active_encounter = None
+        # Final mood save so we don't lose 0-60 s of stat drift
+        try:
+            self._save_all_moods()
+        except Exception:
+            pass
         for tid in self._timers:
             GLib.source_remove(tid)
         self._timers.clear()

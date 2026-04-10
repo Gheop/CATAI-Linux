@@ -278,6 +278,7 @@ def test_import_smoke() -> None:
         "catai_linux.voice",
         "catai_linux.drawing",
         "catai_linux.reactions",
+        "catai_linux.mood",
         "catai_linux.app",
     ]
     for m in modules:
@@ -362,6 +363,88 @@ def test_reactions() -> None:
 
 # ── main ─────────────────────────────────────────────────────────────────────
 
+# ── catai_linux.mood ─────────────────────────────────────────────────────────
+
+def test_mood() -> None:
+    print("\n[mood]", flush=True)
+    from catai_linux.mood import CatMood
+    import tempfile
+    import time as _time
+
+    # Default construction — values are in the expected bands
+    m = CatMood()
+    test("default happiness", 50 <= m.happiness <= 70, str(m.happiness))
+    test("default energy", 70 <= m.energy <= 90, str(m.energy))
+    test("default bored", 20 <= m.bored <= 40, str(m.bored))
+    test("default hunger", 10 <= m.hunger <= 30, str(m.hunger))
+
+    # Fake a 1h elapsed time by rewinding last_update
+    m = CatMood()
+    m.last_update = _time.monotonic() - 3600
+    m.tick("idle")
+    test("1h idle → happiness decreased", m.happiness < 60, str(m.happiness))
+    test("1h idle → energy decreased", m.energy < 80, str(m.energy))
+    test("1h idle → bored increased", m.bored > 30, str(m.bored))
+
+    # Sleeping recovers energy
+    m = CatMood()
+    m.energy = 20.0
+    m.last_update = _time.monotonic() - 600  # 10 min
+    m.tick("sleeping_ball")
+    test("10 min sleeping → energy recovered", m.energy > 20, str(m.energy))
+
+    # Petting bumps happiness
+    m = CatMood()
+    base_h = m.happiness
+    m.on_petting_start()
+    m.on_petting_end()
+    test("petting raises happiness", m.happiness > base_h,
+         f"before={base_h} after={m.happiness}")
+
+    # Chat bumps happiness + drops bored
+    m = CatMood(happiness=50, bored=80)
+    m.on_chat_sent()
+    test("on_chat_sent raises happiness", m.happiness > 50, str(m.happiness))
+    test("on_chat_sent drops bored", m.bored < 80, str(m.bored))
+
+    # Clamp behavior
+    m = CatMood()
+    m.happiness = 120
+    m.energy = -10
+    m.tick("idle")
+    test("clamp upper bound", m.happiness <= 100, str(m.happiness))
+    test("clamp lower bound", m.energy >= 0, str(m.energy))
+
+    # Mood predicates
+    test("wants_rest when energy low", CatMood(energy=10).wants_rest())
+    test("not wants_rest when energy high", not CatMood(energy=80).wants_rest())
+    test("is_bored when bored high", CatMood(bored=90).is_bored())
+    test("is_grumpy when happiness low", CatMood(happiness=10).is_grumpy())
+    test("is_affectionate when happiness high", CatMood(happiness=90).is_affectionate())
+
+    # Persistence round-trip
+    with tempfile.TemporaryDirectory() as td:
+        with mock.patch("catai_linux.mood.CONFIG_DIR", td):
+            m = CatMood(happiness=77, energy=33, bored=55, hunger=22)
+            m.save("test_cat_00")
+            loaded = CatMood.load("test_cat_00")
+            test("persistence: happiness",
+                 abs(loaded.happiness - 77) < 0.01, str(loaded.happiness))
+            test("persistence: energy",
+                 abs(loaded.energy - 33) < 0.01, str(loaded.energy))
+            test("persistence: bored",
+                 abs(loaded.bored - 55) < 0.01, str(loaded.bored))
+            test("persistence: hunger",
+                 abs(loaded.hunger - 22) < 0.01, str(loaded.hunger))
+
+    # Missing file → defaults (no crash)
+    with tempfile.TemporaryDirectory() as td:
+        with mock.patch("catai_linux.mood.CONFIG_DIR", td):
+            loaded = CatMood.load("nonexistent_cat")
+            test("load missing file returns defaults",
+                 loaded.happiness == 60.0, str(loaded.happiness))
+
+
 def _run_section(name: str, fn) -> None:
     """Run a test section, catching import errors so one broken module
     doesn't kill the whole suite. Records a FAIL on exception."""
@@ -383,6 +466,7 @@ def main() -> int:
     _run_section("x11_helpers", test_x11_helpers)
     _run_section("drawing", test_drawing)
     _run_section("reactions", test_reactions)
+    _run_section("mood", test_mood)
     print(f"\n=== Results: {PASS} passed, {FAIL} failed ===\n", flush=True)
     return 0 if FAIL == 0 else 1
 
