@@ -312,6 +312,10 @@ BABY_MEOWS = [
 
 MAX_KITTENS = 6
 
+# Small safety margin at the bottom for sub-pixel rendering. The real
+# offset for the GNOME top bar is computed per-cat via _canvas_y_offset.
+BOTTOM_MARGIN = 5
+
 CATSET_PERSONALITIES = {
     "cat_orange": {
         "name": {"fr": "Mandarine", "en": "Tangerine", "es": "Mandarina"},
@@ -2010,6 +2014,7 @@ class CatInstance:
         self._meta = None
         self._cat_dir = ""
         self._anim_offsets = {}         # anim_key -> {direction -> (dy, dx)} in display-px
+        self._sprite_bottom_padding = 0 # px of empty rows between sprite feet and box bottom
         self.is_kitten = False          # True for kittens born from love encounters
         self._birth_progress = None     # None = fully visible; 0.0..1.0 = birth animation
         self._flip_h = False            # Horizontal flip (override for face-each-other in encounters)
@@ -2058,6 +2063,17 @@ class CatInstance:
             self._anim_offsets[anim_key] = {}
             for direction, (y_off, x_off) in dirs.items():
                 self._anim_offsets[anim_key][direction] = (round(y_off * scale_y), round(x_off * scale_x))
+
+        # Compute the empty padding between the sprite feet and the bottom of
+        # its bounding box — so the clamp can let cats go further down visually
+        try:
+            south_rel = meta["frames"]["rotations"].get("south", "")
+            ref_img = Image.open(os.path.join(cat_dir, south_rel)).convert("RGBA")
+            ref_floor = _sprite_floor_y(ref_img)  # in native sprite pixels
+            # Empty rows below feet = native_h - 1 - ref_floor
+            self._sprite_bottom_padding = round((sprite_h - 1 - ref_floor) * scale_y)
+        except Exception:
+            self._sprite_bottom_padding = 0
 
     def setup_chat(self, model, lang):
         char_id = self.config.get("char_id")
@@ -2259,9 +2275,9 @@ class CatInstance:
                 self.y += velocity
                 self.frame_index = (self.frame_index + 1) % len(frames)
 
-                hit_bottom = self.y >= self.screen_h - self.display_h - 5
+                hit_bottom = self.y >= self.screen_h - self.display_h - BOTTOM_MARGIN
                 if hit_bottom:
-                    self.y = self.screen_h - self.display_h - 5
+                    self.y = self.screen_h - self.display_h - BOTTOM_MARGIN
                     # Crash! If slid significantly, 40% chance of drama_queen
                     if self._state_tick > 15 and random.random() < 0.40:
                         self._state_tick = 0
@@ -2378,7 +2394,7 @@ class CatInstance:
         self.x += total_x
         if self.y < 0:
             # Wrapped off the top (e.g. climbing up past the screen) → bottom
-            self.y = self.screen_h - self.display_h - 5
+            self.y = self.screen_h - self.display_h - BOTTOM_MARGIN
         self._clamp_to_screen()
 
     def _start_sequence(self, seq_name):
@@ -2405,11 +2421,16 @@ class CatInstance:
         self.idle_ticks = 0
 
     def _clamp_to_screen(self):
-        """Defensive clamp — keep cat within screen bounds with a safety margin."""
+        """Defensive clamp — keep cat within screen bounds with a safety margin.
+        Accounts for the GNOME top bar offset AND the sprite's own bottom padding
+        (transparent rows below the cat feet), so the VISIBLE feet end up flush
+        with the bottom of the screen (within BOTTOM_MARGIN)."""
+        top_offset = self._app._canvas_y_offset if self._app else 0
         self.x = max(0, min(self.x, self.screen_w - self.display_w))
-        # Extra 5px safety margin at bottom: some animations (dying) have sprite
-        # pixels right at the box edge, and sub-pixel rendering can bleed past
-        self.y = max(0, min(self.y, self.screen_h - self.display_h - 5))
+        # Add sprite_bottom_padding back — the "empty" rows can extend below
+        # the screen without being visible
+        max_y = self.screen_h - self.display_h - top_offset - BOTTOM_MARGIN + self._sprite_bottom_padding
+        self.y = max(0, min(self.y, max_y))
 
     def behavior_tick(self):
         if self.chat_visible or self.dragging or self.in_encounter:
@@ -2588,6 +2609,14 @@ class CatInstance:
             self._anim_offsets[anim_key] = {}
             for direction, (y_off, x_off) in dirs.items():
                 self._anim_offsets[anim_key][direction] = (round(y_off * scale_y), round(x_off * scale_x))
+        # Re-compute sprite bottom padding at new scale
+        try:
+            south_rel = m["frames"]["rotations"].get("south", "")
+            ref_img = Image.open(os.path.join(d, south_rel)).convert("RGBA")
+            ref_floor = _sprite_floor_y(ref_img)
+            self._sprite_bottom_padding = round((sprite_h - 1 - ref_floor) * scale_y)
+        except Exception:
+            self._sprite_bottom_padding = 0
 
     def cleanup(self):
         if self.chat_backend:
@@ -3326,6 +3355,7 @@ class CatAIApp(Gtk.Application):
         self._canvas_window = None
         self._canvas_area = None
         self._canvas_xid = None
+        self._canvas_y_offset = 0  # GNOME top bar height (detected at launch)
         self._timers = []
         # Drag state for canvas
         self._drag_cat = None
@@ -3464,7 +3494,8 @@ class CatAIApp(Gtk.Application):
         action = parts[0]
 
         if action == "status":
-            return f"OK cats={len(self.cat_instances)} canvas_xid={self._canvas_xid}"
+            return (f"OK cats={len(self.cat_instances)} canvas_xid={self._canvas_xid} "
+                    f"screen={self.screen_w}x{self.screen_h} y_offset={self._canvas_y_offset}")
 
         elif action == "cat_positions":
             positions = [f"{c.config.get('char_id', c.config.get('color_id', '?'))}:{c.x:.0f},{c.y:.0f}" for c in self.cat_instances]
@@ -3542,8 +3573,9 @@ class CatAIApp(Gtk.Application):
             y = int(parts[3])
             if 0 <= idx < len(self.cat_instances):
                 cat = self.cat_instances[idx]
-                cat.x = max(0, min(x, cat.screen_w - cat.display_w))
-                cat.y = max(0, min(y, cat.screen_h - cat.display_h))
+                cat.x = x
+                cat.y = y
+                cat._clamp_to_screen()  # honours canvas y offset and margins
                 return f"OK cat {idx} at {cat.x},{cat.y}"
             return "ERR: invalid cat index"
 

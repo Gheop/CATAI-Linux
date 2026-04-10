@@ -166,6 +166,14 @@ MIT
 
 ## Changelog
 
+### v0.3.5 — Screen-edge clamp with top bar + sprite padding awareness (2026-04-10)
+
+- **Cats no longer drop off the bottom of the screen**: the clamp now accounts for the GNOME top bar offset (detected via `_canvas_y_offset`) — previously the canvas window extended ~32 px below the visible area, so cats at `screen_h - display_h` were rendered partially off-screen
+- **Flush-to-bottom alignment**: the clamp also factors in the sprite's own empty bottom padding (transparent rows between the cat's feet and the sprite box edge), so cats sit right against the screen edge with their feet visible instead of hovering 15–20 px above
+- **Per-cat `_sprite_bottom_padding`**: computed once at setup from the idle rotation's `_sprite_floor_y`, recomputed on scale change
+- **Test socket `status`** now reports screen resolution and top bar offset for easier debugging
+- **`move_cat` test command** routes through `_clamp_to_screen` so scripted tests honour the same bounds as normal behaviour
+
 ### v0.3.4 — Aggressive love + wall slide polish (2026-04-10)
 
 - **Love encounter flow swap (ANGRY)**: when the reaction is angry, cat A is now the aggressor (starts in ANGRY from the beginning) and cat B becomes the victim who plays the drama_queen sequence — previously it was the opposite
