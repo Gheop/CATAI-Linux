@@ -68,6 +68,18 @@ def find_catai_windows():
 
 
 def find_canvas_xid():
+    """Ask the app via socket — the `status` command returns the canvas XID
+    that the app itself captured in _on_realize. This is more robust than
+    xdotool search by class, which depends on how WM_CLASS is set for the
+    Python process (varies across GNOME/KDE/Wayland + Xorg)."""
+    resp = send_cmd("status")
+    # Example response: "OK cats=6 canvas_xid=104857607 screen=1920x1080 y_offset=32"
+    for tok in resp.split():
+        if tok.startswith("canvas_xid="):
+            val = tok.split("=", 1)[1]
+            if val and val != "None":
+                return val
+    # Fallback to xdotool class search for older versions or edge cases
     windows = find_catai_windows()
     best_xid = None
     best_size = 0
@@ -253,8 +265,8 @@ def run_tests():
     resp = send_cmd("click_menu_settings")
     test("Settings opened", resp.startswith("OK"), resp)
     time.sleep(1)
-    settings = find_settings_window()
-    test("Settings window exists", settings is not None)
+    resp = send_cmd("settings_state")
+    test("Settings window exists", "settings=present" in resp and "visible=yes" in resp, resp)
 
     # ── T10: Settings closes ──────────────────────────────
     print("\n[T10] Close settings", flush=True)
