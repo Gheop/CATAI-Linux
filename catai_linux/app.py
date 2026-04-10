@@ -322,6 +322,14 @@ MAGIC_EGG_PHRASES = {
     "capslock": "capslock",
     "caps lock": "capslock",
     "shouting": "capslock",
+    # Uptime party
+    "uptime": "uptime",
+    "how long": "uptime",
+    "since when": "uptime",
+    # Fullscreen applause (backup manual trigger for testing)
+    "fullscreen": "fullscreen",
+    "applause": "fullscreen",
+    "bravo": "fullscreen",
 }
 
 EASTER_EGGS = [
@@ -349,6 +357,8 @@ EASTER_EGGS = [
     ("nyan",        "\U0001f308", "Nyan!?",        "eg_nyan"),
     ("rm_rf",       "\U0001f480", "rm -rf /",      "eg_rm_rf"),
     ("capslock",    "\U0001f520", "Caps Lock",     "eg_capslock"),
+    ("uptime",      "\u23f1",     "Uptime party",  "eg_uptime"),
+    ("fullscreen",  "\U0001f64c", "Fullscreen",    "eg_fullscreen"),
 ]
 
 CATSET_PERSONALITIES = {
@@ -1186,6 +1196,16 @@ class CatInstance:
             self.chat_visible = True
             return
         if self.chat_backend.is_streaming:
+            return
+        # Lorem ipsum easter egg: a very long input (>500 chars) is not a real
+        # message, the user is probably pasting / testing. Short-circuit to
+        # the reading animation BEFORE hitting the backend (saves an API call
+        # and triggers the delight). Detection lives in send_chat rather than
+        # _on_chat_entry_activate so the test socket's `type_chat` command
+        # hits the same path.
+        if len(text) > 500 and self._app and hasattr(self._app, "eg_lorem"):
+            self._close_chat_fully()
+            self._app.eg_lorem(self, text)
             return
         # Magic phrase: "Don't panic" triggers/stops apocalypse mode (HGttG 🚀)
         # Case-insensitive, ignoring trailing punctuation and whitespace
@@ -2189,6 +2209,10 @@ class CatAIApp(Gtk.Application):
         self._caps_lock_prev = False
         self._caps_lock_last_trigger = 0.0
         self._rm_rf_active_app = False
+        # Fullscreen detection (edge-triggered, with cooldown)
+        self._fullscreen_prev = False
+        self._fullscreen_last_trigger = 0.0
+        self._fullscreen_applause_active = False
 
     def do_activate(self):
         _setup_logging()
@@ -2283,6 +2307,11 @@ class CatAIApp(Gtk.Application):
             # on the False → True transition. Cheap (reads a GDK device
             # flag, no I/O).
             GLib.timeout_add(500, self._check_caps_lock),
+            # Fullscreen poller — fires every 1500 ms, triggers eg_fullscreen
+            # on the False → True transition of the active window's
+            # _NET_WM_STATE_FULLSCREEN atom. Uses xprop subprocess so
+            # polling is a bit more expensive — hence slower rate.
+            GLib.timeout_add(1500, self._check_fullscreen),
         ]
 
         # Test socket for E2E tests (--test-socket flag)
@@ -3047,13 +3076,14 @@ class CatAIApp(Gtk.Application):
         self._chat_box.set_margin_top(max(0, entry_y))
 
     def _on_chat_entry_activate(self, entry):
-        """User pressed Enter in the chat entry."""
+        """User pressed Enter in the chat entry. Long-paste detection and
+        easter egg dispatch live inside CatInstance.send_chat so all code
+        paths (this one + the test socket) share the same logic."""
         text = entry.get_text().strip()
         if not text or not self._active_chat_cat:
             return
         entry.set_text("")
-        cat = self._active_chat_cat
-        cat.send_chat(text)
+        self._active_chat_cat.send_chat(text)
 
     # ── Voice chat (push-to-talk) ─────────────────────────────────────────────
 
@@ -4203,6 +4233,256 @@ class CatAIApp(Gtk.Application):
             except Exception:
                 pass
         victim._meow_timer_id = GLib.timeout_add(3000, victim._hide_meow)
+
+    # ── Uptime party ─────────────────────────────────────────────────────────
+
+    def _read_system_uptime(self) -> tuple[int, int, int] | None:
+        """Return (days, hours, minutes) of system uptime, or None on failure.
+        Reads /proc/uptime which is the fastest + most portable way on Linux."""
+        try:
+            with open("/proc/uptime") as f:
+                seconds = float(f.read().split()[0])
+        except (OSError, ValueError, IndexError):
+            return None
+        total_minutes = int(seconds // 60)
+        days = total_minutes // (24 * 60)
+        hours = (total_minutes % (24 * 60)) // 60
+        minutes = total_minutes % 60
+        return days, hours, minutes
+
+    def _format_uptime(self, days: int, hours: int, minutes: int) -> str:
+        """Format uptime in the current language, long-form and warm."""
+        lang = L10n.lang
+        if days > 0:
+            if lang == "en":
+                return f"⏱ Up {days}d {hours}h {minutes}m 💪"
+            if lang == "es":
+                return f"⏱ Arriba {days}d {hours}h {minutes}m 💪"
+            return f"⏱ Allumé depuis {days}j {hours}h {minutes}m 💪"
+        if hours > 0:
+            if lang == "en":
+                return f"⏱ Up {hours}h {minutes}m 🎉"
+            if lang == "es":
+                return f"⏱ Arriba {hours}h {minutes}m 🎉"
+            return f"⏱ Allumé depuis {hours}h {minutes}m 🎉"
+        if lang == "en":
+            return f"⏱ Up {minutes}m — just woke up 😸"
+        if lang == "es":
+            return f"⏱ Arriba {minutes}m — acabando de despertar 😸"
+        return f"⏱ Allumé depuis {minutes}m — à peine réveillé 😸"
+
+    def eg_uptime(self):
+        """Uptime party — the active cat shows the system uptime in a chat
+        bubble, other cats gather in a circle around it in LOVE state, and
+        the whole thing releases after ~6 seconds. The 'number formation'
+        from the original idea is replaced by a contextual bubble because
+        with 4-6 cats, a literal pixel-art digit wouldn't be readable."""
+        if not self.cat_instances:
+            return
+        ut = self._read_system_uptime()
+        if ut is None:
+            log.warning("uptime egg: cannot read /proc/uptime")
+            return
+        days, hours, minutes = ut
+        message = self._format_uptime(days, hours, minutes)
+        log.info("uptime egg: %s", message)
+
+        # Pick the focus cat: the active chat cat, else the first one
+        focus = (self._active_chat_cat
+                 if self._active_chat_cat in self.cat_instances
+                 else self.cat_instances[0])
+        # Don't interrupt an ongoing encounter
+        if focus.in_encounter:
+            return
+
+        # Focus cat: show the uptime in its chat bubble, stay IDLE so it
+        # doesn't wander off during the display
+        focus.chat_response = message
+        focus.chat_visible = True
+        self._active_chat_cat = focus
+        focus.state = CatState.IDLE
+        focus.frame_index = 0
+        focus.in_encounter = True  # freeze it for the duration
+
+        # Other cats: gather in a half-circle BELOW the focus cat so the
+        # chat bubble above stays unobstructed, all in LOVE state
+        others = [c for c in self.cat_instances if c is not focus]
+        cx = focus.x + focus.display_w / 2
+        cy = focus.y + focus.display_h + 40
+        radius_x = 220
+        radius_y = 40
+        for i, cat in enumerate(others):
+            if len(others) > 1:
+                # Spread from π (left) to 2π (right), avoiding the top
+                angle = math.pi + (math.pi * i / max(1, len(others) - 1))
+            else:
+                angle = math.pi + math.pi / 2  # single cat: straight below
+            cat.x = int(cx + math.cos(angle) * radius_x - cat.display_w / 2)
+            cat.y = int(cy + math.sin(angle) * radius_y - cat.display_h / 2)
+            cat._clamp_to_screen()
+            cat.state = CatState.LOVE
+            cat._face_toward(focus, CatState.LOVE)
+            cat.frame_index = 0
+            cat.in_encounter = True
+
+        # Release after 6 seconds — long enough to read the message, short
+        # enough to feel responsive
+        def restore():
+            focus.chat_visible = False
+            focus.chat_response = ""
+            if self._active_chat_cat is focus:
+                self._active_chat_cat = None
+            self._release_encounter_lock()
+            return False
+        GLib.timeout_add(6000, restore)
+
+    # ── Fullscreen applause ──────────────────────────────────────────────────
+
+    def _is_any_fullscreen(self) -> bool:
+        """Check if the currently active X window has _NET_WM_STATE_FULLSCREEN.
+        Uses xprop subprocesses — 2 cheap calls totaling <20 ms. Falls back
+        to False on any failure (non-X11 sessions, xprop missing, etc.)."""
+        try:
+            r = subprocess.run(
+                ["xprop", "-root", "_NET_ACTIVE_WINDOW"],
+                capture_output=True, text=True, timeout=1,
+            )
+            # Example stdout: '_NET_ACTIVE_WINDOW(WINDOW): window id # 0x3800003'
+            if "# " not in r.stdout:
+                return False
+            xid = r.stdout.strip().split("# ", 1)[1].split(",")[0].strip()
+            if not xid or xid == "0x0":
+                return False
+            r = subprocess.run(
+                ["xprop", "-id", xid, "_NET_WM_STATE"],
+                capture_output=True, text=True, timeout=1,
+            )
+            return "_NET_WM_STATE_FULLSCREEN" in r.stdout
+        except Exception:
+            return False
+
+    def _check_fullscreen(self) -> bool:
+        """Poll fullscreen state; on False → True rising edge (with 15 s
+        cooldown), trigger eg_fullscreen. Returns True to keep the timer."""
+        try:
+            now_fs = self._is_any_fullscreen()
+            # Ignore transitions where our own canvas window is active —
+            # we're not the ones going fullscreen, and our canvas isn't
+            # tagged fullscreen anyway.
+            prev = self._fullscreen_prev
+            self._fullscreen_prev = now_fs
+            if now_fs and not prev:
+                now_ts = time.monotonic()
+                if now_ts - self._fullscreen_last_trigger >= 15.0:
+                    self._fullscreen_last_trigger = now_ts
+                    self.eg_fullscreen()
+        except Exception:
+            log.exception("fullscreen poll crashed")
+        return True
+
+    def eg_fullscreen(self):
+        """Fullscreen applause — all cats enter SURPRISED briefly, then LOVE
+        with sparkle overlays. Feels like an ovation when the user goes
+        full-screen in Firefox / YouTube / presentations."""
+        if not self.cat_instances:
+            return
+        if getattr(self, "_fullscreen_applause_active", False):
+            return
+        self._fullscreen_applause_active = True
+
+        # Phase 1: all cats SURPRISED for 800 ms
+        for cat in self.cat_instances:
+            if cat.in_encounter:
+                continue
+            cat.state = CatState.SURPRISED
+            cat.frame_index = 0
+            cat.in_encounter = True
+
+        def applause():
+            # Phase 2: all cats LOVE for 2.5 s
+            for cat in self.cat_instances:
+                if not cat.in_encounter:
+                    continue
+                cat.state = CatState.LOVE
+                cat.frame_index = 0
+            GLib.timeout_add(2500, end_applause)
+            return False
+
+        def end_applause():
+            self._fullscreen_applause_active = False
+            self._release_encounter_lock()
+            return False
+
+        GLib.timeout_add(800, applause)
+
+    # ── Lorem ipsum reading ──────────────────────────────────────────────────
+
+    def eg_lorem(self, cat, full_text: str):
+        """Lorem ipsum easter egg — the cat 'reads' a very long pasted text
+        by slowly scrolling a window of it across its chat bubble. After
+        ~10 s it falls asleep mid-reading (SLEEPING_BALL + '…💤' bubble)
+        and the bubble clears after another few seconds.
+
+        Unlike the other easter eggs, this one takes a pre-selected cat
+        as argument (the active chat cat, passed from
+        _on_chat_entry_activate), not a random one — the user clicked on
+        THIS specific cat and tried to talk to it, so that's who reads.
+        """
+        # Normalize whitespace so the scrolling window reads cleanly
+        text = " ".join(full_text.split())
+        WINDOW_CHARS = 40
+        STEP_MS = 100
+        READ_DURATION_MS = 10000
+        SLEEP_BUBBLE_MS = 4000
+
+        # Initial state: show the first window
+        cat.state = CatState.EATING  # "processing" animation
+        cat.frame_index = 0
+        cat.chat_response = text[:WINDOW_CHARS]
+        cat.chat_visible = True
+        cat.in_encounter = True
+        # Register the cat as the active chat target so _position_chat_entry
+        # follows it (even though we don't want an input box to show — we
+        # hide _chat_box to signal it's read-only).
+        if self._chat_box:
+            self._chat_box.set_visible(False)
+        self._active_chat_cat = cat
+
+        scroll_state = {"offset": 0}
+        total_steps = READ_DURATION_MS // STEP_MS
+
+        def scroll():
+            scroll_state["offset"] += 1
+            if scroll_state["offset"] >= total_steps:
+                # Cat falls asleep mid-reading — show what's currently
+                # visible + a zzz at the end to signal the transition
+                last_window = cat.chat_response
+                cat.state = CatState.SLEEPING_BALL
+                cat.frame_index = 0
+                cat.chat_response = last_window + "  …💤"
+                GLib.timeout_add(SLEEP_BUBBLE_MS, finish)
+                return False
+            start = scroll_state["offset"]
+            # Scroll forward — wrap around if we run out of text
+            if start + WINDOW_CHARS >= len(text):
+                # Pad with spaces so the last frame doesn't abruptly jump
+                tail = text[start:] + " " * WINDOW_CHARS
+                cat.chat_response = tail[:WINDOW_CHARS]
+            else:
+                cat.chat_response = text[start : start + WINDOW_CHARS]
+            return True
+
+        def finish():
+            cat.chat_visible = False
+            cat.chat_response = ""
+            cat.in_encounter = False
+            if self._active_chat_cat is cat:
+                self._active_chat_cat = None
+            return False
+
+        GLib.timeout_add(STEP_MS, scroll)
+        log.info("lorem ipsum egg: cat=%s text_len=%d steps=%d",
+                 cat.config.get("name"), len(text), total_steps)
 
     def eg_follow_leader(self):
         if len(self.cat_instances) < 2:

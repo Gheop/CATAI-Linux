@@ -445,6 +445,49 @@ def run_tests():
     test("egg capslock re-triggered with pool filled", resp.startswith("OK"), resp)
     time.sleep(1)
 
+    # T13k: uptime party — reads /proc/uptime (always exists on Linux CI),
+    # shows a contextual chat bubble on the focus cat for 6 seconds.
+    resp = send_cmd("egg uptime")
+    test("egg uptime triggered", resp.startswith("OK"), resp)
+    time.sleep(0.5)
+    resp = send_cmd("get_chat_response")
+    test("uptime shows a contextual chat response",
+         resp.startswith("OK") and ("Up" in resp or "Allumé" in resp or "Arriba" in resp),
+         resp[:80])
+    time.sleep(7)  # 6s restore timer + margin
+
+    # T13l: fullscreen applause — all cats go SURPRISED then LOVE. No easy
+    # state probe; just check the socket returns OK and wait for the
+    # phases to finish before T14.
+    resp = send_cmd("egg fullscreen")
+    test("egg fullscreen triggered", resp.startswith("OK"), resp)
+    time.sleep(4)  # 800ms surprised + 2500ms love + margin
+
+    # T13m: lorem ipsum — open a chat and send a >500-char text via the
+    # type_chat socket. The detection in CatInstance.send_chat should
+    # short-circuit to eg_lorem BEFORE hitting the mock AI backend, so
+    # the chat_response ends up containing a scrolled window of the
+    # pasted text (not the MockChat canned reply).
+    send_cmd("click_cat 0")
+    time.sleep(0.3)
+    lorem_text = "Lorem ipsum dolor sit amet consectetur adipiscing elit " * 15
+    test("lorem_text is >500 chars (preflight)", len(lorem_text) > 500,
+         f"len={len(lorem_text)}")
+    resp = send_cmd(f"type_chat {lorem_text}")
+    test("lorem type_chat triggered", resp.startswith("OK"), resp[:80])
+    time.sleep(0.5)  # let the scroll advance a few frames
+    resp = send_cmd("get_chat_response")
+    # The response should contain a substring of "Lorem ipsum" (scrolling
+    # window), NOT the MockChat canned "Miaou mon ami" response.
+    test("lorem egg showed scrolled paste text, not MockChat reply",
+         resp.startswith("OK") and "Lorem" in resp and "Miaou mon ami" not in resp,
+         resp[:100])
+    # Wait for the full read cycle (10s) + sleep bubble (4s) + margin
+    time.sleep(15)
+    # Close any leftover chat
+    send_cmd("click_cat 0")
+    time.sleep(0.3)
+
     # ── T14: Love encounter — all 3 outcomes ─────────────
     print("\n[T14] Love encounters", flush=True)
 
