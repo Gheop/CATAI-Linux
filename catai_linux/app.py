@@ -1950,13 +1950,15 @@ class LoveEncounter:
     PROXIMITY = CatEncounter.PROXIMITY
     COOLDOWN = 300.0  # 5 min — no baby-boom
 
-    def __init__(self, cat_a, cat_b, app):
+    def __init__(self, cat_a, cat_b, app, forced_outcome=None):
         self.cat_a = cat_a  # initiator
         self.cat_b = cat_b  # responder / potential victim
         self.app = app
         self.active = True
         self._timers = []
-        self._outcome = None  # "love" | "surprised" | "angry"
+        # None = random; "love" / "surprised" / "angry" = forced (used by E2E tests)
+        self._forced_outcome = forced_outcome
+        self._outcome = None  # resolved in start()
 
     def start(self):
         for cat in (self.cat_a, self.cat_b):
@@ -1965,13 +1967,16 @@ class LoveEncounter:
             cat.chat_visible = False
 
         # Decide the outcome up front so cat A shows the right initial state
-        r = random.random()
-        if r < 0.40:
-            self._outcome = "love"
-        elif r < 0.70:
-            self._outcome = "surprised"
+        if self._forced_outcome in ("love", "surprised", "angry"):
+            self._outcome = self._forced_outcome
         else:
-            self._outcome = "angry"
+            r = random.random()
+            if r < 0.40:
+                self._outcome = "love"
+            elif r < 0.70:
+                self._outcome = "surprised"
+            else:
+                self._outcome = "angry"
 
         # Cat A enters its initial state based on outcome
         if self._outcome == "angry":
@@ -2356,7 +2361,7 @@ class CatAIApp(Gtk.Application):
 
     def _cmd_love_encounter(self, parts):
         if len(parts) < 3:
-            return "ERR: usage: love_encounter <idx_a> <idx_b>"
+            return "ERR: usage: love_encounter <idx_a> <idx_b> [love|surprised|angry]"
         try:
             ia, ib = int(parts[1]), int(parts[2])
         except ValueError:
@@ -2364,12 +2369,18 @@ class CatAIApp(Gtk.Application):
         n = len(self.cat_instances)
         if not (0 <= ia < n and 0 <= ib < n and ia != ib):
             return "ERR: invalid indices"
+        forced = None
+        if len(parts) >= 4:
+            if parts[3] not in ("love", "surprised", "angry"):
+                return "ERR: outcome must be love, surprised, or angry"
+            forced = parts[3]
         if self._active_encounter:
             self._active_encounter.cancel()
-        enc = LoveEncounter(self.cat_instances[ia], self.cat_instances[ib], self)
+        enc = LoveEncounter(self.cat_instances[ia], self.cat_instances[ib], self,
+                            forced_outcome=forced)
         self._active_encounter = enc
         enc.start()
-        return f"OK love encounter {ia}<->{ib}"
+        return f"OK love encounter {ia}<->{ib}" + (f" forced={forced}" if forced else "")
 
     def _cmd_start_sequence(self, parts):
         if len(parts) < 3:
@@ -2489,6 +2500,28 @@ class CatAIApp(Gtk.Application):
         visible = "yes" if ctrl.window.get_visible() else "no"
         return f"OK settings=present visible={visible}"
 
+    def _cmd_egg_state(self, parts):
+        """Probe internal state of easter-egg effects so tests can verify
+        that triggering an egg actually mutated the right state flag."""
+        nyan_active = bool(getattr(self, "_nyan_active", False))
+        matrix_cols = len(getattr(self, "_matrix_columns", []) or [])
+        apocalypse = bool(getattr(self, "_apocalypse_active", False))
+        shake = float(getattr(self, "_shake_amount", 0) or 0)
+        hidden_cats = sum(1 for c in self.cat_instances if getattr(c, "_hidden", False))
+        boss_cats = sum(1 for c in self.cat_instances
+                        if getattr(c, "_boss_scale", None) is not None)
+        beam_cats = sum(1 for c in self.cat_instances
+                        if getattr(c, "_beam_ticks", 0) > 0)
+        return (f"OK nyan={nyan_active} matrix_cols={matrix_cols} "
+                f"apocalypse={apocalypse} shake={shake:.1f} "
+                f"hidden={hidden_cats} boss={boss_cats} beam={beam_cats}")
+
+    def _cmd_kitten_count(self, parts):
+        """Return the number of kittens currently on the canvas (separate from
+        the adult count so tests can verify love-encounter births)."""
+        kittens = sum(1 for c in self.cat_instances if getattr(c, "is_kitten", False))
+        return f"OK kittens={kittens}"
+
     def _cmd_get_chat_response(self, parts):
         cat = self._active_chat_cat
         if not cat:
@@ -2528,6 +2561,8 @@ class CatAIApp(Gtk.Application):
                 "drag_cat": self._cmd_drag_cat,
                 "close_settings": self._cmd_close_settings,
                 "settings_state": self._cmd_settings_state,
+                "egg_state": self._cmd_egg_state,
+                "kitten_count": self._cmd_kitten_count,
                 "get_chat_response": self._cmd_get_chat_response,
                 "screenshot": self._cmd_screenshot,
             }
