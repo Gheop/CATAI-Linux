@@ -2012,6 +2012,7 @@ class CatInstance:
         self._anim_offsets = {}         # anim_key -> {direction -> (dy, dx)} in display-px
         self.is_kitten = False          # True for kittens born from love encounters
         self._birth_progress = None     # None = fully visible; 0.0..1.0 = birth animation
+        self._flip_h = False            # Horizontal flip (override for face-each-other in encounters)
         self._sequence = None           # list[SequenceStep] or None
         self._sequence_index = 0
         self._sequence_direction = None # locked east/west for the whole sequence
@@ -2502,6 +2503,26 @@ class CatInstance:
             p = self.color_def.prompt(self.config["name"], lang)
         if self.chat_backend.messages:
             self.chat_backend.messages[0] = {"role": "system", "content": p}
+
+    # States that have native east/west frames in catset metadata
+    _EW_STATES = frozenset({
+        CatState.SURPRISED, CatState.CHASING_MOUSE, CatState.CLIMBING,
+        CatState.DASHING, CatState.WALLCLIMB, CatState.WALLGRAB,
+        CatState.LEDGEGRAB, CatState.LEDGEIDLE, CatState.LEDGECLIMB_STRUGGLE,
+    })
+
+    def _face_toward(self, other, state):
+        """Orient this cat so it appears to face `other` while in `state`.
+        South-only states (love, angry, flat, etc.) use direction='south' + flip,
+        while east/west-capable states use their native direction."""
+        should_face_east = self.x < other.x
+        if state in self._EW_STATES:
+            self.direction = "east" if should_face_east else "west"
+            self._flip_h = False
+        else:
+            # South frames are east-facing originals → flip for west
+            self.direction = "south"
+            self._flip_h = not should_face_east
 
     def _show_random_meow(self):
         if self.chat_visible:
@@ -3102,18 +3123,15 @@ class LoveEncounter:
             cat.in_encounter = True
             cat.meow_visible = False
             cat.chat_visible = False
-        # Face each other
-        if self.cat_b.x > self.cat_a.x:
-            self.cat_a.direction = "east"
-            self.cat_b.direction = "west"
-        else:
-            self.cat_a.direction = "west"
-            self.cat_b.direction = "east"
 
-        # Cat A immediately enters LOVE state
+        # Cat A immediately enters LOVE state, facing cat B
         self.cat_a.state = CatState.LOVE
-        self.cat_a.direction = "south"
+        self.cat_a._face_toward(self.cat_b, CatState.LOVE)
         self.cat_a.frame_index = 0
+
+        # Cat B stays idle but oriented toward cat A so it looks like they're interacting
+        self.cat_b.state = CatState.IDLE
+        self.cat_b._face_toward(self.cat_a, CatState.IDLE)
 
         # After 1.2s, cat B reacts
         tid = GLib.timeout_add(1200, self._cat_b_reacts)
@@ -3131,7 +3149,7 @@ class LoveEncounter:
         else:
             self._reaction = CatState.ANGRY
         self.cat_b.state = self._reaction
-        self.cat_b.direction = "south"
+        self.cat_b._face_toward(self.cat_a, self._reaction)
         self.cat_b.frame_index = 0
 
         # Hold reaction for 3s, then decide outcome
@@ -3197,6 +3215,7 @@ class LoveEncounter:
         for cat in (self.cat_a, self.cat_b):
             cat.state = CatState.IDLE
             cat.in_encounter = False
+            cat._flip_h = False
             cat._encounter_cooldown_until = cooldown
             cat.idle_ticks = 0
         self.app._active_encounter = None
@@ -3213,6 +3232,7 @@ class LoveEncounter:
         for cat in (self.cat_a, self.cat_b):
             cat.state = CatState.IDLE
             cat.in_encounter = False
+            cat._flip_h = False
 
 
 # ── Main Application ───────────────────────────────────────────────────────────
@@ -3674,6 +3694,14 @@ class CatAIApp(Gtk.Application):
                 ctx.paint_with_alpha(alpha)
                 ctx.restore()
                 _draw_birth_sparkles(ctx, cat.x, cat.y, cat.display_w, cat.display_h, p)
+            elif cat._flip_h:
+                # Horizontal flip: translate to right edge, scale X by -1, draw at origin
+                ctx.save()
+                ctx.translate(cat.x + cat.display_w, cat.y)
+                ctx.scale(-1, 1)
+                ctx.set_source_surface(surface, 0, 0)
+                ctx.paint()
+                ctx.restore()
             else:
                 ctx.save()
                 ctx.rectangle(cat.x, cat.y, cat.display_w, cat.display_h)
