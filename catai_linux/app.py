@@ -2700,10 +2700,18 @@ class CatAIApp(Gtk.Application):
 
     def _cmd_force_afk(self, parts):
         """E2E hook: force the AFK-sleep transition without waiting for
-        10 minutes of idle time. Usage: force_afk on | off"""
+        10 minutes of idle time. Usage: force_afk on | off
+
+        Pins the state on the ActivityMonitor so the very next
+        behavior_tick (which calls update()) doesn't immediately reset
+        it via hysteresis. CI runners report idle_ms=0 under xvfb, so
+        without the pin force_afk on would flip back to off within
+        ~200-400 ms on a slow runner, flaking the assertion."""
         if len(parts) < 2 or parts[1] not in ("on", "off"):
             return "ERR: usage: force_afk on|off"
-        self._activity.is_afk = (parts[1] == "on")
+        state = parts[1] == "on"
+        self._activity._pinned_afk = state
+        self._activity.is_afk = state
         # Kick the activity application immediately
         self._apply_activity_signals()
         return f"OK afk={parts[1]}"

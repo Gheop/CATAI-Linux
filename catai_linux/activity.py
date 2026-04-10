@@ -53,6 +53,12 @@ class ActivityMonitor:
         self.is_afk: bool = False
         self._last_update: float = 0.0
         self._xprintidle = shutil.which("xprintidle")
+        # Test override: when set to True/False, update() leaves is_afk
+        # alone (pinned) so the e2e suite can force AFK transitions on a
+        # CI runner where xprintidle reports 0 ms and the hysteresis
+        # would otherwise reset the flag on the next tick. None means
+        # "normal behavior, hysteresis in charge".
+        self._pinned_afk: bool | None = None
 
     def update(self) -> None:
         """Refresh all signals. Throttled to POLL_INTERVAL_MS so rapid
@@ -66,6 +72,11 @@ class ActivityMonitor:
         self.hour = datetime.datetime.now().hour
         self.cpu_load = self._read_loadavg()
         self.idle_ms = self._read_idle_ms()
+
+        # Test pin wins over hysteresis — used by the e2e suite.
+        if self._pinned_afk is not None:
+            self.is_afk = self._pinned_afk
+            return
 
         # AFK state is sticky — we enter it at >= IDLE_THRESHOLD_MS and
         # only leave it when idle drops well below (< IDLE_WAKEUP_THRESHOLD_MS)
