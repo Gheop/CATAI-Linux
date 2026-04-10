@@ -3475,202 +3475,236 @@ class CatAIApp(Gtk.Application):
                 pass
         return True  # keep the watch alive no matter what
 
+    # ── Test socket command handlers ─────────────────────────────────────────
+    # Each _cmd_* receives the already-split `parts` list (action + args).
+    # Dispatched via self._test_cmd_handlers (built lazily on first use).
+
+    def _get_cat_at_idx(self, parts, idx_pos=1):
+        """Parse an int cat index from parts[idx_pos]. Returns (cat, None) on
+        success or (None, err_string) on failure."""
+        try:
+            idx = int(parts[idx_pos])
+        except (IndexError, ValueError):
+            return None, "ERR: missing or invalid cat index"
+        if not (0 <= idx < len(self.cat_instances)):
+            return None, "ERR: invalid cat index"
+        return self.cat_instances[idx], None
+
+    def _cmd_status(self, parts):
+        return (f"OK cats={len(self.cat_instances)} canvas_xid={self._canvas_xid} "
+                f"screen={self.screen_w}x{self.screen_h} y_offset={self._canvas_y_offset}")
+
+    def _cmd_cat_positions(self, parts):
+        positions = [f"{c.config.get('char_id', '?')}:{c.x:.0f},{c.y:.0f}"
+                     for c in self.cat_instances]
+        return "OK " + " ".join(positions)
+
+    def _cmd_force_state(self, parts):
+        if len(parts) < 3:
+            return "ERR: usage: force_state <idx> <state_name>"
+        cat, err = self._get_cat_at_idx(parts)
+        if err:
+            return err
+        state_name = parts[2]
+        try:
+            cat.state = CatState(state_name)
+        except ValueError:
+            return f"ERR: unknown state {state_name}"
+        cat.frame_index = 0
+        cat.idle_ticks = 0
+        cat._sequence = None
+        cat._sequence_index = 0
+        cat._sequence_pause_ticks = 0
+        cat.direction = "east" if state_name in ("dashing", "surprised") else "south"
+        return f"OK cat {parts[1]} -> {state_name}"
+
+    def _cmd_apocalypse(self, parts):
+        self.toggle_apocalypse()
+        return f"OK apocalypse {'ON' if self._apocalypse_active else 'OFF'}"
+
+    def _cmd_easter_menu(self, parts):
+        self.show_easter_menu()
+        return "OK easter menu shown"
+
+    def _cmd_egg(self, parts):
+        if len(parts) < 2:
+            return f"ERR: usage: egg <key>  (available: {[k for k,_,_,_ in EASTER_EGGS]})"
+        key = parts[1]
+        if not any(k == key for k, _, _, _ in EASTER_EGGS):
+            return f"ERR: unknown egg {key}"
+        self._trigger_easter_egg(key)
+        return f"OK egg {key}"
+
+    def _cmd_love_encounter(self, parts):
+        if len(parts) < 3:
+            return "ERR: usage: love_encounter <idx_a> <idx_b>"
+        try:
+            ia, ib = int(parts[1]), int(parts[2])
+        except ValueError:
+            return "ERR: invalid indices"
+        n = len(self.cat_instances)
+        if not (0 <= ia < n and 0 <= ib < n and ia != ib):
+            return "ERR: invalid indices"
+        if self._active_encounter:
+            self._active_encounter.cancel()
+        enc = LoveEncounter(self.cat_instances[ia], self.cat_instances[ib], self)
+        self._active_encounter = enc
+        enc.start()
+        return f"OK love encounter {ia}<->{ib}"
+
+    def _cmd_start_sequence(self, parts):
+        if len(parts) < 3:
+            return "ERR: usage: start_sequence <idx> <seq_name>"
+        cat, err = self._get_cat_at_idx(parts)
+        if err:
+            return err
+        seq_name = parts[2]
+        if seq_name not in SEQUENCES:
+            return f"ERR: unknown sequence {seq_name} (available: {list(SEQUENCES.keys())})"
+        cat._start_sequence(seq_name)
+        return f"OK cat {parts[1]} -> sequence {seq_name}"
+
+    def _cmd_meow(self, parts):
+        if len(parts) < 2:
+            return "ERR: usage: meow <idx> [text]"
+        cat, err = self._get_cat_at_idx(parts)
+        if err:
+            return err
+        cat.meow_text = " ".join(parts[2:]) if len(parts) > 2 else "Meow~"
+        cat.meow_visible = True
+        return f"OK meow on cat {parts[1]}"
+
+    def _cmd_move_cat(self, parts):
+        if len(parts) < 4:
+            return "ERR: usage: move_cat <idx> <x> <y>"
+        cat, err = self._get_cat_at_idx(parts)
+        if err:
+            return err
+        try:
+            cat.x, cat.y = int(parts[2]), int(parts[3])
+        except ValueError:
+            return "ERR: invalid coordinates"
+        cat._clamp_to_screen()  # honours canvas y offset and margins
+        return f"OK cat {parts[1]} at {cat.x},{cat.y}"
+
+    def _cmd_fake_chat(self, parts):
+        if len(parts) < 3:
+            return "ERR: usage: fake_chat <idx> <text>"
+        cat, err = self._get_cat_at_idx(parts)
+        if err:
+            return err
+        cat.chat_response = " ".join(parts[2:])
+        cat.chat_visible = True
+        self._active_chat_cat = cat
+        return f"OK fake chat on cat {parts[1]}"
+
+    def _cmd_click_cat(self, parts):
+        cat, err = self._get_cat_at_idx(parts)
+        if err:
+            return err
+        self._toggle_chat_for(cat)
+        return f"OK toggled chat for cat {parts[1] if len(parts) > 1 else 0}"
+
+    def _cmd_right_click_cat(self, parts):
+        cat, err = self._get_cat_at_idx(parts)
+        if err:
+            return err
+        self._menu_visible = True
+        self._menu_x = int(cat.x + cat.display_w)
+        self._menu_y = int(cat.y)
+        return "OK menu shown"
+
+    def _cmd_click_menu_settings(self, parts):
+        self._menu_visible = False
+        self._open_settings()
+        return "OK settings opened"
+
+    def _cmd_click_menu_quit(self, parts):
+        self._menu_visible = False
+        GLib.timeout_add(100, lambda: self.quit() or False)
+        return "OK quitting"
+
+    def _cmd_type_chat(self, parts):
+        text = " ".join(parts[1:]) if len(parts) > 1 else "coucou"
+        cat = self._active_chat_cat
+        if not cat:
+            return "ERR: no active chat"
+        cat.send_chat(text)
+        return f"OK sent: {text}"
+
+    def _cmd_close_chat(self, parts):
+        cat = self._active_chat_cat
+        if not cat:
+            return "ERR: no active chat"
+        cat.chat_visible = False
+        self._chat_box.set_visible(False)
+        self._active_chat_cat = None
+        return "OK chat closed"
+
+    def _cmd_drag_cat(self, parts):
+        cat, err = self._get_cat_at_idx(parts)
+        if err:
+            return err
+        try:
+            dx = int(parts[2]) if len(parts) > 2 else 100
+            dy = int(parts[3]) if len(parts) > 3 else 0
+        except ValueError:
+            return "ERR: invalid offset"
+        cat.x += dx
+        cat.y += dy
+        return f"OK cat {parts[1]} moved to {cat.x:.0f},{cat.y:.0f}"
+
+    def _cmd_close_settings(self, parts):
+        if not (self.settings_ctrl and self.settings_ctrl.window):
+            return "ERR: settings not open"
+        self.settings_ctrl._on_close()
+        return "OK settings closed"
+
+    def _cmd_get_chat_response(self, parts):
+        cat = self._active_chat_cat
+        if not cat:
+            return "ERR: no active chat"
+        return f"OK {cat.chat_response}"
+
+    def _cmd_screenshot(self, parts):
+        if self._canvas_area:
+            self._canvas_area.queue_draw()
+        return "OK redraw queued"
+
     def _handle_test_cmd(self, cmd):
         """Handle a test command. Returns response string."""
         parts = cmd.split()
         if not parts:
             return "ERR: empty command"
-        action = parts[0]
-
-        if action == "status":
-            return (f"OK cats={len(self.cat_instances)} canvas_xid={self._canvas_xid} "
-                    f"screen={self.screen_w}x{self.screen_h} y_offset={self._canvas_y_offset}")
-
-        elif action == "cat_positions":
-            positions = [f"{c.config.get('char_id', c.config.get('color_id', '?'))}:{c.x:.0f},{c.y:.0f}" for c in self.cat_instances]
-            return "OK " + " ".join(positions)
-
-        elif action == "force_state":
-            if len(parts) < 3:
-                return "ERR: usage: force_state <idx> <state_name>"
-            idx = int(parts[1])
-            state_name = parts[2]
-            if 0 <= idx < len(self.cat_instances):
-                cat = self.cat_instances[idx]
-                try:
-                    cat.state = CatState(state_name)
-                except ValueError:
-                    return f"ERR: unknown state {state_name}"
-                cat.frame_index = 0
-                cat.idle_ticks = 0
-                cat._sequence = None
-                cat._sequence_index = 0
-                cat._sequence_pause_ticks = 0
-                if state_name in ("dashing",):
-                    cat.direction = "east"
-                elif state_name in ("surprised",):
-                    cat.direction = "east"
-                else:
-                    cat.direction = "south"
-                return f"OK cat {idx} -> {state_name}"
-            return "ERR: invalid cat index"
-
-        elif action == "apocalypse":
-            self.toggle_apocalypse()
-            return f"OK apocalypse {'ON' if self._apocalypse_active else 'OFF'}"
-
-        elif action == "easter_menu":
-            self.show_easter_menu()
-            return "OK easter menu shown"
-
-        elif action == "egg":
-            if len(parts) < 2:
-                return f"ERR: usage: egg <key>  (available: {[k for k,_,_,_ in EASTER_EGGS]})"
-            key = parts[1]
-            if not any(k == key for k, _, _, _ in EASTER_EGGS):
-                return f"ERR: unknown egg {key}"
-            self._trigger_easter_egg(key)
-            return f"OK egg {key}"
-
-        elif action == "love_encounter":
-            if len(parts) < 3:
-                return "ERR: usage: love_encounter <idx_a> <idx_b>"
-            ia, ib = int(parts[1]), int(parts[2])
-            if 0 <= ia < len(self.cat_instances) and 0 <= ib < len(self.cat_instances) and ia != ib:
-                ca = self.cat_instances[ia]
-                cb = self.cat_instances[ib]
-                if self._active_encounter:
-                    self._active_encounter.cancel()
-                enc = LoveEncounter(ca, cb, self)
-                self._active_encounter = enc
-                enc.start()
-                return f"OK love encounter {ia}<->{ib}"
-            return "ERR: invalid indices"
-
-        elif action == "start_sequence":
-            if len(parts) < 3:
-                return "ERR: usage: start_sequence <idx> <seq_name>"
-            idx = int(parts[1])
-            seq_name = parts[2]
-            if 0 <= idx < len(self.cat_instances):
-                if seq_name not in SEQUENCES:
-                    return f"ERR: unknown sequence {seq_name} (available: {list(SEQUENCES.keys())})"
-                self.cat_instances[idx]._start_sequence(seq_name)
-                return f"OK cat {idx} -> sequence {seq_name}"
-            return "ERR: invalid cat index"
-
-        elif action == "meow":
-            if len(parts) < 2:
-                return "ERR: usage: meow <idx> [text]"
-            idx = int(parts[1])
-            text = " ".join(parts[2:]) if len(parts) > 2 else "Meow~"
-            if 0 <= idx < len(self.cat_instances):
-                cat = self.cat_instances[idx]
-                cat.meow_text = text
-                cat.meow_visible = True
-                return f"OK meow on cat {idx}"
-            return "ERR: invalid cat index"
-
-        elif action == "move_cat":
-            if len(parts) < 4:
-                return "ERR: usage: move_cat <idx> <x> <y>"
-            idx = int(parts[1])
-            x = int(parts[2])
-            y = int(parts[3])
-            if 0 <= idx < len(self.cat_instances):
-                cat = self.cat_instances[idx]
-                cat.x = x
-                cat.y = y
-                cat._clamp_to_screen()  # honours canvas y offset and margins
-                return f"OK cat {idx} at {cat.x},{cat.y}"
-            return "ERR: invalid cat index"
-
-        elif action == "fake_chat":
-            if len(parts) < 3:
-                return "ERR: usage: fake_chat <idx> <text>"
-            idx = int(parts[1])
-            text = " ".join(parts[2:])
-            if 0 <= idx < len(self.cat_instances):
-                cat = self.cat_instances[idx]
-                cat.chat_response = text
-                cat.chat_visible = True
-                self._active_chat_cat = cat
-                return f"OK fake chat on cat {idx}"
-            return "ERR: invalid cat index"
-
-        elif action == "click_cat":
-            idx = int(parts[1]) if len(parts) > 1 else 0
-            if 0 <= idx < len(self.cat_instances):
-                self._toggle_chat_for(self.cat_instances[idx])
-                return f"OK toggled chat for cat {idx}"
-            return "ERR: invalid cat index"
-
-        elif action == "right_click_cat":
-            idx = int(parts[1]) if len(parts) > 1 else 0
-            if 0 <= idx < len(self.cat_instances):
-                cat = self.cat_instances[idx]
-                self._menu_visible = True
-                self._menu_x = int(cat.x + cat.display_w)
-                self._menu_y = int(cat.y)
-                return "OK menu shown"
-            return "ERR: invalid cat index"
-
-        elif action == "click_menu_settings":
-            self._menu_visible = False
-            self._open_settings()
-            return "OK settings opened"
-
-        elif action == "click_menu_quit":
-            self._menu_visible = False
-            GLib.timeout_add(100, lambda: self.quit() or False)
-            return "OK quitting"
-
-        elif action == "type_chat":
-            text = " ".join(parts[1:]) if len(parts) > 1 else "coucou"
-            cat = self._active_chat_cat
-            if cat:
-                cat.send_chat(text)
-                return f"OK sent: {text}"
-            return "ERR: no active chat"
-
-        elif action == "close_chat":
-            cat = self._active_chat_cat
-            if cat:
-                cat.chat_visible = False
-                self._chat_box.set_visible(False)
-                self._active_chat_cat = None
-                return "OK chat closed"
-            return "ERR: no active chat"
-
-        elif action == "drag_cat":
-            idx = int(parts[1]) if len(parts) > 1 else 0
-            dx = int(parts[2]) if len(parts) > 2 else 100
-            dy = int(parts[3]) if len(parts) > 3 else 0
-            if 0 <= idx < len(self.cat_instances):
-                cat = self.cat_instances[idx]
-                cat.x += dx
-                cat.y += dy
-                return f"OK cat {idx} moved to {cat.x:.0f},{cat.y:.0f}"
-            return "ERR: invalid cat index"
-
-        elif action == "close_settings":
-            if self.settings_ctrl and self.settings_ctrl.window:
-                self.settings_ctrl._on_close()
-                return "OK settings closed"
-            return "ERR: settings not open"
-
-        elif action == "get_chat_response":
-            cat = self._active_chat_cat
-            if cat:
-                return f"OK {cat.chat_response}"
-            return "ERR: no active chat"
-
-        elif action == "screenshot":
-            if self._canvas_area:
-                self._canvas_area.queue_draw()
-            return "OK redraw queued"
-
-        return f"ERR: unknown command '{action}'"
+        # Lazy-build the dispatch dict on first call
+        if not hasattr(self, "_test_cmd_handlers"):
+            self._test_cmd_handlers = {
+                "status": self._cmd_status,
+                "cat_positions": self._cmd_cat_positions,
+                "force_state": self._cmd_force_state,
+                "apocalypse": self._cmd_apocalypse,
+                "easter_menu": self._cmd_easter_menu,
+                "egg": self._cmd_egg,
+                "love_encounter": self._cmd_love_encounter,
+                "start_sequence": self._cmd_start_sequence,
+                "meow": self._cmd_meow,
+                "move_cat": self._cmd_move_cat,
+                "fake_chat": self._cmd_fake_chat,
+                "click_cat": self._cmd_click_cat,
+                "right_click_cat": self._cmd_right_click_cat,
+                "click_menu_settings": self._cmd_click_menu_settings,
+                "click_menu_quit": self._cmd_click_menu_quit,
+                "type_chat": self._cmd_type_chat,
+                "close_chat": self._cmd_close_chat,
+                "drag_cat": self._cmd_drag_cat,
+                "close_settings": self._cmd_close_settings,
+                "get_chat_response": self._cmd_get_chat_response,
+                "screenshot": self._cmd_screenshot,
+            }
+        handler = self._test_cmd_handlers.get(parts[0])
+        if handler is None:
+            return f"ERR: unknown command '{parts[0]}'"
+        return handler(parts)
 
     def _create_canvas(self):
         """Create the single fullscreen transparent overlay window."""
