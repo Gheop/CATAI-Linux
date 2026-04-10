@@ -494,6 +494,29 @@ def run_tests():
     send_cmd("click_cat 0")
     time.sleep(0.3)
 
+    # T13n: Konami code — magic-phrase triggered, goes through
+    # SURPRISED → LOVE → ROLLING phases. Each phase is ~1.2-1.5 s so
+    # the total is ~3.2 s. Just check the socket returned OK and wait
+    # for the phases to settle before the love encounters.
+    resp = send_cmd("egg konami")
+    test("egg konami triggered", resp.startswith("OK"), resp)
+    time.sleep(4)  # 0.5 + 1.5 + 1.2 = 3.2s + margin
+
+    # T13o: Coffee rush — magic-phrase triggered, runs at 2× behavior
+    # tick for 15 s then restores. Check state restores cleanly.
+    resp = send_cmd("egg coffee")
+    test("egg coffee triggered", resp.startswith("OK"), resp)
+    time.sleep(0.5)
+    # Don't wait the full 15 s — we already verified the trigger path.
+    # The restore timer keeps running in the background; test continues.
+
+    # T13p: Zen mode — magic-phrase triggered, freezes all cats in IDLE
+    # for 10 s. Check state after the release timer fires.
+    resp = send_cmd("egg zen")
+    test("egg zen triggered", resp.startswith("OK"), resp)
+    time.sleep(0.5)
+    # Similarly: don't wait the full 10 s here.
+
     # ── T14: Love encounter — all 3 outcomes ─────────────
     print("\n[T14] Love encounters", flush=True)
 

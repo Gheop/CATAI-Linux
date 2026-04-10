@@ -336,6 +336,25 @@ MAGIC_EGG_PHRASES = {
     "notify": "notification",
     "ping": "notification",
     "notification": "notification",
+    # Konami code — magic phrase fallback since we can't hook global
+    # arrow-key events (canvas is click-through). Triggering through the
+    # chat gets you the same 30-lives celebration.
+    "konami": "konami",
+    "up up down down": "konami",
+    "up up down down left right left right ba": "konami",
+    "cheat code": "konami",
+    "god mode": "konami",
+    # Coffee rush — all cats move 2× speed for 15 s
+    "coffee": "coffee",
+    "espresso": "coffee",
+    "caffeine": "coffee",
+    "latte": "coffee",
+    # Zen mode — all cats freeze calmly for 10 s
+    "zen": "zen",
+    "meditate": "zen",
+    "meditation": "zen",
+    "calm": "zen",
+    "breathe": "zen",
 }
 
 EASTER_EGGS = [
@@ -366,6 +385,9 @@ EASTER_EGGS = [
     ("uptime",      "\u23f1",     "Uptime party",  "eg_uptime"),
     ("fullscreen",  "\U0001f64c", "Fullscreen",    "eg_fullscreen"),
     ("notification","\U0001f514", "Notification",  "eg_notification"),
+    ("konami",      "\U0001f3ae", "Konami code",   "eg_konami"),
+    ("coffee",      "\u2615",     "Coffee rush",   "eg_coffee"),
+    ("zen",         "\U0001f9d8", "Zen mode",      "eg_zen"),
 ]
 
 CATSET_PERSONALITIES = {
@@ -4930,6 +4952,132 @@ class CatAIApp(Gtk.Application):
         except Exception:
             log.exception("Failed to load nyan cat assets")
             self._nyan_frames = []
+
+    def eg_konami(self):
+        """Konami code unlocked — all cats briefly flash through SURPRISED →
+        LOVE → ROLLING, like a "GOD MODE" celebration. Also restores every
+        cat's mood to full happiness (if the mood module is loaded).
+
+        Magic phrases: 'konami', 'up up down down', 'cheat code'."""
+        if not self.cat_instances:
+            return
+        if getattr(self, "_konami_active", False):
+            return
+        self._konami_active = True
+
+        # Phase 1: SURPRISED (all cats, 500 ms)
+        for cat in self.cat_instances:
+            if cat.in_encounter:
+                continue
+            cat.state = CatState.SURPRISED
+            cat.direction = "south"
+            cat.frame_index = 0
+            cat.in_encounter = True
+            # Restore full happiness/energy on the mood track
+            if hasattr(cat, "mood") and cat.mood is not None:
+                cat.mood.happiness = 100.0
+                cat.mood.energy = 100.0
+                cat.mood.bored = 0.0
+                cat.mood.hunger = 0.0
+
+        def phase_love():
+            for cat in self.cat_instances:
+                cat.state = CatState.LOVE
+                cat.frame_index = 0
+            GLib.timeout_add(1500, phase_rolling)
+            return False
+
+        def phase_rolling():
+            for cat in self.cat_instances:
+                cat.state = CatState.ROLLING
+                cat.frame_index = 0
+            GLib.timeout_add(1200, phase_done)
+            return False
+
+        def phase_done():
+            self._release_encounter_lock()
+            self._konami_active = False
+            return False
+
+        GLib.timeout_add(500, phase_love)
+
+    def eg_coffee(self):
+        """Caffeine rush — all cats move at 2× behavior tick speed for 15 s,
+        then settle back. Combined with a one-shot happiness/energy bump.
+        Magic phrases: 'coffee', 'espresso', 'caffeine'."""
+        if getattr(self, "_coffee_active", False):
+            return
+        self._coffee_active = True
+
+        # Burst of energy on the mood stats
+        for cat in self.cat_instances:
+            if hasattr(cat, "mood") and cat.mood is not None:
+                cat.mood.energy = min(100.0, cat.mood.energy + 40)
+                cat.mood.happiness = min(100.0, cat.mood.happiness + 20)
+
+        # Swap the behavior tick for a 2× faster variant for 15 s. Keep
+        # render tick untouched so the cats look hyperactive rather than
+        # time-sped-up.
+        try:
+            for tid in self._timers:
+                try:
+                    GLib.source_remove(tid)
+                except Exception:
+                    pass
+            self._timers = [
+                GLib.timeout_add(RENDER_MS, self._render_tick),
+                GLib.timeout_add(max(1, BEHAVIOR_MS // 2), self._behavior_tick),
+                GLib.timeout_add(10000, _apply_above_all),
+                GLib.timeout_add(30000, self._gc_collect),
+            ]
+        except Exception:
+            log.exception("eg_coffee timer swap failed")
+
+        def restore():
+            for tid in self._timers:
+                try:
+                    GLib.source_remove(tid)
+                except Exception:
+                    pass
+            self._timers = [
+                GLib.timeout_add(RENDER_MS, self._render_tick),
+                GLib.timeout_add(BEHAVIOR_MS, self._behavior_tick),
+                GLib.timeout_add(10000, _apply_above_all),
+                GLib.timeout_add(30000, self._gc_collect),
+            ]
+            self._coffee_active = False
+            return False
+
+        GLib.timeout_add(15000, restore)
+
+    def eg_zen(self):
+        """Meditation mode — all cats freeze in IDLE state, perfectly still,
+        for 10 seconds. Drops their bored stat briefly.
+        Magic phrases: 'zen', 'meditate', 'calm'."""
+        if not self.cat_instances:
+            return
+        if getattr(self, "_zen_active", False):
+            return
+        self._zen_active = True
+
+        for cat in self.cat_instances:
+            if cat.in_encounter:
+                continue
+            cat.state = CatState.IDLE
+            cat.direction = "south"
+            cat.frame_index = 0
+            cat.in_encounter = True
+            if hasattr(cat, "mood") and cat.mood is not None:
+                cat.mood.bored = max(0.0, cat.mood.bored - 30)
+                cat.mood.happiness = min(100.0, cat.mood.happiness + 10)
+
+        def release():
+            for cat in self.cat_instances:
+                cat.in_encounter = False
+            self._zen_active = False
+            return False
+
+        GLib.timeout_add(10000, release)
 
     def eg_nyan(self):
         """Classic Nyan Cat: flies across the screen with a tiled animated rainbow trail."""
