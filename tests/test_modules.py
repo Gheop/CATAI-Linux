@@ -289,14 +289,26 @@ def test_import_smoke() -> None:
 
 # ── main ─────────────────────────────────────────────────────────────────────
 
+def _run_section(name: str, fn) -> None:
+    """Run a test section, catching import errors so one broken module
+    doesn't kill the whole suite. Records a FAIL on exception."""
+    try:
+        fn()
+    except Exception as e:
+        global FAIL
+        FAIL += 1
+        print(f"\n[{name}]\n  \u2717 section crashed \u2014 {type(e).__name__}: {e}",
+              flush=True)
+
+
 def main() -> int:
     print("=== CATAI Unit Tests (headless) ===\n", flush=True)
     test_import_smoke()
-    test_l10n()
-    test_voice()
-    test_chat_backend()
-    test_x11_helpers()
-    test_drawing()
+    _run_section("l10n", test_l10n)
+    _run_section("voice", test_voice)
+    _run_section("chat_backend", test_chat_backend)
+    _run_section("x11_helpers", test_x11_helpers)
+    _run_section("drawing", test_drawing)
     print(f"\n=== Results: {PASS} passed, {FAIL} failed ===\n", flush=True)
     return 0 if FAIL == 0 else 1
 

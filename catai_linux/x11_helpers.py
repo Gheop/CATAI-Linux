@@ -14,6 +14,7 @@ import subprocess
 import threading
 
 import gi
+gi.require_version("Gdk", "4.0")
 gi.require_version("Gtk", "4.0")
 gi.require_version("GdkX11", "4.0")
 from gi.repository import Gdk, GdkX11  # noqa: E402
