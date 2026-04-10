@@ -281,6 +281,37 @@ CATSET_CHARS = [
     ("cat05",      "🖤"),
 ]
 
+# Parent cat → child kitten (for love-encounter births)
+CAT_TO_KITTEN = {
+    "cat_orange": "kitten_orange",
+    "cat01":      "kitten01",
+    "cat02":      "kitten02",
+    "cat03":      "kitten03",
+    "cat04":      "kitten04",
+    "cat05":      "kitten05",
+}
+
+# Baby emojis for kitten meows — they can't talk yet, just symbols
+BABY_MEOWS = [
+    "\U0001f42d",  # 🐭 mouse
+    "\U0001f37c",  # 🍼 bottle
+    "\u2665",      # ♥ heart
+    "\U0001f9f8",  # 🧸 teddy bear
+    "\U0001f423",  # 🐣 hatching chick
+    "\U0001f95b",  # 🥛 glass of milk
+    "\u2728",      # ✨ sparkles
+    "\U0001fa9b",  # 🪛 (rattle proxy)
+    "\U0001f431",  # 🐱 cat face
+    "\U0001f436",  # 🐶 (playmate)
+    "\U0001f4a4",  # 💤
+    "\U0001f31f",  # 🌟
+    "\U0001f380",  # 🎀 ribbon
+    "\U0001f4a9",  # 💩 (kids love it)
+    "\U0001f4a8",  # 💨 (prout)
+]
+
+MAX_KITTENS = 6
+
 CATSET_PERSONALITIES = {
     "cat_orange": {
         "name": {"fr": "Mandarine", "en": "Tangerine", "es": "Mandarina"},
@@ -1404,6 +1435,27 @@ def _draw_skull(ctx, cat_x, cat_y, cat_w, cat_h):
     _draw_pango_symbol(ctx, "\U0001f480", cat_x + cat_w // 2 - 6, head_y - int(offset_y * 20), 12, 0.5, 0.4, 0.4, alpha)
 
 
+def _draw_birth_sparkles(ctx, cat_x, cat_y, cat_w, cat_h, progress):
+    """Draw swirling sparkles around a newborn kitten during birth animation.
+    progress: 0.0 (just born) → 1.0 (fully grown, sparkles fade out)"""
+    t = time.monotonic()
+    cx = cat_x + cat_w / 2
+    cy = cat_y + cat_h / 2
+    radius = cat_w * 0.6
+    # Sparkles fade out as progress → 1
+    base_alpha = 1.0 - progress * 0.6
+    for i in range(6):
+        angle = t * 2 + i * (math.pi / 3)
+        sx = cx + math.cos(angle) * radius
+        sy = cy + math.sin(angle) * radius * 0.7
+        # Each sparkle twinkles at its own phase
+        twinkle = 0.5 + 0.5 * math.sin(t * 4 + i)
+        alpha = base_alpha * twinkle
+        size = 10 + int(twinkle * 4)
+        _draw_pango_symbol(ctx, "\u2728", sx - size / 2, sy - size / 2,
+                           size, 1.0, 0.95, 0.5, alpha)
+
+
 def _draw_sparkle(ctx, cat_x, cat_y, cat_w, cat_h):
     """Draw a pulsing sparkle above a grooming cat."""
     t = time.monotonic()
@@ -1958,6 +2010,8 @@ class CatInstance:
         self._meta = None
         self._cat_dir = ""
         self._anim_offsets = {}         # anim_key -> {direction -> (dy, dx)} in display-px
+        self.is_kitten = False          # True for kittens born from love encounters
+        self._birth_progress = None     # None = fully visible; 0.0..1.0 = birth animation
         self._sequence = None           # list[SequenceStep] or None
         self._sequence_index = 0
         self._sequence_direction = None # locked east/west for the whole sequence
@@ -2090,6 +2144,13 @@ class CatInstance:
         if self.dragging:
             return
 
+        # Advance birth animation (~3s at 12fps behavior tick = 36 steps, but
+        # render_tick runs at ~15fps, so ~45 ticks → bump progress per tick)
+        if self._birth_progress is not None:
+            self._birth_progress += 1.0 / 45.0
+            if self._birth_progress >= 1.0:
+                self._birth_progress = None
+
         if self.state == CatState.WALKING:
             dest_y = self.dest_y
             dx = self.dest_x - self.x
@@ -2213,6 +2274,12 @@ class CatInstance:
             if self._sleep_tick >= 6:
                 self._sleep_tick = 0
                 self.frame_index = (self.frame_index + 1) % 4
+        elif self.in_encounter and self.state in (CatState.LOVE, CatState.SURPRISED, CatState.ANGRY):
+            # During love encounter, loop the expression animation instead of ending
+            key = ANIM_KEYS.get(self.state)
+            frames = self.animations.get(key, {}).get(self.direction, [])
+            if frames:
+                self.frame_index = (self.frame_index + 1) % len(frames)
         elif self.state in ONE_SHOT_STATES:
             # Handle sequence pause (hold on last frame between steps)
             if self._sequence and self._sequence_pause_ticks > 0:
@@ -2439,7 +2506,10 @@ class CatInstance:
     def _show_random_meow(self):
         if self.chat_visible:
             return
-        self.meow_text = L10n.random_meow()
+        if self.is_kitten:
+            self.meow_text = random.choice(BABY_MEOWS)
+        else:
+            self.meow_text = L10n.random_meow()
         self.meow_visible = True
         if self._meow_timer_id:
             GLib.source_remove(self._meow_timer_id)
@@ -2998,7 +3068,10 @@ class CatEncounter:
     def cancel(self):
         self.active = False
         if self._timer_id:
-            GLib.source_remove(self._timer_id)
+            try:
+                GLib.source_remove(self._timer_id)
+            except Exception:
+                pass
             self._timer_id = None
         cooldown_until = time.monotonic() + self.COOLDOWN
         for cat in (self.cat_a, self.cat_b):
@@ -3007,6 +3080,139 @@ class CatEncounter:
             cat.encounter_visible = False
             cat.encounter_text = ""
             cat._encounter_cooldown_until = cooldown_until
+
+
+class LoveEncounter:
+    """Silent encounter: cat A shows love, cat B reacts (love/surprised/angry).
+    If both show love, a kitten is born at the midpoint."""
+
+    PROXIMITY = CatEncounter.PROXIMITY
+    COOLDOWN = 300.0  # 5 min — no baby-boom
+
+    def __init__(self, cat_a, cat_b, app):
+        self.cat_a = cat_a  # initiator (falls in love first)
+        self.cat_b = cat_b  # responder
+        self.app = app
+        self.active = True
+        self._timers = []
+        self._reaction = None  # CatState picked for cat_b
+
+    def start(self):
+        for cat in (self.cat_a, self.cat_b):
+            cat.in_encounter = True
+            cat.meow_visible = False
+            cat.chat_visible = False
+        # Face each other
+        if self.cat_b.x > self.cat_a.x:
+            self.cat_a.direction = "east"
+            self.cat_b.direction = "west"
+        else:
+            self.cat_a.direction = "west"
+            self.cat_b.direction = "east"
+
+        # Cat A immediately enters LOVE state
+        self.cat_a.state = CatState.LOVE
+        self.cat_a.direction = "south"
+        self.cat_a.frame_index = 0
+
+        # After 1.2s, cat B reacts
+        tid = GLib.timeout_add(1200, self._cat_b_reacts)
+        self._timers.append(tid)
+
+    def _cat_b_reacts(self):
+        if not self.active:
+            return False
+        # Reaction weights: 40% love (baby chance), 30% surprised, 30% angry
+        r = random.random()
+        if r < 0.40:
+            self._reaction = CatState.LOVE
+        elif r < 0.70:
+            self._reaction = CatState.SURPRISED
+        else:
+            self._reaction = CatState.ANGRY
+        self.cat_b.state = self._reaction
+        self.cat_b.direction = "south"
+        self.cat_b.frame_index = 0
+
+        # Hold reaction for 3s, then decide outcome
+        tid = GLib.timeout_add(3000, self._decide_outcome)
+        self._timers.append(tid)
+        return False
+
+    def _decide_outcome(self):
+        if not self.active:
+            return False
+        if self._reaction == CatState.LOVE:
+            # Both in love → birth!
+            self._give_birth()
+            # Let parents stay in LOVE during birth animation, then end
+            tid = GLib.timeout_add(3500, self._end)
+            self._timers.append(tid)
+        else:
+            self._end()
+        return False
+
+    def _give_birth(self):
+        # Check global kitten limit
+        kitten_count = sum(1 for c in self.app.cat_instances if c.is_kitten)
+        if kitten_count >= MAX_KITTENS:
+            log.info("Love encounter: skipping birth, kitten limit reached (%d)", MAX_KITTENS)
+            return
+
+        # Pick a random parent for genetics
+        parent = random.choice([self.cat_a, self.cat_b])
+        kitten_char_id = CAT_TO_KITTEN.get(parent.config.get("char_id"))
+        if not kitten_char_id:
+            log.warning("No kitten mapping for char_id %s", parent.config.get("char_id"))
+            return
+
+        # Create ephemeral kitten config (NOT saved to disk)
+        kitten_cfg = {
+            "id": f"kitten_{uuid.uuid4().hex[:8]}",
+            "char_id": kitten_char_id,
+            "name": parent.config["name"] + " Jr.",
+        }
+        idx = len(self.app.cat_instances)
+        try:
+            self.app._create_instance(kitten_cfg, idx)
+        except Exception:
+            log.exception("Failed to create kitten")
+            return
+
+        kitten = self.app.cat_instances[-1]
+        kitten.is_kitten = True
+        kitten._birth_progress = 0.0
+        # Place at midpoint between parents, slightly below
+        kitten.x = (self.cat_a.x + self.cat_b.x) / 2 + (self.cat_a.display_w - kitten.display_w) / 2
+        kitten.y = (self.cat_a.y + self.cat_b.y) / 2 + 20
+        kitten.x = max(0, min(kitten.x, kitten.screen_w - kitten.display_w))
+        kitten.y = max(0, min(kitten.y, kitten.screen_h - kitten.display_h))
+        log.info("Birth! %s + %s → %s (%s)",
+                 self.cat_a.config["name"], self.cat_b.config["name"],
+                 kitten.config["name"], kitten_char_id)
+
+    def _end(self):
+        self.active = False
+        cooldown = time.monotonic() + self.COOLDOWN
+        for cat in (self.cat_a, self.cat_b):
+            cat.state = CatState.IDLE
+            cat.in_encounter = False
+            cat._encounter_cooldown_until = cooldown
+            cat.idle_ticks = 0
+        self.app._active_encounter = None
+        return False
+
+    def cancel(self):
+        self.active = False
+        for tid in self._timers:
+            try:
+                GLib.source_remove(tid)
+            except Exception:
+                pass
+        self._timers.clear()
+        for cat in (self.cat_a, self.cat_b):
+            cat.state = CatState.IDLE
+            cat.in_encounter = False
 
 
 # ── Main Application ───────────────────────────────────────────────────────────
@@ -3143,13 +3349,28 @@ class CatAIApp(Gtk.Application):
         log.debug("Test socket listening on %s", self.SOCK_PATH)
 
     def _on_test_connection(self, fd, condition):
-        conn, _ = self._test_sock.accept()
-        conn.setblocking(True)
-        data = conn.recv(4096).decode().strip()
-        response = self._handle_test_cmd(data)
-        conn.sendall((response + "\n").encode())
-        conn.close()
-        return True
+        try:
+            conn, _ = self._test_sock.accept()
+        except Exception:
+            log.exception("test socket accept failed")
+            return True
+        try:
+            conn.setblocking(True)
+            data = conn.recv(4096).decode().strip()
+            response = self._handle_test_cmd(data)
+            try:
+                conn.sendall((response + "\n").encode())
+            except (BrokenPipeError, ConnectionResetError):
+                # Client closed socket before reading (e.g. ncat --send-only)
+                log.debug("test client closed before reading response")
+        except Exception:
+            log.exception("test socket handler error")
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        return True  # keep the watch alive no matter what
 
     def _handle_test_cmd(self, cmd):
         """Handle a test command. Returns response string."""
@@ -3189,6 +3410,21 @@ class CatAIApp(Gtk.Application):
                     cat.direction = "south"
                 return f"OK cat {idx} -> {state_name}"
             return "ERR: invalid cat index"
+
+        elif action == "love_encounter":
+            if len(parts) < 3:
+                return "ERR: usage: love_encounter <idx_a> <idx_b>"
+            ia, ib = int(parts[1]), int(parts[2])
+            if 0 <= ia < len(self.cat_instances) and 0 <= ib < len(self.cat_instances) and ia != ib:
+                ca = self.cat_instances[ia]
+                cb = self.cat_instances[ib]
+                if self._active_encounter:
+                    self._active_encounter.cancel()
+                enc = LoveEncounter(ca, cb, self)
+                self._active_encounter = enc
+                enc.start()
+                return f"OK love encounter {ia}<->{ib}"
+            return "ERR: invalid indices"
 
         elif action == "start_sequence":
             if len(parts) < 3:
@@ -3423,12 +3659,28 @@ class CatAIApp(Gtk.Application):
                 _draw_tree_bg_cairo(ctx, cat)
 
             surface, _data_ref = cat._current_surface()
-            ctx.save()
-            ctx.rectangle(cat.x, cat.y, cat.display_w, cat.display_h)
-            ctx.clip()
-            ctx.set_source_surface(surface, cat.x, cat.y)
-            ctx.paint()
-            ctx.restore()
+            if cat._birth_progress is not None:
+                # Birth animation: grow from 10% to 100%, fade in from 0.15 to 1.0
+                p = cat._birth_progress
+                scale = 0.10 + 0.90 * p
+                alpha = 0.15 + 0.85 * p
+                ctx.save()
+                cx = cat.x + cat.display_w / 2
+                cy = cat.y + cat.display_h / 2
+                ctx.translate(cx, cy)
+                ctx.scale(scale, scale)
+                ctx.translate(-cat.display_w / 2, -cat.display_h / 2)
+                ctx.set_source_surface(surface, 0, 0)
+                ctx.paint_with_alpha(alpha)
+                ctx.restore()
+                _draw_birth_sparkles(ctx, cat.x, cat.y, cat.display_w, cat.display_h, p)
+            else:
+                ctx.save()
+                ctx.rectangle(cat.x, cat.y, cat.display_w, cat.display_h)
+                ctx.clip()
+                ctx.set_source_surface(surface, cat.x, cat.y)
+                ctx.paint()
+                ctx.restore()
 
             # Draw overlays above cat
             if cat.state == CatState.SLEEPING_BALL:
@@ -3543,6 +3795,10 @@ class CatAIApp(Gtk.Application):
 
     def _toggle_chat_for(self, cat):
         """Toggle chat bubble for a specific cat."""
+        if cat.is_kitten:
+            # Kittens can't talk — just show a random baby meow
+            cat._show_random_meow()
+            return
         if cat.chat_visible:
             cat.chat_visible = False
             self._chat_entry.set_visible(False)
@@ -3802,6 +4058,8 @@ class CatAIApp(Gtk.Application):
         candidates = [c for c in self.cat_instances
                       if not c.in_encounter and not c.chat_visible
                       and not c.dragging and c.state in ok_states
+                      and not c.is_kitten  # kittens don't have encounters
+                      and c._birth_progress is None  # being born
                       and now >= c._encounter_cooldown_until]
         if len(candidates) < 2:
             return
@@ -3814,11 +4072,16 @@ class CatAIApp(Gtk.Application):
                     # Stop both cats where they are
                     ca.state = CatState.IDLE
                     cb.state = CatState.IDLE
-                    enc = CatEncounter(ca, cb, self)
+                    # 40% of encounters are silent love encounters (maybe baby!)
+                    if random.random() < 0.40:
+                        enc = LoveEncounter(ca, cb, self)
+                        log.debug("Love encounter: %s ↔ %s", ca.config["name"], cb.config["name"])
+                    else:
+                        enc = CatEncounter(ca, cb, self)
+                        log.debug("Encounter started: %s ↔ %s (dist=%.0f)",
+                                  ca.config["name"], cb.config["name"], dist)
                     self._active_encounter = enc
                     enc.start()
-                    log.debug("Encounter started: %s ↔ %s (dist=%.0f)",
-                              ca.config["name"], cb.config["name"], dist)
                     return
 
     def set_encounters_enabled(self, enabled):

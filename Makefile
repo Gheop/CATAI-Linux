@@ -1,7 +1,10 @@
-.PHONY: run lint fix build e2e
+.PHONY: run run-test lint fix build e2e
 
 run:
 	python3 -m catai_linux
+
+run-test:
+	python3 -m catai_linux --test-socket
 
 lint:
 	ruff check catai_linux/

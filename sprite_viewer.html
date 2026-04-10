@@ -113,12 +113,18 @@ canvas {
 
 <script>
 const CHARACTERS = [
-  { id: 'cat_orange', label: '🟠 orange', dir: 'catai_linux/cat_orange', size: 80 },
-  { id: 'cat01',      label: '🟤 tabby',  dir: 'catai_linux/cat01',      size: 80 },
-  { id: 'cat02',      label: '⬛ dark',    dir: 'catai_linux/cat02',      size: 80 },
-  { id: 'cat03',      label: '🟫 brown',  dir: 'catai_linux/cat03',      size: 80 },
-  { id: 'cat04',      label: '🩶 grey',   dir: 'catai_linux/cat04',      size: 80 },
-  { id: 'cat05',      label: '🖤 black',  dir: 'catai_linux/cat05',      size: 80 },
+  { id: 'cat_orange',    label: '🟠 cat orange',    dir: 'catai_linux/cat_orange',    size: 80 },
+  { id: 'cat01',         label: '🟤 cat tabby',     dir: 'catai_linux/cat01',         size: 80 },
+  { id: 'cat02',         label: '⬛ cat dark',       dir: 'catai_linux/cat02',         size: 80 },
+  { id: 'cat03',         label: '🟫 cat brown',     dir: 'catai_linux/cat03',         size: 80 },
+  { id: 'cat04',         label: '🩶 cat grey',      dir: 'catai_linux/cat04',         size: 80 },
+  { id: 'cat05',         label: '🖤 cat black',     dir: 'catai_linux/cat05',         size: 80 },
+  { id: 'kitten_orange', label: '🟠 kitten orange', dir: 'catai_linux/kitten_orange', size: 64 },
+  { id: 'kitten01',      label: '🟤 kitten tabby',  dir: 'catai_linux/kitten01',      size: 64 },
+  { id: 'kitten02',      label: '⬛ kitten dark',    dir: 'catai_linux/kitten02',      size: 64 },
+  { id: 'kitten03',      label: '🟫 kitten brown',  dir: 'catai_linux/kitten03',      size: 64 },
+  { id: 'kitten04',      label: '🩶 kitten grey',   dir: 'catai_linux/kitten04',      size: 64 },
+  { id: 'kitten05',      label: '🖤 kitten black',  dir: 'catai_linux/kitten05',      size: 64 },
 ];
 
 // Animations for the orange cat (original)
@@ -138,36 +144,38 @@ const ANIMS_ORANGE = [
   { name:'pooping',          dir:'south',  frames:6,  label:'Pooping' },
 ];
 
-// Animations for catset characters
+// Animations for catset/kitten characters. Frame counts are MAX across both —
+// missing frames return null and are filtered out by buildCell, so the same
+// list works for cats (23 anims) and kittens (17 anims, missing sleep/fright/ledge*).
 const ANIMS_CATSET = [
   { name:'running-8-frames', dir:'east',   frames:4,  label:'Running (east)' },
   { name:'running-8-frames', dir:'west',   frames:4,  label:'Running (west)' },
-  { name:'sleeping-ball',    dir:'south',  frames:8,  label:'Sleeping' },
+  { name:'sleeping-ball',    dir:'south',  frames:8,  label:'Sleeping (cats only)' },
   { name:'flat',             dir:'south',  frames:8,  label:'Flat / Sit' },
   { name:'angry',            dir:'south',  frames:7,  label:'Angry' },
   { name:'chasing-mouse',    dir:'east',   frames:8,  label:'Chasing (east)' },
   { name:'chasing-mouse',    dir:'west',   frames:8,  label:'Chasing (west)' },
-  { name:'surprised',        dir:'east',   frames:8,  label:'Surprised' },
+  { name:'surprised',        dir:'east',   frames:8,  label:'Surprised (cats only)' },
   { name:'eating',           dir:'south',  frames:8,  label:'Eating (crouch)' },
   { name:'love',             dir:'south',  frames:8,  label:'Love / Loaf' },
   { name:'grooming',         dir:'south',  frames:8,  label:'Grooming' },
   { name:'rolling',          dir:'south',  frames:8,  label:'Rolling' },
   { name:'waking-getting-up',dir:'south',  frames:8,  label:'Walk / Waking' },
-  { name:'jumping',          dir:'south',  frames:4,  label:'Jumping' },
-  { name:'climbing',         dir:'east',   frames:11, label:'Climbing (east)' },
-  { name:'climbing',         dir:'west',   frames:11, label:'Climbing (west)' },
-  { name:'dash',                dir:'east',   frames:9,  label:'Dash (east)' },
-  { name:'dash',                dir:'west',   frames:9,  label:'Dash (west)' },
+  { name:'jumping',          dir:'south',  frames:5,  label:'Jumping' },
+  { name:'climbing',         dir:'east',   frames:11, label:'Climbing (east, cats only)' },
+  { name:'climbing',         dir:'west',   frames:11, label:'Climbing (west, cats only)' },
+  { name:'dash',                dir:'east',   frames:10, label:'Dash (east)' },
+  { name:'dash',                dir:'west',   frames:10, label:'Dash (west)' },
   { name:'die',                 dir:'south',  frames:8,  label:'Die' },
-  { name:'fall',                dir:'south',  frames:3,  label:'Fall' },
-  { name:'hurt',                dir:'south',  frames:4,  label:'Hurt' },
-  { name:'land',                dir:'south',  frames:2,  label:'Land' },
-  { name:'ledgeclimb-struggle', dir:'east',   frames:12, label:'Ledge Struggle (east)' },
-  { name:'ledgeclimb-struggle', dir:'west',   frames:12, label:'Ledge Struggle (west)' },
-  { name:'ledgegrab',           dir:'east',   frames:5,  label:'Ledge Grab (east)' },
-  { name:'ledgegrab',           dir:'west',   frames:5,  label:'Ledge Grab (west)' },
-  { name:'ledgeidle',           dir:'east',   frames:8,  label:'Ledge Idle (east)' },
-  { name:'ledgeidle',           dir:'west',   frames:8,  label:'Ledge Idle (west)' },
+  { name:'fall',                dir:'south',  frames:5,  label:'Fall' },
+  { name:'hurt',                dir:'south',  frames:5,  label:'Hurt' },
+  { name:'land',                dir:'south',  frames:3,  label:'Land' },
+  { name:'ledgeclimb-struggle', dir:'east',   frames:12, label:'Ledge Struggle (east, cats only)' },
+  { name:'ledgeclimb-struggle', dir:'west',   frames:12, label:'Ledge Struggle (west, cats only)' },
+  { name:'ledgegrab',           dir:'east',   frames:5,  label:'Ledge Grab (east, cats only)' },
+  { name:'ledgegrab',           dir:'west',   frames:5,  label:'Ledge Grab (west, cats only)' },
+  { name:'ledgeidle',           dir:'east',   frames:8,  label:'Ledge Idle (east, cats only)' },
+  { name:'ledgeidle',           dir:'west',   frames:8,  label:'Ledge Idle (west, cats only)' },
   { name:'wallclimb',           dir:'east',   frames:8,  label:'Wall Climb (east)' },
   { name:'wallclimb',           dir:'west',   frames:8,  label:'Wall Climb (west)' },
   { name:'wallgrab',            dir:'east',   frames:8,  label:'Wall Grab (east)' },
@@ -205,7 +213,7 @@ async function buildCell(char, anim) {
   cell.className = 'cell';
 
   const sz = char.size;
-  const SCALE = Math.floor(256 / sz);  // ~3x for 80px, ~3x for 68px
+  const SCALE = 3;  // Fixed: cats 80*3=240px, kittens 64*3=192px (proportionally smaller)
   const canvas = document.createElement('canvas');
   canvas.width = sz * SCALE;
   canvas.height = sz * SCALE;

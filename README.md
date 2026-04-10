@@ -8,6 +8,8 @@ Port of [CATAI](https://github.com/wil-pe/CATAI) (macOS/Swift) to Linux.
 
 ![CATAI-Linux demo](demo.gif)
 
+![Love encounters and kitten births](love_demo.gif)
+
 ![Overlays showcase — sleeping, love, surprised, grooming](screenshot1.png)
 
 ![Chat bubble with AI response](screenshot2.png)
@@ -26,6 +28,7 @@ Port of [CATAI](https://github.com/wil-pe/CATAI) (macOS/Swift) to Linux.
 - **Random meows** -- Cats spontaneously say "Miaou~", "Prrr...", "Mrrp!" in cute speech bubbles
 - **Drag & drop** -- Drag cats anywhere on your screen
 - **Cat encounters** -- When two cats cross paths, they stop and have a short AI-generated conversation
+- **Love encounters & kittens** -- Sometimes a cat falls in love; if the other reciprocates, a kitten is born with the parent's color (fade-in + sparkles). Kittens can't chat yet — they meow with baby emojis 🐭 🍼 ♥ 🧸
 - **Multilingual** -- French, English, Spanish
 - **Persistent** -- Cats remember their conversations between sessions
 
@@ -162,6 +165,19 @@ MIT
 ---
 
 ## Changelog
+
+### v0.3.3 — Love encounters + baby kittens (2026-04-10)
+
+- **Love encounters**: 40% of cat-to-cat encounters now skip the dialogue and become silent love moments. The initiator enters LOVE state with floating hearts, and the other cat reacts with ANGRY 💢 (30%), SURPRISED !!! (30%), or LOVE ♥ (40%)
+- **Kitten births**: when both cats reciprocate, a kitten is born at the midpoint with a magical fade-in + grow + ✨ sparkles animation
+- **Kitten characters**: 6 new 64×64 sprites (kitten_orange, kitten01..05) extracted from seethingswarm's kitten spritesheets via `scripts/kittens_to_catai.py`. Kittens inherit one parent's color at birth (cat01→kitten01, cat_orange→kitten_orange, etc.)
+- **Baby meows**: kittens can't talk yet — their meows and click responses show random baby emojis (🐭 🍼 ♥ 🧸 🐣 🥛 ✨ 🎀 💨 🐱...)
+- **Kitten rules**: ephemeral (not saved across restarts), max 6 at once, no chat dialogue, no transformation to adult, excluded from regular encounters
+- **Sprite viewer**: 6 new characters in `sprite_viewer.html`, proportionally smaller (kittens at 192px vs cats at 240px)
+- **New tool**: `tools/render_love_demo.py` generates `love_demo.gif` showing the full love encounter flow + birth
+- **Test socket**: new `love_encounter <idx_a> <idx_b>` command to manually trigger a love encounter
+- **Fix**: test socket no longer crashes on `ncat --send-only` (BrokenPipeError is caught and logged); `CatEncounter.cancel` no longer warns when a timer has already fired
+- **Makefile**: new `make run-test` target that launches with `--test-socket` for automation
 
 ### v0.3.2 — README demo + proactive auth refresh (2026-04-10)
 
