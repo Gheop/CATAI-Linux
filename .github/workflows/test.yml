@@ -14,27 +14,36 @@ jobs:
   unit-tests:
     runs-on: ubuntu-latest
     name: Unit tests + import smoke
+    # NOTE: we deliberately use the system Python3 that Ubuntu ships with,
+    # because:
+    #   1. PyGObject 3.50+ from pip requires girepository-2.0 dev headers
+    #      that aren't on the GHA Ubuntu runner, so `pip install PyGObject`
+    #      fails during meson build.
+    #   2. The system Python3 already has python3-gi installed via apt,
+    #      paired with the matching gir1.2-* typelibs.
+    # So: skip actions/setup-python, apt-install GTK4 + python3-gi, then
+    # `pip install` only the pure-Python deps (Pillow, httpx, anthropic)
+    # into the system user site via --user.
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
 
-      # GTK4 + Cairo system deps — needed so PyGObject can load the typelibs
-      # for Gdk / Gtk / Pango / PangoCairo. No display required; the tests
-      # are all headless (offscreen cairo surfaces, no Gdk.Display).
-      - name: Install GTK4 + Cairo system libraries
+      - name: Install GTK4 + Cairo + system PyGObject
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             python3-gi python3-gi-cairo \
-            gir1.2-gtk-4.0 gir1.2-pango-1.0 gir1.2-gdkpixbuf-2.0 \
-            libcairo2-dev libgirepository1.0-dev pkg-config
+            gir1.2-gtk-4.0 gir1.2-pango-1.0 gir1.2-gdkpixbuf-2.0 gir1.2-gdkpixbuf-2.0 \
+            libcairo2 python3-cairo
 
-      - name: Install the package (no optional extras)
-        run: pip install -e .
+      - name: Install non-system pip deps (Pillow + httpx + anthropic)
+        # --user avoids polluting /usr/lib/python3/dist-packages
+        run: python3 -m pip install --user --break-system-packages Pillow httpx anthropic
 
       - name: Run headless unit tests
+        # Add the repo root to PYTHONPATH so `import catai_linux` works
+        # without needing pip install -e .
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: python3 tests/test_modules.py
 
   build-check:
