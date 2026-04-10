@@ -131,7 +131,10 @@ jobs:
   e2e-tests:
     runs-on: ubuntu-latest
     name: Full E2E via Xvfb + metacity
-    timeout-minutes: 5
+    # Previous runs sometimes spent 4+ minutes on apt-install alone before
+    # the test itself could start. 8 min leaves plenty of headroom for the
+    # test suite (~2-3 min wall) + apt slow days.
+    timeout-minutes: 8
     env:
       # Redirect HOME to a tempdir so the CI never touches a contributor's
       # real ~/.config/catai. App reads CONFIG_DIR = ~/.config/catai via
