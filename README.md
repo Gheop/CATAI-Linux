@@ -143,20 +143,27 @@ python3 tools/render_demo_gif.py      # → demo.gif
 ```
 .
 ├── catai_linux/          # Python package
-│   ├── app.py            # Main application
 │   ├── __main__.py       # Entry point (python -m catai_linux)
+│   ├── app.py            # Main application + CatAIApp + CatInstance
+│   ├── chat_backend.py   # Claude + Ollama streaming backends
+│   ├── voice.py          # Push-to-talk recording + Whisper transcription
+│   ├── drawing.py        # Cairo/Pango helpers (bubbles, overlays, CSS)
+│   ├── x11_helpers.py    # Low-level Xlib/XShape via ctypes
+│   ├── l10n.py           # Localization strings (fr/en/es)
 │   ├── cat_orange/       # Sprite assets — orange cat (80×80 PNG)
-│   ├── cat01/            # Sprite assets — tabby
-│   ├── cat02/            # Sprite assets — dark cat
-│   ├── cat03/            # Sprite assets — brown cat
-│   ├── cat04/            # Sprite assets — grey cat
-│   └── cat05/            # Sprite assets — black cat
+│   ├── cat01..05/        # Sprite assets — tabby/dark/brown/grey/black
+│   └── kitten*/          # Kitten sprites (inherited from cat parent)
 ├── scripts/
-│   └── catset_to_catai.py  # Spritesheet conversion tool
+│   ├── catset_to_catai.py   # Catset spritesheet conversion
+│   ├── kittens_to_catai.py  # Kitten spritesheet conversion
+│   └── sd_postprocess.py    # Stable Diffusion output post-processing
 ├── tools/
-│   └── sprite_preview.py   # Visual preview of all sprites + overlays
+│   ├── sprite_preview.py    # Visual preview of all sprites + overlays
+│   ├── render_screenshots.py  # Generate README screenshots
+│   ├── render_demo_gif.py     # Generate demo.gif
+│   └── render_love_demo.py    # Generate love_demo.gif
 ├── tests/
-│   └── e2e_test.py       # E2E test suite (socket-based)
+│   └── e2e_test.py       # E2E test suite (26 tests via Unix socket)
 ├── pyproject.toml        # Package config + linter config
 ├── Makefile              # make run / lint / e2e / build
 └── .github/workflows/    # CI: lint + PyPI publish
@@ -174,6 +181,67 @@ MIT
 ---
 
 ## Changelog
+
+### v0.5.0 — Big cleanup: modular refactor + smaller wheel (2026-04-10)
+
+Internal overhaul — no user-facing feature changes. If v0.4.0 works for
+you, v0.5.0 works the same, just lighter and cleaner under the hood.
+
+- **Wheel size: 2.5 MB → 1.6 MB** (−36%) — removed the legacy
+  `cute_orange_cat/` sprite directory (2.1 MB of 68×68 sprites that
+  were shipped in every release since v0.1.0 but have not been loaded
+  at runtime since the v0.3.0 catset migration). Removed the obsolete
+  `MANIFEST.in` that was keeping them in the distribution.
+- **Modular architecture**: `catai_linux/app.py` split from 6044 lines
+  into 6 focused modules. Smaller files, easier to navigate, easier to
+  test, lazy imports for optional features:
+  - `app.py` (4200 lines) — `CatAIApp`, render loop, main
+  - `chat_backend.py` (310 lines) — `ChatBackend`, `ClaudeChat`,
+    `OllamaChat`, `create_chat`, Claude OAuth helpers, Ollama probing
+  - `voice.py` (220 lines) — `VoiceRecorder`, Whisper model metadata,
+    HuggingFace cache detection
+  - `drawing.py` (480 lines) — CSS theme + all Cairo/Pango drawing
+    helpers (speech bubbles, overlays, context menu, sparkles)
+  - `x11_helpers.py` (310 lines) — low-level Xlib/XShape via ctypes
+  - `l10n.py` (44 lines) — localization strings + random meow pool
+- **Dead code purge: −800 lines** of unused classes, helpers, and
+  unreachable legacy branches:
+  - `ChatBubbleController` class (150 lines) — old Gtk.Window-based
+    bubble, replaced by the Cairo canvas rendering in v0.3.x
+  - Legacy color-tinting system (`CatColorDef` class, `CAT_COLORS`
+    table with 6 pre-baked personalities, `tint_sprite`,
+    `rgb_to_hsb`/`hsb_to_rgb`, `load_and_tint` with disk cache)
+  - 6 unreachable `CatState` enum members (`DRINKING`, `PLAYING_BALL`,
+    `BUTTERFLY`, `SCRATCHING_TREE`, `PEEING`, `POOPING`) plus their
+    dispatch branches and all 7 drawing helpers that existed only to
+    render their props (butterfly, tree with bark+foliage+scratches,
+    pee drops, poop drops with flies, yarn ball)
+  - `CatAIApp.add_cat` / `remove_cat` / `rename_cat` — legacy
+    color-based cat management, superseded by `add_catset_char` etc.
+  - `SettingsWindow._on_bubble_*` / `_on_name_changed` — handlers for
+    the old color-bubble UI, never connected to any widget
+  - `draw_pixel_border`, `_pango_text_width`, `_load_anims_bg`,
+    `_get_preview`, `_get_anim_frames` — helpers with zero callers
+- **Perf**: cached Pango layout across render ticks in
+  `_position_chat_entry()` (was re-allocating a `cairo.ImageSurface`,
+  context, layout, and font description every frame when a chat bubble
+  was visible — ~0.5–1 ms/frame saved). Dirty-key cache for
+  `_update_input_regions()` skips the expensive `cairo.Region` rebuild
+  on frames where no cat has moved (the common idle case — ~0.5 ms
+  saved per skipped frame on an 8 FPS loop).
+- **Code quality**: `_handle_test_cmd()` (197 lines, 19 if/elif
+  branches) refactored into 21 small `_cmd_*` handlers dispatched via
+  a dict — each command is now an independently-readable 5–10 line
+  method. Added `_get_cat_at_idx()` helper to deduplicate index
+  parsing.
+- **Type hints** on all public APIs of the new modules
+  (`ChatBackend.send`, `VoiceRecorder.*`, drawing helpers, etc.) for
+  IDE autocomplete and future `mypy` support.
+- **Housekeeping**: `.gitignore` now excludes raw sprite sources
+  (`catset_assets/`, `kittens_assets/`); removed obsolete
+  `scripts/generate_sprites.py`, `scripts/catai_sprites.ipynb`,
+  `docs/feature_kittens.md`, and empty `scripts/references/` /
+  `scripts/sd_workflows/` directories.
 
 ### v0.4.0 — Voice chat + instant startup (2026-04-10)
 
