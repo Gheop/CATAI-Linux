@@ -2479,6 +2479,16 @@ class CatAIApp(Gtk.Application):
         self.settings_ctrl._on_close()
         return "OK settings closed"
 
+    def _cmd_settings_state(self, parts):
+        """Report whether the settings window exists and is currently visible.
+        Used by the e2e tests instead of xdotool window class search, which
+        is fragile across WM configs."""
+        ctrl = self.settings_ctrl
+        if not (ctrl and ctrl.window):
+            return "OK settings=absent"
+        visible = "yes" if ctrl.window.get_visible() else "no"
+        return f"OK settings=present visible={visible}"
+
     def _cmd_get_chat_response(self, parts):
         cat = self._active_chat_cat
         if not cat:
@@ -2517,6 +2527,7 @@ class CatAIApp(Gtk.Application):
                 "close_chat": self._cmd_close_chat,
                 "drag_cat": self._cmd_drag_cat,
                 "close_settings": self._cmd_close_settings,
+                "settings_state": self._cmd_settings_state,
                 "get_chat_response": self._cmd_get_chat_response,
                 "screenshot": self._cmd_screenshot,
             }
