@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "cats": [
+    {"id": "cat_ci_00", "char_id": "cat_orange", "name": "Mandarine"},
+    {"id": "cat_ci_01", "char_id": "cat01",      "name": "Tabby"},
+    {"id": "cat_ci_02", "char_id": "cat02",      "name": "Ombre"},
+    {"id": "cat_ci_03", "char_id": "cat03",      "name": "Noisette"}
+  ],
+  "scale": 1.0,
+  "model": "mock-model",
+  "lang": "fr",
+  "encounters": false,
+  "voice_enabled": false,
+  "voice_model": "base"
+}
