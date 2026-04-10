@@ -41,11 +41,14 @@ KITTEN_W = int(CAT_W * 0.8)  # kittens are 80% size of cats
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def draw_cat(ctx, cat_id, anim, direction, frame_idx, x, y, w=CAT_W):
+def draw_cat(ctx, cat_id, anim, direction, frame_idx, x, y, w=CAT_W, flip=False):
     img = load_frame(cat_id, anim, direction, frame_idx)
     if img is None:
         img = load_rotation(cat_id)
     if img:
+        if flip:
+            from PIL import Image as _Img
+            img = img.transpose(_Img.FLIP_LEFT_RIGHT)
         s, _d = pil_to_surface(img, w, w)
         ctx.set_source_surface(s, x, y)
         ctx.paint()
@@ -167,7 +170,8 @@ def scene_love_start(ctx, t, p):
     draw_cat(ctx, P_A, "love", "south", frame_of(t, 8, 8), POS_A_X, CENTER_Y)
     draw_hearts(ctx, POS_A_X, CENTER_Y, CAT_W, CAT_W, phase=t)
 
-    draw_cat(ctx, P_B, "flat", "south", 2, POS_B_X, CENTER_Y)
+    # Cat B faces west (toward cat A) — flip the east-facing flat sprite
+    draw_cat(ctx, P_B, "flat", "south", 2, POS_B_X, CENTER_Y, flip=True)
     draw_caption(ctx, "One falls in love \u2665")
 
 
@@ -182,30 +186,30 @@ def scene_three_reactions(ctx, t, p):
     # Each panel: parent A (love) + parent B (one of 3 states)
     panel_y = int(H * 0.55)
 
-    # Panel 1: ANGRY (30%)
+    # Panel 1: ANGRY (30%) — cat B flipped to face cat A
     p1_ax = int(W / 6 - CAT_W * 0.9)
     p1_bx = int(W / 6 + CAT_W * 0.1)
     draw_cat(ctx, P_A, "love", "south", frame_of(t, 8, 8), p1_ax, panel_y)
     draw_hearts(ctx, p1_ax, panel_y, CAT_W, CAT_W, phase=t)
-    draw_cat(ctx, P_B, "angry", "south", frame_of(t, 8, 7), p1_bx, panel_y)
+    draw_cat(ctx, P_B, "angry", "south", frame_of(t, 8, 7), p1_bx, panel_y, flip=True)
     draw_angry_overlay(ctx, p1_bx, panel_y, CAT_W, CAT_W, phase=t)
     draw_panel_label(ctx, "ANGRY \U0001f4a2   30%", 0, H - 80, W // 3)
 
-    # Panel 2: SURPRISED (30%)
+    # Panel 2: SURPRISED (30%) — surprised has a native "west" direction
     p2_ax = int(W / 2 - CAT_W * 0.9)
     p2_bx = int(W / 2 + CAT_W * 0.1)
     draw_cat(ctx, P_A, "love", "south", frame_of(t, 8, 8), p2_ax, panel_y)
     draw_hearts(ctx, p2_ax, panel_y, CAT_W, CAT_W, phase=t)
-    draw_cat(ctx, P_B, "surprised", "east", frame_of(t, 8, 8), p2_bx, panel_y)
+    draw_cat(ctx, P_B, "surprised", "west", frame_of(t, 8, 8), p2_bx, panel_y)
     draw_exclamation(ctx, p2_bx, panel_y, CAT_W, CAT_W)
     draw_panel_label(ctx, "SURPRISED !!!   30%", W // 3, H - 80, W // 3)
 
-    # Panel 3: LOVE (40%) — highlighted
+    # Panel 3: LOVE (40%) — cat B flipped to face cat A
     p3_ax = int(5 * W / 6 - CAT_W * 0.9)
     p3_bx = int(5 * W / 6 + CAT_W * 0.1)
     draw_cat(ctx, P_A, "love", "south", frame_of(t, 8, 8), p3_ax, panel_y)
     draw_hearts(ctx, p3_ax, panel_y, CAT_W, CAT_W, phase=t)
-    draw_cat(ctx, P_B, "love", "south", frame_of(t, 8, 8), p3_bx, panel_y)
+    draw_cat(ctx, P_B, "love", "south", frame_of(t, 8, 8), p3_bx, panel_y, flip=True)
     draw_hearts(ctx, p3_bx, panel_y, CAT_W, CAT_W, phase=t)
     draw_panel_label(ctx, "LOVE \u2665   40%", 2 * W // 3, H - 80, W // 3,
                      color=(1, 0.4, 0.5, 1.0))
@@ -215,10 +219,10 @@ def scene_three_reactions(ctx, t, p):
 
 def scene_birth(ctx, t, p):
     """Both in love — kitten materializes between them with sparkles."""
-    # Parents in LOVE, facing each other
+    # Parents in LOVE, facing each other (cat B flipped to face cat A)
     draw_cat(ctx, P_A, "love", "south", frame_of(t, 8, 8), POS_A_X, CENTER_Y)
     draw_hearts(ctx, POS_A_X, CENTER_Y, CAT_W, CAT_W, phase=t)
-    draw_cat(ctx, P_B, "love", "south", frame_of(t, 8, 8), POS_B_X, CENTER_Y)
+    draw_cat(ctx, P_B, "love", "south", frame_of(t, 8, 8), POS_B_X, CENTER_Y, flip=True)
     draw_hearts(ctx, POS_B_X, CENTER_Y, CAT_W, CAT_W, phase=t)
 
     # Kitten position (midpoint, slightly below)
@@ -240,7 +244,7 @@ def scene_birth(ctx, t, p):
 def scene_done(ctx, t, p):
     """Final scene: kitten fully grown, bouncing happily between parents."""
     draw_cat(ctx, P_A, "flat", "south", 2, POS_A_X, CENTER_Y)
-    draw_cat(ctx, P_B, "flat", "south", 2, POS_B_X, CENTER_Y)
+    draw_cat(ctx, P_B, "flat", "south", 2, POS_B_X, CENTER_Y, flip=True)
 
     kit_x = (POS_A_X + POS_B_X) / 2 + (CAT_W - KITTEN_W) / 2
     kit_y = CENTER_Y + 28 + int(math.sin(t * 6) * 3)  # gentle bounce
