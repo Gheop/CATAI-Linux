@@ -29,6 +29,7 @@ Port of [CATAI](https://github.com/wil-pe/CATAI) (macOS/Swift) to Linux.
 - **Drag & drop** -- Drag cats anywhere on your screen
 - **Cat encounters** -- When two cats cross paths, they stop and have a short AI-generated conversation
 - **Love encounters & kittens** -- Sometimes a cat falls in love; if the other reciprocates, a kitten is born with the parent's color (fade-in + sparkles). Kittens can't chat yet — they meow with baby emojis 🐭 🍼 ♥ 🧸
+- **22 hidden easter eggs** 🥚 -- type `easter egg` in a chat bubble for the full menu, or trigger any one directly with a magic phrase: `nyan`, `rain`, `hug`, `42`, `matrix`, `thanos`, `boss fight`, `disco`, `stampede`, `meow party`, `don't panic`... and many more. Even Nyan Cat with a proper 6-frame animated sprite and wavy tiled rainbow trail!
 - **Multilingual** -- French, English, Spanish
 - **Persistent** -- Cats remember their conversations between sessions
 
@@ -165,6 +166,37 @@ MIT
 ---
 
 ## Changelog
+
+### v0.3.6 — 22 easter eggs + Nyan Cat + magic phrases (2026-04-10)
+
+- **Easter egg menu** 🥚 — type `easter egg` in any chat bubble to open a clickable menu of 22 fun effects. The menu disappears as soon as you click an egg so you can actually see the effect
+- **22 easter eggs** with direct magic phrases (type them in a chat bubble):
+  - 💥 Apocalypse (`apocalypse`, `kaboom`, or `Don't panic`) — kittens double every second up to 1000
+  - 🌀 Circle 42 (`42`, `circle`, `answer`) — cats form a HGttG circle
+  - 🎉 Meow party (`meow`, `party`) — all cats meow at once
+  - 🏃 Stampede (`stampede`, `run`) — everyone dashes together
+  - 😴 Sleepy time (`sleep`, `zzz`, `bedtime`) — mass nap
+  - 🤗 Group hug (`hug`, `hugs`) — cluster in LOVE
+  - 🕺 Disco (`disco`, `dance`) — cats cycle through colorful states
+  - 🌧 Rain of cats (`rain`, `raining`) — cats fall from the sky with gravity
+  - 📳 Shake (`shake`, `earthquake`) — global screen shake
+  - 🌿 Catnip (`catnip`, `nip`) — everyone rolls
+  - 📈 Stonks (`stonks`) — cats climb slowly upward
+  - 🐌 / ⏩ Slow/Fast motion (`slow`, `fast`) — 3× slower or 2× faster for 10s
+  - 💀 Thanos snap (`snap`, `thanos`) — half the cats fade and vanish
+  - 🛸 Beam me up (`beam`, `teleport`) — random cat shoots up with light beam
+  - 🌍 Hello, World! (`hello`, `hi`) — a cat says it
+  - 🥪 sudo sandwich (`sudo`, `sandwich`) — xkcd reference
+  - 🙈 Hide & seek (`hide`, `hide and seek`) — all cats vanish except one
+  - 🟢 Matrix (`matrix`, `neo`) — green digital rain overlay
+  - 👹 Boss fight (`boss`, `fight`) — one cat grows 2.2× into an ANGRY boss, others circle around. After 5s the boss dies in drama_queen while shrinking and the crowd reacts with SURPRISED
+  - 👣 Follow the leader (`follow`, `follow me`) — all cats walk toward the current focused cat
+  - 🌈 **Nyan Cat!** (`nyan`, `nyan cat`) — the classic Nyan Cat with 6-frame animation flies across the screen, trailing a tiled wavy rainbow
+- **Nyan Cat asset pipeline**: `catai_linux/nyan_cat.png` (6-frame sprite sheet) + `catai_linux/nyan_rainbow.png` (clean 6-stripe tile) drawn via Cairo with nearest-neighbor filter
+- **DASHING speed lines polished**: foot streaks flush with the cat + dust particles around — much more "wind/motion" than the previous ladder effect
+- **`rain` egg**: cats now actually fall with gravity acceleration, then transition to LANDING when they hit the floor
+- **`follow_leader`**: robust fallback when there's no active chat cat
+- **Test socket additions**: `easter_menu`, `egg <key>`, `love_encounter <a> <b>` for scripted demos
 
 ### v0.3.5 — Screen-edge clamp with top bar + sprite padding awareness (2026-04-10)
 

@@ -316,6 +316,115 @@ MAX_KITTENS = 6
 # offset for the GNOME top bar is computed per-cat via _canvas_y_offset.
 BOTTOM_MARGIN = 5
 
+# ── Easter eggs ──────────────────────────────────────────────────────────────
+# Triggered by typing "easter egg" in any chat bubble. Shows a clickable menu.
+# (key, emoji, label, method_name)
+# Magic phrases that trigger an easter egg directly from the chat bubble.
+# Case-insensitive, trailing punctuation stripped. Multiple aliases allowed.
+MAGIC_EGG_PHRASES = {
+    # Nyan cat
+    "nyan": "nyan",
+    "nyan cat": "nyan",
+    # Group hug
+    "hug": "group_hug",
+    "group hug": "group_hug",
+    "hugs": "group_hug",
+    # Rain
+    "rain": "rain",
+    "raining": "rain",
+    "it's raining cats": "rain",
+    # Apocalypse (in addition to "don't panic")
+    "apocalypse": "apocalypse",
+    "kaboom": "apocalypse",
+    # Circle / 42
+    "42": "circle",
+    "circle": "circle",
+    "answer": "circle",
+    # Meow party
+    "meow": "meow_party",
+    "meow party": "meow_party",
+    "party": "meow_party",
+    # Stampede
+    "stampede": "stampede",
+    "run": "stampede",
+    # Sleepy
+    "sleep": "sleepy",
+    "zzz": "sleepy",
+    "bedtime": "sleepy",
+    # Disco
+    "disco": "disco",
+    "dance": "disco",
+    # Shake
+    "shake": "shake",
+    "earthquake": "shake",
+    # Catnip
+    "catnip": "catnip",
+    "nip": "catnip",
+    # Stonks
+    "stonks": "stonks",
+    # Slow/fast motion
+    "slow": "slowmo",
+    "slowmo": "slowmo",
+    "slow motion": "slowmo",
+    "fast": "fastfwd",
+    "fastfwd": "fastfwd",
+    "fast forward": "fastfwd",
+    # Thanos snap
+    "snap": "thanos",
+    "thanos": "thanos",
+    # Beam me up
+    "beam": "beam",
+    "beam me up": "beam",
+    "teleport": "beam",
+    # Hello world
+    "hello": "hello_world",
+    "hello world": "hello_world",
+    "hi": "hello_world",
+    # Sudo sandwich
+    "sudo": "sudo",
+    "sandwich": "sudo",
+    # Hide & seek
+    "hide": "hide_seek",
+    "hide and seek": "hide_seek",
+    "hide & seek": "hide_seek",
+    # Matrix
+    "matrix": "matrix",
+    "neo": "matrix",
+    # Boss fight
+    "boss": "boss_fight",
+    "boss fight": "boss_fight",
+    "fight": "boss_fight",
+    # Follow leader
+    "follow": "follow",
+    "follow me": "follow",
+    "follow the leader": "follow",
+}
+
+EASTER_EGGS = [
+    ("apocalypse",  "\U0001f4a5", "Apocalypse",    "eg_apocalypse"),
+    ("circle",      "\U0001f300", "42 — Circle",   "eg_circle"),
+    ("meow_party",  "\U0001f389", "Meow party",    "eg_meow_party"),
+    ("stampede",    "\U0001f3c3", "Stampede",      "eg_stampede"),
+    ("sleepy",      "\U0001f634", "Sleepy time",   "eg_sleepy"),
+    ("group_hug",   "\U0001f917", "Group hug",     "eg_group_hug"),
+    ("disco",       "\U0001f57a", "Disco",         "eg_disco"),
+    ("rain",        "\U0001f327", "Rain of cats",  "eg_rain"),
+    ("shake",       "\U0001f4f3", "Shake",         "eg_shake"),
+    ("catnip",      "\U0001f33f", "Catnip",        "eg_catnip"),
+    ("stonks",      "\U0001f4c8", "Stonks",        "eg_stonks"),
+    ("slowmo",      "\U0001f40c", "Slow motion",   "eg_slowmo"),
+    ("fastfwd",     "\u23e9",     "Fast forward",  "eg_fastfwd"),
+    ("thanos",      "\U0001f480", "Thanos snap",   "eg_thanos"),
+    ("beam",        "\U0001f6f8", "Beam me up",    "eg_beam"),
+    ("hello_world", "\U0001f30d", "Hello, World!", "eg_hello_world"),
+    ("sudo",        "\U0001f96a", "sudo sandwich", "eg_sudo_sandwich"),
+    ("hide_seek",   "\U0001f648", "Hide & seek",   "eg_hide_seek"),
+    ("matrix",      "\U0001f7e2", "Matrix",        "eg_matrix"),
+    ("boss_fight",  "\U0001f479", "Boss fight",    "eg_boss_fight"),
+    ("follow",      "\U0001f463", "Follow leader", "eg_follow_leader"),
+    ("nyan",        "\U0001f308", "Nyan!?",        "eg_nyan"),
+]
+
 CATSET_PERSONALITIES = {
     "cat_orange": {
         "name": {"fr": "Mandarine", "en": "Tangerine", "es": "Mandarina"},
@@ -1475,26 +1584,37 @@ def _draw_anger(ctx, cat_x, cat_y, cat_w, cat_h):
 
 
 def _draw_speed_lines(ctx, cat_x, cat_y, cat_w, cat_h, direction):
-    """Draw speed lines behind a dashing cat."""
+    """Speed-line overlay for DASHING cats: foot streaks + dust particles."""
     t = time.monotonic()
-    # Behind = opposite side of facing direction
-    if direction == "east":
-        base_x = cat_x - 4  # left edge of cat
-    else:
-        base_x = cat_x + cat_w + 4  # right edge of cat
+    east = direction == "east"
+    back_x = cat_x - 4 if east else cat_x + cat_w + 4
+    flush_x = cat_x if east else cat_x + cat_w
+    sign = -1 if east else 1
+
+    # Foot streaks — 3 short horizontal lines flush with the cat, in the lower half
     ctx.set_line_width(2)
-    for i in range(5):
-        phase = (t * 8 + i * 0.4) % 1.0
-        alpha = 0.7 - phase * 0.6
-        y = cat_y + cat_h * 0.25 + i * (cat_h * 0.13)
-        length = 12 + phase * 10
-        ctx.set_source_rgba(0.6, 0.5, 0.4, max(0, alpha))
-        ctx.move_to(base_x, y)
-        if direction == "east":
-            ctx.line_to(base_x - length, y)  # trail to the left
-        else:
-            ctx.line_to(base_x + length, y)  # trail to the right
+    for i in range(3):
+        phase = (t * 10 + i * 0.35) % 1.0
+        alpha = 0.85 - phase * 0.7
+        y = cat_y + cat_h * (0.60 + i * 0.10)
+        length = 10 + phase * 10
+        ctx.set_source_rgba(0.65, 0.55, 0.4, max(0, alpha))
+        ctx.move_to(flush_x, y)
+        ctx.line_to(flush_x + sign * length, y)
         ctx.stroke()
+
+    # Dust particles — scattered circles around the cat
+    for i in range(10):
+        phase = (t * 6 + i * 0.25) % 1.0
+        alpha = 0.75 - phase * 0.7
+        dx_off = -(8 + phase * 35)
+        dy_off = math.sin(i * 2.3 + t) * (cat_h * 0.18)
+        x = back_x + sign * dx_off
+        y = cat_y + cat_h * 0.65 + dy_off
+        r = 1.5 + phase * 2
+        ctx.set_source_rgba(0.72, 0.62, 0.48, max(0, alpha))
+        ctx.arc(x, y, r, 0, 2 * math.pi)
+        ctx.fill()
 
 
 def _cairo_ellipse(ctx, cx, cy, rx, ry):
@@ -2016,6 +2136,7 @@ class CatInstance:
         self._anim_offsets = {}         # anim_key -> {direction -> (dy, dx)} in display-px
         self._sprite_bottom_padding = 0 # px of empty rows between sprite feet and box bottom
         self.is_kitten = False          # True for kittens born from love encounters
+        self.is_apocalypse_clone = False # True for clones spawned by apocalypse mode
         self._birth_progress = None     # None = fully visible; 0.0..1.0 = birth animation
         self._flip_h = False            # Horizontal flip (override for face-each-other in encounters)
         self._sequence = None           # list[SequenceStep] or None
@@ -2512,8 +2633,38 @@ class CatInstance:
                 self.idle_ticks = 0
 
 
+    def _close_chat_fully(self):
+        """Close the chat bubble AND the floating input entry."""
+        self.chat_visible = False
+        self.chat_response = ""
+        if self._app and self._app._chat_entry:
+            self._app._chat_entry.set_visible(False)
+            self._app._chat_entry.set_text("")
+        if self._app:
+            self._app._active_chat_cat = None
+
     def send_chat(self, text):
         if self.chat_backend.is_streaming:
+            return
+        # Magic phrase: "Don't panic" triggers/stops apocalypse mode (HGttG 🚀)
+        # Case-insensitive, ignoring trailing punctuation and whitespace
+        import re
+        normalized = re.sub(r"[\s\W]+$", "", text.strip().lower())
+        if normalized == "don't panic":
+            if self._app and hasattr(self._app, "toggle_apocalypse"):
+                self._app.toggle_apocalypse(self)
+                self._close_chat_fully()
+            return
+        if normalized == "easter egg":
+            if self._app and hasattr(self._app, "show_easter_menu"):
+                self._close_chat_fully()
+                self._app.show_easter_menu()
+            return
+        # Magic phrases for individual easter eggs
+        egg_key = MAGIC_EGG_PHRASES.get(normalized)
+        if egg_key and self._app and hasattr(self._app, "_trigger_easter_egg"):
+            self._close_chat_fully()
+            self._app._trigger_easter_egg(egg_key)
             return
         self.chat_response = "..."
         self.chat_visible = True
@@ -3356,6 +3507,19 @@ class CatAIApp(Gtk.Application):
         self._canvas_area = None
         self._canvas_xid = None
         self._canvas_y_offset = 0  # GNOME top bar height (detected at launch)
+        self._apocalypse_active = False
+        self._apocalypse_timer = None
+        # Easter egg menu state
+        self._easter_menu_visible = False
+        self._easter_menu_x = 0
+        self._easter_menu_y = 0
+        # Dimensions computed dynamically in show_easter_menu
+        self._easter_menu_w = 560
+        self._easter_menu_h = 380
+        self._easter_menu_items = []  # list of ((x, y, w, h), key)
+        # Matrix effect state
+        self._matrix_columns = []
+        self._shake_amount = 0  # pixels — used by eg_shake
         self._timers = []
         # Drag state for canvas
         self._drag_cat = None
@@ -3525,6 +3689,23 @@ class CatAIApp(Gtk.Application):
                     cat.direction = "south"
                 return f"OK cat {idx} -> {state_name}"
             return "ERR: invalid cat index"
+
+        elif action == "apocalypse":
+            self.toggle_apocalypse()
+            return f"OK apocalypse {'ON' if self._apocalypse_active else 'OFF'}"
+
+        elif action == "easter_menu":
+            self.show_easter_menu()
+            return "OK easter menu shown"
+
+        elif action == "egg":
+            if len(parts) < 2:
+                return f"ERR: usage: egg <key>  (available: {[k for k,_,_,_ in EASTER_EGGS]})"
+            key = parts[1]
+            if not any(k == key for k, _, _, _ in EASTER_EGGS):
+                return f"ERR: unknown egg {key}"
+            self._trigger_easter_egg(key)
+            return f"OK egg {key}"
 
         elif action == "love_encounter":
             if len(parts) < 3:
@@ -3769,7 +3950,38 @@ class CatAIApp(Gtk.Application):
         ctx.paint()
         ctx.set_operator(cairo.OPERATOR_OVER)
 
+        # Global shake (eg_shake easter egg)
+        if self._shake_amount > 0:
+            sx = random.uniform(-self._shake_amount, self._shake_amount)
+            sy = random.uniform(-self._shake_amount, self._shake_amount)
+            ctx.translate(sx, sy)
+
+        # Matrix digit rain (eg_matrix)
+        if self._matrix_columns:
+            ctx.select_font_face("monospace", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+            ctx.set_font_size(16)
+            for col in self._matrix_columns:
+                for i, ch in enumerate(col['trail']):
+                    y = col['y'] + i * 20
+                    if y < -20 or y > self.screen_h + 20:
+                        continue
+                    # Head is bright white, tail fades green
+                    if i == 0:
+                        ctx.set_source_rgba(0.9, 1.0, 0.9, 0.95)
+                    else:
+                        alpha = max(0, 1 - i / 14)
+                        ctx.set_source_rgba(0.2, 0.9, 0.3, alpha * 0.85)
+                    ctx.move_to(col['x'], y)
+                    ctx.show_text(ch)
+
+        # Nyan cat overlay (drawn BEFORE cats so regular cats render on top)
+        if getattr(self, '_nyan_active', False) and getattr(self, '_nyan_frames', None):
+            self._draw_nyan(ctx)
+
         for cat in self.cat_instances:
+            # Hide & seek: skip hidden cats
+            if getattr(cat, '_hidden', False):
+                continue
             # Defensive: always clamp before drawing (except during birth scale anim)
             if cat._birth_progress is None:
                 cat._clamp_to_screen()
@@ -3778,7 +3990,21 @@ class CatAIApp(Gtk.Application):
             if cat.state == CatState.SCRATCHING_TREE:
                 _draw_tree_bg_cairo(ctx, cat)
 
+            # Beam me up light column
+            beam_ticks = getattr(cat, '_beam_ticks', 0)
+            if beam_ticks > 0:
+                bcx = cat.x + cat.display_w / 2
+                # Light column with gradient
+                grad = cairo.LinearGradient(bcx - 30, 0, bcx + 30, 0)
+                grad.add_color_stop_rgba(0.0, 0.6, 0.9, 1.0, 0.0)
+                grad.add_color_stop_rgba(0.5, 0.6, 0.9, 1.0, 0.5)
+                grad.add_color_stop_rgba(1.0, 0.6, 0.9, 1.0, 0.0)
+                ctx.set_source(grad)
+                ctx.rectangle(bcx - 30, 0, 60, self.screen_h)
+                ctx.fill()
+
             surface, _data_ref = cat._current_surface()
+            boss_scale = getattr(cat, '_boss_scale', None)
             if cat._birth_progress is not None:
                 # Birth animation: grow from 10% to 100%, fade in from 0.15 to 1.0
                 p = cat._birth_progress
@@ -3794,6 +4020,17 @@ class CatAIApp(Gtk.Application):
                 ctx.paint_with_alpha(alpha)
                 ctx.restore()
                 _draw_birth_sparkles(ctx, cat.x, cat.y, cat.display_w, cat.display_h, p)
+            elif boss_scale:
+                # Boss fight: cairo-scale around cat center
+                ctx.save()
+                cx = cat.x + cat.display_w / 2
+                cy = cat.y + cat.display_h / 2
+                ctx.translate(cx, cy)
+                ctx.scale(boss_scale, boss_scale)
+                ctx.translate(-cat.display_w / 2, -cat.display_h / 2)
+                ctx.set_source_surface(surface, 0, 0)
+                ctx.paint()
+                ctx.restore()
             elif cat._flip_h:
                 # Horizontal flip: translate to right edge, scale X by -1, draw at origin
                 ctx.save()
@@ -3857,6 +4094,10 @@ class CatAIApp(Gtk.Application):
         if self._menu_visible:
             _draw_context_menu(ctx, self._menu_x, self._menu_y, L10n.s("settings"), L10n.s("quit"))
 
+        # Draw easter egg menu (on top of everything)
+        if self._easter_menu_visible:
+            self._draw_easter_menu(ctx)
+
     def _update_input_regions(self):
         """Update XShape input regions to only cover cat bounding rects."""
         rects = []
@@ -3892,6 +4133,9 @@ class CatAIApp(Gtk.Application):
         # Include context menu if visible
         if self._menu_visible:
             rects.append((self._menu_x, self._menu_y, 120, 50))
+        # Include easter egg menu (covers whole screen so clicks anywhere dismiss)
+        if self._easter_menu_visible:
+            rects.append((0, 0, self.screen_w, self.screen_h))
         # Include chat entry area
         # Include chat entry in input region when visible
         if self._chat_entry and self._chat_entry.get_visible():
@@ -4014,7 +4258,22 @@ class CatAIApp(Gtk.Application):
         return False
 
     def _on_canvas_drag_begin(self, gesture, start_x, start_y):
-        # Check menu click first
+        # Easter egg menu dispatch (before anything else)
+        if self._easter_menu_visible:
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+            # Check if click is on one of the egg items
+            for rect, key in self._easter_menu_items:
+                rx, ry, rw, rh = rect
+                if rx <= start_x <= rx + rw and ry <= start_y <= ry + rh:
+                    self.hide_easter_menu()
+                    # Trigger the egg after a small delay so the redraw shows the menu gone
+                    GLib.timeout_add(50, lambda k=key: self._trigger_easter_egg(k))
+                    return
+            # Click outside items → close menu
+            self.hide_easter_menu()
+            return
+
+        # Check context menu click
         if self._menu_visible:
             mx, my = self._menu_x, self._menu_y
             if mx <= start_x <= mx + 120 and my <= start_y <= my + 50:
@@ -4218,6 +4477,771 @@ class CatAIApp(Gtk.Application):
             self._active_encounter.cancel()
             self._active_encounter = None
         self._save_all()
+
+    # ── Apocalypse mode ───────────────────────────────────────────────────────
+    # Triggered by typing "Don't panic" in any chat bubble (HGttG reference).
+    # Each cat doubles every second until MAX_APOCALYPSE cats are on screen.
+    # Typing "Don't panic" again stops it and removes the clones.
+
+    APOCALYPSE_MAX = 1000
+    APOCALYPSE_INTERVAL_MS = 1000
+    APOCALYPSE_BATCH_SIZE = 10  # spawn up to N clones per idle slice
+    APOCALYPSE_AUTO_STOP_MS = 30000  # auto-end after 30s
+
+    def toggle_apocalypse(self, triggering_cat=None):
+        if getattr(self, "_apocalypse_active", False):
+            self.stop_apocalypse()
+        else:
+            self.start_apocalypse()
+
+    def start_apocalypse(self):
+        if getattr(self, "_apocalypse_active", False):
+            return
+        self._apocalypse_active = True
+        log.warning("\U0001f680 APOCALYPSE MODE ACTIVATED — don't panic!")
+        self._apocalypse_timer = GLib.timeout_add(self.APOCALYPSE_INTERVAL_MS, self._apocalypse_tick)
+        # Auto-stop after APOCALYPSE_AUTO_STOP_MS
+        self._apocalypse_auto_stop_timer = GLib.timeout_add(
+            self.APOCALYPSE_AUTO_STOP_MS, lambda: (self.stop_apocalypse(), False)[1]
+        )
+
+    def stop_apocalypse(self):
+        if not getattr(self, "_apocalypse_active", False):
+            return
+        self._apocalypse_active = False
+        for attr in ("_apocalypse_timer", "_apocalypse_auto_stop_timer"):
+            tid = getattr(self, attr, None)
+            if tid:
+                try:
+                    GLib.source_remove(tid)
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+        # Remove all apocalypse clones
+        removed = 0
+        remaining = []
+        for cat in self.cat_instances:
+            if getattr(cat, "is_apocalypse_clone", False):
+                cat.cleanup()
+                removed += 1
+            else:
+                remaining.append(cat)
+        self.cat_instances = remaining
+        log.info("Apocalypse stopped — removed %d clones", removed)
+
+    def _apocalypse_tick(self):
+        """Every tick, double the population — but queue the actual spawns
+        to be processed lazily via GLib.idle_add to avoid blocking."""
+        if not getattr(self, "_apocalypse_active", False):
+            return False
+        if len(self.cat_instances) >= self.APOCALYPSE_MAX:
+            log.info("Apocalypse cap (%d) reached, auto-stopping spawns", self.APOCALYPSE_MAX)
+            return False
+        # Build a spawn queue: snapshot current cats, each spawns 1 clone
+        parents = list(self.cat_instances)
+        if not hasattr(self, "_apocalypse_queue"):
+            self._apocalypse_queue = []
+        self._apocalypse_queue.extend(parents)
+        # Kick off a lazy spawner if not already running
+        if not getattr(self, "_apocalypse_spawning", False):
+            self._apocalypse_spawning = True
+            GLib.idle_add(self._apocalypse_drain)
+        return True
+
+    def _apocalypse_drain(self):
+        """Process a few spawns per idle slot so the UI stays responsive."""
+        if not getattr(self, "_apocalypse_active", False):
+            self._apocalypse_spawning = False
+            self._apocalypse_queue = []
+            return False
+        for _ in range(self.APOCALYPSE_BATCH_SIZE):
+            if not self._apocalypse_queue:
+                break
+            if len(self.cat_instances) >= self.APOCALYPSE_MAX:
+                self._apocalypse_queue = []
+                break
+            parent = self._apocalypse_queue.pop(0)
+            # Parent may have been removed (if user stopped)
+            if parent not in self.cat_instances:
+                continue
+            self._spawn_apocalypse_clone(parent)
+        if self._apocalypse_queue:
+            return True  # keep draining on next idle slot
+        self._apocalypse_spawning = False
+        return False
+
+    def _spawn_apocalypse_clone(self, parent):
+        """Spawn a lightweight clone that SHARES sprite surfaces with its parent.
+        Avoids the expensive load_assets() call that makes naive cloning unbearably slow."""
+        cfg = {
+            "id": f"apoc_{uuid.uuid4().hex[:8]}",
+            "char_id": parent.config.get("char_id", "cat_orange"),
+            "name": "Clone",
+        }
+        clone = CatInstance(cfg, parent.color_def)
+        # Copy display metrics from parent
+        clone.display_w = parent.display_w
+        clone.display_h = parent.display_h
+        clone.screen_w = parent.screen_w
+        clone.screen_h = parent.screen_h
+        clone._app = parent._app
+        clone._meta = parent._meta
+        clone._cat_dir = parent._cat_dir
+        # Share surfaces (same dict refs — no copying)
+        clone.animations = parent.animations
+        clone.rotations = parent.rotations
+        clone._anim_offsets = parent._anim_offsets
+        clone._sprite_bottom_padding = parent._sprite_bottom_padding
+        # Minimal state
+        clone.state = CatState.IDLE
+        clone.direction = "south"
+        clone.frame_index = 0
+        clone.x = parent.x + random.randint(-60, 60)
+        clone.y = parent.y + random.randint(-40, 40)
+        clone.dest_x = clone.x
+        clone.dest_y = clone.y
+        clone.is_kitten = True
+        clone.is_apocalypse_clone = True
+        clone._birth_progress = 0.0
+        clone.chat_backend = None  # no chat for clones (saves memory)
+        clone._clamp_to_screen()
+        self.cat_instances.append(clone)
+
+    # ── Easter egg menu ──────────────────────────────────────────────────────
+
+    _EASTER_MENU_COLS = 3
+    _EASTER_MENU_CELL_W = 180
+    _EASTER_MENU_CELL_H = 38
+    _EASTER_MENU_PAD = 20
+    _EASTER_MENU_TITLE_H = 36
+    _EASTER_MENU_FOOTER_H = 28
+
+    def show_easter_menu(self):
+        n_items = len(EASTER_EGGS)
+        cols = self._EASTER_MENU_COLS
+        rows = (n_items + cols - 1) // cols
+        self._easter_menu_w = cols * self._EASTER_MENU_CELL_W + 2 * self._EASTER_MENU_PAD
+        self._easter_menu_h = (rows * self._EASTER_MENU_CELL_H
+                               + self._EASTER_MENU_TITLE_H
+                               + self._EASTER_MENU_FOOTER_H
+                               + 2 * self._EASTER_MENU_PAD)
+        self._easter_menu_visible = True
+        self._easter_menu_x = (self.screen_w - self._easter_menu_w) // 2
+        self._easter_menu_y = (self.screen_h - self._easter_menu_h) // 2
+        if self._canvas_area:
+            self._canvas_area.queue_draw()
+        self._update_input_regions()
+
+    def hide_easter_menu(self):
+        self._easter_menu_visible = False
+        self._easter_menu_items = []
+        if self._canvas_area:
+            self._canvas_area.queue_draw()
+        self._update_input_regions()
+
+    def _trigger_easter_egg(self, key):
+        method_name = next((fn for k, _, _, fn in EASTER_EGGS if k == key), None)
+        if method_name and hasattr(self, method_name):
+            try:
+                getattr(self, method_name)()
+                log.info("Easter egg triggered: %s", key)
+            except Exception:
+                log.exception("Easter egg %s failed", key)
+        return False
+
+    def _release_encounter_lock(self):
+        """Clear in_encounter on all cats and return them to IDLE."""
+        for cat in self.cat_instances:
+            cat.in_encounter = False
+            if cat.state not in (CatState.WALKING,):
+                cat.state = CatState.IDLE
+                cat.frame_index = 0
+                cat.idle_ticks = 0
+
+    # ── Easter egg implementations ───────────────────────────────────────────
+
+    def eg_apocalypse(self):
+        self.start_apocalypse()
+
+    def eg_circle(self):
+        cx, cy = self.screen_w / 2, self.screen_h / 2 - 50
+        radius = 220
+        cats = list(self.cat_instances)
+        n = len(cats)
+        if n == 0:
+            return
+        for i, cat in enumerate(cats):
+            angle = 2 * math.pi * i / n - math.pi / 2
+            cat.x = int(cx + math.cos(angle) * radius - cat.display_w / 2)
+            cat.y = int(cy + math.sin(angle) * radius - cat.display_h / 2)
+            cat._clamp_to_screen()
+            cat.state = CatState.FLAT
+            cat.direction = "south"
+            cat.frame_index = 0
+            cat.in_encounter = True
+        GLib.timeout_add(6000, lambda: (self._release_encounter_lock(), False)[1])
+
+    def eg_meow_party(self):
+        for cat in self.cat_instances:
+            cat._show_random_meow()
+
+    def eg_stampede(self):
+        direction = random.choice(["east", "west"])
+        start_x = -120 if direction == "east" else self.screen_w + 20
+        for i, cat in enumerate(self.cat_instances):
+            cat.state = CatState.DASHING
+            cat.direction = direction
+            cat.frame_index = 0
+            cat._state_tick = 0
+            cat.x = start_x + (i * 40 if direction == "east" else -i * 40)
+            cat.y = random.randint(100, max(101, self.screen_h - cat.display_h - 100))
+
+    def eg_sleepy(self):
+        for cat in self.cat_instances:
+            cat.state = CatState.SLEEPING_BALL
+            cat.direction = "south"
+            cat.frame_index = 0
+            cat._sleep_tick = 0
+            cat.idle_ticks = 0
+
+    def eg_group_hug(self):
+        cx, cy = self.screen_w / 2, self.screen_h / 2
+        for cat in self.cat_instances:
+            cat.x = int(cx + random.randint(-100, 100) - cat.display_w / 2)
+            cat.y = int(cy + random.randint(-50, 50) - cat.display_h / 2)
+            cat._clamp_to_screen()
+            cat.state = CatState.LOVE
+            cat.direction = "south"
+            cat.frame_index = 0
+            cat.in_encounter = True
+        GLib.timeout_add(6000, lambda: (self._release_encounter_lock(), False)[1])
+
+    def eg_disco(self):
+        disco_states = [CatState.LOVE, CatState.ROLLING, CatState.GROOMING, CatState.FLAT]
+        for cat in self.cat_instances:
+            cat.in_encounter = True
+            cat.state = random.choice(disco_states)
+            cat.direction = "south"
+            cat.frame_index = 0
+        ticks = [20]  # 10s at 500ms per tick
+        def disco_tick():
+            if ticks[0] <= 0:
+                self._release_encounter_lock()
+                return False
+            for c in self.cat_instances:
+                c.state = random.choice(disco_states)
+                c.frame_index = 0
+            ticks[0] -= 1
+            return True
+        GLib.timeout_add(500, disco_tick)
+
+    def eg_rain(self):
+        for cat in self.cat_instances:
+            cat.y = -cat.display_h - random.randint(0, 200)
+            cat.x = random.randint(0, max(1, self.screen_w - cat.display_w))
+            cat.state = CatState.FALLING
+            cat.direction = "south"
+            cat.frame_index = 0
+            cat._rain_falling = True
+            cat._rain_velocity = random.uniform(3, 6)
+            cat.in_encounter = True  # freeze behavior during fall
+        def rain_tick():
+            still_falling = False
+            for cat in self.cat_instances:
+                if not getattr(cat, '_rain_falling', False):
+                    continue
+                cat.y += cat._rain_velocity
+                cat._rain_velocity += 0.35  # gravity
+                max_y = cat.screen_h - cat.display_h - cat._app._canvas_y_offset - BOTTOM_MARGIN if cat._app else cat.screen_h - cat.display_h - 30
+                if cat.y >= max_y:
+                    cat.y = max_y
+                    cat._rain_falling = False
+                    cat.in_encounter = False
+                    cat.state = CatState.LANDING
+                    cat.frame_index = 0
+                else:
+                    still_falling = True
+            return still_falling
+        GLib.timeout_add(50, rain_tick)
+
+    def eg_shake(self):
+        self._shake_amount = 20.0
+        def decay():
+            self._shake_amount *= 0.82
+            if self._shake_amount < 0.5:
+                self._shake_amount = 0
+                return False
+            return True
+        GLib.timeout_add(30, decay)
+
+    def eg_catnip(self):
+        for cat in self.cat_instances:
+            cat.state = CatState.ROLLING
+            cat.direction = "south"
+            cat.frame_index = 0
+            cat.in_encounter = True
+        GLib.timeout_add(12000, lambda: (self._release_encounter_lock(), False)[1])
+
+    def eg_stonks(self):
+        ticks = [100]
+        def climb():
+            if ticks[0] <= 0:
+                return False
+            for c in self.cat_instances:
+                c.y = max(0, c.y - 2)
+            ticks[0] -= 1
+            return True
+        GLib.timeout_add(100, climb)
+
+    def eg_slowmo(self):
+        if getattr(self, "_slowmo_active", False):
+            return
+        self._slowmo_active = True
+        for tid in self._timers:
+            try:
+                GLib.source_remove(tid)
+            except Exception:
+                pass
+        self._timers = [
+            GLib.timeout_add(RENDER_MS * 3, self._render_tick),
+            GLib.timeout_add(BEHAVIOR_MS * 3, self._behavior_tick),
+            GLib.timeout_add(10000, _apply_above_all),
+            GLib.timeout_add(30000, self._gc_collect),
+        ]
+        def restore():
+            for tid in self._timers:
+                try:
+                    GLib.source_remove(tid)
+                except Exception:
+                    pass
+            self._timers = [
+                GLib.timeout_add(RENDER_MS, self._render_tick),
+                GLib.timeout_add(BEHAVIOR_MS, self._behavior_tick),
+                GLib.timeout_add(10000, _apply_above_all),
+                GLib.timeout_add(30000, self._gc_collect),
+            ]
+            self._slowmo_active = False
+            return False
+        GLib.timeout_add(10000, restore)
+
+    def eg_fastfwd(self):
+        if getattr(self, "_fastfwd_active", False):
+            return
+        self._fastfwd_active = True
+        for tid in self._timers:
+            try:
+                GLib.source_remove(tid)
+            except Exception:
+                pass
+        self._timers = [
+            GLib.timeout_add(max(1, RENDER_MS // 2), self._render_tick),
+            GLib.timeout_add(max(1, BEHAVIOR_MS // 2), self._behavior_tick),
+            GLib.timeout_add(10000, _apply_above_all),
+            GLib.timeout_add(30000, self._gc_collect),
+        ]
+        def restore():
+            for tid in self._timers:
+                try:
+                    GLib.source_remove(tid)
+                except Exception:
+                    pass
+            self._timers = [
+                GLib.timeout_add(RENDER_MS, self._render_tick),
+                GLib.timeout_add(BEHAVIOR_MS, self._behavior_tick),
+                GLib.timeout_add(10000, _apply_above_all),
+                GLib.timeout_add(30000, self._gc_collect),
+            ]
+            self._fastfwd_active = False
+            return False
+        GLib.timeout_add(10000, restore)
+
+    def eg_thanos(self):
+        half = len(self.cat_instances) // 2
+        if half == 0:
+            return
+        doomed = random.sample(self.cat_instances, half)
+        for cat in doomed:
+            cat._thanos_fading = True
+            cat._birth_progress = 1.0  # start full, fade to 0
+        def fade_step():
+            still_fading = False
+            to_remove = []
+            for cat in list(self.cat_instances):
+                if getattr(cat, "_thanos_fading", False):
+                    if cat._birth_progress is None:
+                        cat._birth_progress = 1.0
+                    cat._birth_progress = max(0.0, cat._birth_progress - 0.05)
+                    if cat._birth_progress <= 0.01:
+                        to_remove.append(cat)
+                    else:
+                        still_fading = True
+            for cat in to_remove:
+                try:
+                    cat.cleanup()
+                    if cat in self.cat_instances:
+                        self.cat_instances.remove(cat)
+                except Exception:
+                    pass
+            return still_fading
+        GLib.timeout_add(100, fade_step)
+
+    def eg_beam(self):
+        if not self.cat_instances:
+            return
+        cat = random.choice(self.cat_instances)
+        cat._beam_ticks = 30
+        def beam_tick():
+            cat._beam_ticks -= 1
+            cat.y = max(-cat.display_h, cat.y - 10)
+            if cat._beam_ticks <= 0:
+                cat.x = random.randint(0, max(1, self.screen_w - cat.display_w))
+                cat.y = random.randint(100, max(101, self.screen_h - cat.display_h - 100))
+                cat._beam_ticks = 0
+                return False
+            return True
+        GLib.timeout_add(33, beam_tick)
+
+    def eg_hello_world(self):
+        if not self.cat_instances:
+            return
+        cat = random.choice(self.cat_instances)
+        cat.chat_response = "Hello, World! \U0001f30d"
+        cat.chat_visible = True
+        def hide():
+            cat.chat_visible = False
+            cat.chat_response = ""
+            return False
+        GLib.timeout_add(5000, hide)
+
+    def eg_sudo_sandwich(self):
+        if not self.cat_instances:
+            return
+        cat = random.choice(self.cat_instances)
+        cat.chat_response = "okay \U0001f96a"
+        cat.chat_visible = True
+        def do_sleep():
+            cat.chat_visible = False
+            cat.chat_response = ""
+            cat.state = CatState.SLEEPING_BALL
+            cat.direction = "south"
+            cat.frame_index = 0
+            cat._sleep_tick = 0
+            cat.idle_ticks = 0
+            return False
+        GLib.timeout_add(2500, do_sleep)
+
+    def eg_hide_seek(self):
+        if len(self.cat_instances) < 2:
+            return
+        seeker = random.choice(self.cat_instances)
+        for cat in self.cat_instances:
+            if cat is not seeker:
+                cat._hidden = True
+                # Scatter hidden cats to random positions
+                cat.x = random.randint(0, max(1, self.screen_w - cat.display_w))
+                cat.y = random.randint(100, max(101, self.screen_h - cat.display_h - 100))
+                cat.in_encounter = True
+        def reveal():
+            for cat in self.cat_instances:
+                cat._hidden = False
+                cat.in_encounter = False
+            return False
+        GLib.timeout_add(6000, reveal)
+
+    def eg_matrix(self):
+        self._matrix_ticks = 150  # ~10s at 65ms
+        col_width = 22
+        n_cols = self.screen_w // col_width
+        chars = "01アイウエオカキクケコサシスセソタチツテト"
+        self._matrix_columns = []
+        for i in range(n_cols):
+            self._matrix_columns.append({
+                'x': i * col_width,
+                'y': random.randint(-600, 0),
+                'speed': random.uniform(8, 18),
+                'trail': [random.choice(chars) for _ in range(14)],
+                'chars_pool': chars,
+            })
+        def tick():
+            self._matrix_ticks -= 1
+            if self._matrix_ticks <= 0:
+                self._matrix_columns = []
+                if self._canvas_area:
+                    self._canvas_area.queue_draw()
+                return False
+            for col in self._matrix_columns:
+                col['y'] += col['speed']
+                if col['y'] > self.screen_h + 400:
+                    col['y'] = -400
+                    col['trail'] = [random.choice(col['chars_pool']) for _ in range(14)]
+                # Occasionally swap a char for twinkle
+                if random.random() < 0.08:
+                    col['trail'][random.randint(0, 13)] = random.choice(col['chars_pool'])
+            if self._canvas_area:
+                self._canvas_area.queue_draw()
+            return True
+        GLib.timeout_add(65, tick)
+
+    def eg_boss_fight(self):
+        if not self.cat_instances:
+            return
+        boss = random.choice(self.cat_instances)
+        boss._boss_scale = 2.2  # visual scale, honoured by the draw loop
+        # Position boss at center (account for visual scale)
+        eff_w = int(boss.display_w * boss._boss_scale)
+        eff_h = int(boss.display_h * boss._boss_scale)
+        boss.x = (self.screen_w - eff_w) // 2 + (eff_w - boss.display_w) // 2
+        boss.y = (self.screen_h - eff_h) // 2 + (eff_h - boss.display_h) // 2
+        boss.state = CatState.ANGRY
+        boss.direction = "south"
+        boss.frame_index = 0
+        boss.in_encounter = True
+
+        # Other cats around the boss in a circle, all facing the boss in ANGRY
+        others = [c for c in self.cat_instances if c is not boss]
+        if others:
+            for i, cat in enumerate(others):
+                angle = 2 * math.pi * i / len(others)
+                cx = boss.x + boss.display_w / 2
+                cy = boss.y + boss.display_h / 2
+                cat.x = int(cx + math.cos(angle) * 260 - cat.display_w / 2)
+                cat.y = int(cy + math.sin(angle) * 180 - cat.display_h / 2)
+                cat._clamp_to_screen()
+                cat.state = CatState.ANGRY
+                cat._face_toward(boss, CatState.ANGRY)  # face the boss
+                cat.frame_index = 0
+                cat.in_encounter = True
+
+        # Phase 2 (after 5s): boss dies, small cats look surprised
+        def phase2():
+            for cat in others:
+                if cat not in self.cat_instances:
+                    continue
+                cat.state = CatState.SURPRISED
+                cat._face_toward(boss, CatState.SURPRISED)
+                cat.frame_index = 0
+                # Keep in_encounter so SURPRISED loops (no one-shot end)
+            # Boss enters drama_queen sequence — must NOT be in_encounter
+            boss.in_encounter = False
+            boss._start_sequence("drama_queen")
+            # Shrink the boss from 2.2 → 1.0 over ~2s
+            shrink_state = {'t': 0, 'total': 25}
+            def shrink():
+                shrink_state['t'] += 1
+                if shrink_state['t'] >= shrink_state['total']:
+                    boss._boss_scale = 1.0
+                    return False
+                p = shrink_state['t'] / shrink_state['total']
+                boss._boss_scale = 2.2 + (1.0 - 2.2) * p
+                return True
+            GLib.timeout_add(80, shrink)
+            return False
+        GLib.timeout_add(5000, phase2)
+
+        # Final restore (~22s: 5s angry + up to ~17s drama_queen)
+        def restore():
+            if hasattr(boss, '_boss_scale'):
+                del boss._boss_scale
+            self._release_encounter_lock()
+            return False
+        GLib.timeout_add(22000, restore)
+
+    def eg_follow_leader(self):
+        if len(self.cat_instances) < 2:
+            return
+        # Pick leader: last active chat cat, or a random one
+        leader = self._active_chat_cat if self._active_chat_cat in self.cat_instances else None
+        if leader is None:
+            leader = random.choice(self.cat_instances)
+        # Make sure the leader is NOT frozen in encounter or odd state
+        leader.state = CatState.WALKING
+        leader.in_encounter = False
+        leader.frame_index = 0
+        # Give the leader a random destination to walk toward
+        leader.dest_x = random.uniform(leader.display_w, max(leader.display_w + 1, self.screen_w - leader.display_w))
+        leader.dest_y = leader.y
+        # All others walk toward the leader's current position
+        for i, cat in enumerate(self.cat_instances):
+            if cat is leader:
+                continue
+            cat.state = CatState.WALKING
+            cat.in_encounter = False
+            cat.frame_index = 0
+            # Stagger offsets so they don't overlap
+            cat.dest_x = leader.x + (i % 5) * 30 - 60
+            cat.dest_y = leader.y
+
+    NYAN_FRAME_COUNT = 6  # frames in nyan_cat.png sprite sheet
+
+    def _load_nyan_assets(self):
+        """Lazy-load the nyan cat sprite sheet + rainbow tile into cairo surfaces."""
+        if hasattr(self, '_nyan_frames') and self._nyan_frames:
+            return
+        pkg_dir = os.path.dirname(os.path.abspath(__file__))
+        cat_path = os.path.join(pkg_dir, "nyan_cat.png")
+        rain_path = os.path.join(pkg_dir, "nyan_rainbow.png")
+        self._nyan_frames = []
+        self._nyan_frame_data = []
+        try:
+            sheet = Image.open(cat_path).convert("RGBA")
+            total_w, frame_h = sheet.size
+            frame_w = total_w // self.NYAN_FRAME_COUNT
+            self._nyan_frame_w = frame_w
+            self._nyan_frame_h = frame_h
+            for i in range(self.NYAN_FRAME_COUNT):
+                f = sheet.crop((i * frame_w, 0, (i + 1) * frame_w, frame_h))
+                surf, data = pil_to_surface(f, frame_w, frame_h)
+                self._nyan_frames.append(surf)
+                self._nyan_frame_data.append(data)
+            rain_pil = Image.open(rain_path).convert("RGBA")
+            self._nyan_rain_surface, self._nyan_rain_data = pil_to_surface(rain_pil, rain_pil.width, rain_pil.height)
+            self._nyan_rain_w, self._nyan_rain_h = rain_pil.size
+        except Exception:
+            log.exception("Failed to load nyan cat assets")
+            self._nyan_frames = []
+
+    def eg_nyan(self):
+        """Classic Nyan Cat: flies across the screen with a tiled animated rainbow trail."""
+        self._load_nyan_assets()
+        if not self._nyan_frames:
+            return
+        # Target size: same height as regular cats (display_h at current scale)
+        if self.cat_instances:
+            target_h = self.cat_instances[0].display_h
+        else:
+            target_h = int(round(self.sprite_h * self.cat_scale))
+        self._nyan_scale = target_h / self._nyan_frame_h
+        self._nyan_target_h = target_h
+        self._nyan_target_w = int(self._nyan_frame_w * self._nyan_scale)
+        self._nyan_x = float(-self._nyan_target_w)
+        self._nyan_y = self.screen_h // 2 - self._nyan_target_h // 2
+        self._nyan_active = True
+        self._nyan_frame_idx = 0
+        self._nyan_frame_tick = 0
+        def nyan_tick():
+            if not getattr(self, '_nyan_active', False):
+                return False
+            self._nyan_x += 16
+            # Advance animation frame every 4 ticks (~10 fps)
+            self._nyan_frame_tick += 1
+            if self._nyan_frame_tick >= 2:
+                self._nyan_frame_tick = 0
+                self._nyan_frame_idx = (self._nyan_frame_idx + 1) % self.NYAN_FRAME_COUNT
+            if self._nyan_x > self.screen_w + 20:
+                self._nyan_active = False
+                if self._canvas_area:
+                    self._canvas_area.queue_draw()
+                return False
+            if self._canvas_area:
+                self._canvas_area.queue_draw()
+            return True
+        GLib.timeout_add(40, nyan_tick)
+
+    def _draw_nyan(self, ctx):
+        """Draw the animated nyan cat + tiled rainbow trail with vertical wiggle."""
+        if not self._nyan_frames:
+            return
+        scale = self._nyan_scale
+        cat_h = self._nyan_target_h
+        nx, ny = self._nyan_x, self._nyan_y
+        # Rainbow tile: tile horizontally from x=0 to the cat's left edge
+        tile_w = int(self._nyan_rain_w * scale)
+        tile_h = int(self._nyan_rain_h * scale)
+        rain_y_base = ny + (cat_h - tile_h) // 2
+        t_now = time.monotonic()
+        x = 0
+        tile_idx = 0
+        # Rainbow ends right at the cat's rear (left edge + small overlap so there's no gap)
+        rain_end_x = nx + cat_h * 0.15  # overlap under the cat a bit
+        while x < rain_end_x:
+            # Vertical wave — slow wiggle for the whole trail
+            wave = math.sin((x - t_now * 200) * 0.015 + tile_idx * 0.4) * 5
+            ctx.save()
+            ctx.translate(x, rain_y_base + wave)
+            ctx.scale(scale, scale)
+            ctx.set_source_surface(self._nyan_rain_surface, 0, 0)
+            ctx.get_source().set_filter(cairo.FILTER_NEAREST)
+            ctx.paint()
+            ctx.restore()
+            x += tile_w
+            tile_idx += 1
+        # Draw the current animation frame of the cat on top
+        frame = self._nyan_frames[self._nyan_frame_idx]
+        ctx.save()
+        ctx.translate(nx, ny)
+        ctx.scale(scale, scale)
+        ctx.set_source_surface(frame, 0, 0)
+        ctx.get_source().set_filter(cairo.FILTER_NEAREST)
+        ctx.paint()
+        ctx.restore()
+
+    def _draw_easter_menu(self, ctx):
+        bx, by = self._easter_menu_x, self._easter_menu_y
+        bw, bh = self._easter_menu_w, self._easter_menu_h
+        pad = self._EASTER_MENU_PAD
+        cell_w = self._EASTER_MENU_CELL_W
+        cell_h = self._EASTER_MENU_CELL_H
+        cols = self._EASTER_MENU_COLS
+        title_h = self._EASTER_MENU_TITLE_H
+        # Dark backdrop
+        ctx.set_source_rgba(0, 0, 0, 0.5)
+        ctx.rectangle(0, 0, self.screen_w, self.screen_h)
+        ctx.fill()
+        # Menu background
+        ctx.set_source_rgba(0.95, 0.9, 0.8, 0.97)
+        ctx.rectangle(bx, by, bw, bh)
+        ctx.fill()
+        # Border 3px
+        px = 3
+        ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
+        ctx.rectangle(bx, by, bw, px); ctx.fill()
+        ctx.rectangle(bx, by + bh - px, bw, px); ctx.fill()
+        ctx.rectangle(bx, by, px, bh); ctx.fill()
+        ctx.rectangle(bx + bw - px, by, px, bh); ctx.fill()
+        # Title
+        title = "\U0001f95a  EASTER EGGS  \U0001f95a"
+        lay = PangoCairo.create_layout(ctx)
+        lay.set_font_description(Pango.FontDescription("sans bold 16"))
+        lay.set_text(title, -1)
+        tw, _th = lay.get_pixel_size()
+        ctx.move_to(bx + (bw - tw) / 2, by + pad / 2)
+        ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
+        PangoCairo.show_layout(ctx, lay)
+        # Items
+        self._easter_menu_items = []
+        grid_y = by + title_h + pad / 2
+        for i, (key, emoji, label, _fn) in enumerate(EASTER_EGGS):
+            col = i % cols
+            row = i // cols
+            ix = bx + pad + col * cell_w
+            iy = grid_y + row * cell_h
+            iw, ih = cell_w - 8, cell_h - 4
+            # Button bg
+            ctx.set_source_rgba(0.85, 0.75, 0.55, 0.85)
+            ctx.rectangle(ix, iy, iw, ih); ctx.fill()
+            # Border
+            ctx.set_source_rgba(0.3, 0.2, 0.1, 0.8)
+            ctx.set_line_width(1)
+            ctx.rectangle(ix, iy, iw, ih); ctx.stroke()
+            # Text
+            text = f"{emoji}  {label}"
+            lay_i = PangoCairo.create_layout(ctx)
+            lay_i.set_font_description(Pango.FontDescription("sans bold 12"))
+            lay_i.set_text(text, -1)
+            _tiw, _tih = lay_i.get_pixel_size()
+            ctx.move_to(ix + 10, iy + (ih - _tih) / 2)
+            ctx.set_source_rgba(0.15, 0.1, 0.05, 1)
+            PangoCairo.show_layout(ctx, lay_i)
+            self._easter_menu_items.append(((ix, iy, iw, ih), key))
+        # Footer hint
+        hint = "Click an egg or outside the menu to close"
+        lay_h = PangoCairo.create_layout(ctx)
+        lay_h.set_font_description(Pango.FontDescription("sans italic 10"))
+        lay_h.set_text(hint, -1)
+        hw, _hh = lay_h.get_pixel_size()
+        ctx.move_to(bx + (bw - hw) / 2, by + bh - pad)
+        ctx.set_source_rgba(0.4, 0.3, 0.2, 0.8)
+        PangoCairo.show_layout(ctx, lay_h)
 
     def add_cat(self, color_id):
         cd = color_def(color_id)
