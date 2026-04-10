@@ -44,13 +44,30 @@ def send_cmd(cmd, timeout=5):
 
 
 def screenshot_window(xid, name):
+    """Grab an X window to PNG. Tries ImageMagick 7 (`magick import`) first
+    then falls back to ImageMagick 6 (`import`) so the same test file runs
+    unmodified on Fedora (IM7) and Ubuntu CI runners (IM6)."""
     path = os.path.join(SHOT_DIR, f"{name}.png")
-    try:
-        subprocess.run(["magick", "import", "-window", str(xid), path],
-                       timeout=5, capture_output=True)
-        return path if os.path.exists(path) else None
-    except Exception:
-        return None
+    # Remove any stale file from a previous run so os.path.exists means
+    # "this call produced a new screenshot".
+    if os.path.exists(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    for cmd in (
+        ["magick", "import", "-window", str(xid), path],  # IM7
+        ["import", "-window", str(xid), path],            # IM6
+    ):
+        try:
+            r = subprocess.run(cmd, timeout=5, capture_output=True)
+            if r.returncode == 0 and os.path.exists(path):
+                return path
+        except FileNotFoundError:
+            continue
+        except Exception:
+            continue
+    return None
 
 
 def find_catai_windows():
