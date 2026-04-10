@@ -296,13 +296,40 @@ class MockChat(ChatBackend):
     so the T6 "Got AI response" and T12 "Chat still active after drag"
     assertions pass without needing a real Claude key or a running Ollama
     server.
+
+    Also detects requests from ``catai_linux.reactions.ReactionPool`` via a
+    sentinel marker in the system prompt (``[CATAI_REACTION_POOL]``) and
+    returns a canned JSON array so the full reaction-pool pipeline is
+    exercised in tests — not just the L10n fallback path.
     """
 
     MOCK_RESPONSE = "Miaou mon ami ! Voici une réponse mockée pour la CI. Prrr~"
 
+    # Canned reaction pools, keyed by the scenario keywords present in the
+    # system prompt. Falls through to a generic pool if no keyword matches.
+    MOCK_POOL_CAPSLOCK = (
+        '["POURQUOI CRIES ?!", "ON SE CALME !", "TROP FORT !!!", '
+        '"AÏE MES OREILLES", "CHUT !!", "BAISSE LE TON"]'
+    )
+    MOCK_POOL_GENERIC = '["Miaou ?", "Prrrt ?", "Hmm ?", "Quoi ?", "Oui ?", "Mrrp ?"]'
+
     def _stream_chunks(self):
-        # Stream word-by-word with a tiny delay so on_token fires several
-        # times — exercises the streaming path, not just a single big chunk.
+        sys_prompt = next(
+            (m["content"] for m in self.messages if m.get("role") == "system"),
+            "",
+        )
+        if "[CATAI_REACTION_POOL]" in sys_prompt:
+            # Pick a canned pool matching the scenario if we can.
+            if "Caps Lock" in sys_prompt or "Verr. Maj." in sys_prompt or "Bloq Mayús" in sys_prompt:
+                payload = self.MOCK_POOL_CAPSLOCK
+            else:
+                payload = self.MOCK_POOL_GENERIC
+            # Stream as a single chunk — the parser doesn't care about chunking.
+            yield payload
+            return
+
+        # Default: stream the fixed cat-ish response word-by-word so
+        # on_token fires several times.
         for word in self.MOCK_RESPONSE.split():
             if self._cancel:
                 return

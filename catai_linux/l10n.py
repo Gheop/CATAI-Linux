@@ -33,6 +33,13 @@ class L10n:
             "en": "Just kidding! 😹",
             "es": "¡Es broma! 😹",
         },
+        # Caps Lock easter egg — L10n fallback when the AI-generated pool
+        # isn't ready yet (first trigger) or the AI backend isn't available.
+        "capslock_yell": {
+            "fr": "POURQUOI TU CRIES ??",
+            "en": "WHY ARE YOU SHOUTING?!",
+            "es": "¿POR QUÉ GRITAS?!",
+        },
     }
     meows = {
         "fr": ["Miaou~", "Mrrp!", "Prrrr...", "Miaou miaou!", "Nyaa~", "*ronron*", "Mew!", "Prrrt?"],

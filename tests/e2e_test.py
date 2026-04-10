@@ -432,6 +432,19 @@ def run_tests():
     st = parse_egg(send_cmd("egg_state"))
     test("rm_rf cleans up after animation", st.get("rm_rf") == "False", str(st))
 
+    # T13j: Caps Lock — the egg sets a SURPRISED meow on a cat. We can't
+    # directly probe the meow state via egg_state (kept simple), so we
+    # trigger it and assert the socket responded OK. The ReactionPool will
+    # background-fill from MockChat's canned JSON array on first trigger.
+    resp = send_cmd("egg capslock")
+    test("egg capslock triggered", resp.startswith("OK"), resp)
+    time.sleep(0.5)
+    # Second trigger — by now the pool should be filled and a random
+    # reaction picked. Still just checking it doesn't error.
+    resp = send_cmd("egg capslock")
+    test("egg capslock re-triggered with pool filled", resp.startswith("OK"), resp)
+    time.sleep(1)
+
     # ── T14: Love encounter — all 3 outcomes ─────────────
     print("\n[T14] Love encounters", flush=True)
 

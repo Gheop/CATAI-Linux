@@ -277,6 +277,7 @@ def test_import_smoke() -> None:
         "catai_linux.chat_backend",
         "catai_linux.voice",
         "catai_linux.drawing",
+        "catai_linux.reactions",
         "catai_linux.app",
     ]
     for m in modules:
@@ -285,6 +286,78 @@ def test_import_smoke() -> None:
             test(f"import {m}", True)
         except Exception as e:
             test(f"import {m}", False, str(e))
+
+
+# ── catai_linux.reactions ────────────────────────────────────────────────────
+
+def test_reactions() -> None:
+    print("\n[reactions]", flush=True)
+    from catai_linux.reactions import ReactionPool
+
+    # Create a pool with dummy chat factory — never called since we drive
+    # the parser directly
+    pool = ReactionPool(create_chat_fn=lambda model: None, get_model_fn=lambda: "mock")
+
+    # (Note: the parser drops replies shorter than 2 chars as garbage, so
+    # all test inputs below use ≥2-char strings.)
+
+    # 1. Plain JSON array
+    arr = pool._parse_pool('["aa", "bb", "ccc"]')
+    test("parse plain JSON", arr == ["aa", "bb", "ccc"], str(arr))
+
+    # 2. JSON in markdown code fence
+    raw = '```json\n["hello", "world", "foo"]\n```'
+    arr = pool._parse_pool(raw)
+    test("parse JSON in markdown fence", arr == ["hello", "world", "foo"], str(arr))
+
+    # 3. JSON with prose wrapper (extract [...] substring)
+    raw = 'Here is the array:\n["line 1", "line 2", "line 3"]\nHope this helps!'
+    arr = pool._parse_pool(raw)
+    test("parse JSON with prose wrapper", arr == ["line 1", "line 2", "line 3"], str(arr))
+
+    # 4. Capped to POOL_SIZE (6)
+    arr = pool._parse_pool('["r1","r2","r3","r4","r5","r6","r7","r8","r9"]')
+    test("parse caps at POOL_SIZE", arr is not None and len(arr) == 6, str(arr))
+
+    # 5. Truncate to MAX_REPLY_LEN (40)
+    long_reply = "a" * 100
+    arr = pool._parse_pool(f'["ok", "{long_reply}", "yo"]')
+    test("parse truncates long replies to MAX_REPLY_LEN",
+         arr is not None and all(len(x) <= 40 for x in arr), str(arr))
+
+    # 6. Line-by-line fallback
+    raw = "- reaction one\n- reaction two\n- reaction three\n- reaction four"
+    arr = pool._parse_pool(raw)
+    test("parse line-by-line fallback",
+         arr is not None and len(arr) >= 3 and "reaction one" in arr, str(arr))
+
+    # 7. Garbage → None or list
+    arr = pool._parse_pool("this is just garbage")
+    test("parse garbage returns None or list (line-by-line best-effort)",
+         arr is None or isinstance(arr, list), str(arr))
+
+    # 8. Empty string / None → None
+    test("parse empty string returns None", pool._parse_pool("") is None)
+    test("parse None returns None", pool._parse_pool(None) is None)
+
+    # 9. JSON with non-string items: ints are coerced to strings, null is
+    #    dropped. The parser returns what's salvageable.
+    arr = pool._parse_pool('["aa", 42, null, "bb"]')
+    test("parse coerces ints, drops null, keeps valid strings",
+         arr is not None and "aa" in arr and "bb" in arr and "42" in arr, str(arr))
+
+    # 10. Fallback string for EVT_CAPSLOCK uses L10n
+    from catai_linux.l10n import L10n
+    original_lang = L10n.lang
+    try:
+        L10n.lang = "fr"
+        fb = pool._fallback(ReactionPool.EVT_CAPSLOCK)
+        test("fallback returns capslock_yell in fr", "CRIES" in fb.upper(), fb)
+        L10n.lang = "en"
+        fb = pool._fallback(ReactionPool.EVT_CAPSLOCK)
+        test("fallback returns capslock_yell in en", "SHOUTING" in fb.upper(), fb)
+    finally:
+        L10n.lang = original_lang
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
@@ -309,6 +382,7 @@ def main() -> int:
     _run_section("chat_backend", test_chat_backend)
     _run_section("x11_helpers", test_x11_helpers)
     _run_section("drawing", test_drawing)
+    _run_section("reactions", test_reactions)
     print(f"\n=== Results: {PASS} passed, {FAIL} failed ===\n", flush=True)
     return 0 if FAIL == 0 else 1
 
