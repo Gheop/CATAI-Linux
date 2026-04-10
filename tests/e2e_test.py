@@ -605,6 +605,32 @@ def run_tests():
     test("afk_sleep=False after force_afk off",
          "afk_sleep=False" in resp, resp)
 
+    # ── T15e: Seasonal overlay ─────────────────────────────
+    print("\n[T15e] Seasonal overlay", flush=True)
+    resp = send_cmd("season")
+    test("season query returns state",
+         resp.startswith("OK season=") and "enabled=True" in resp,
+         resp)
+    for s in ("winter", "halloween", "christmas", "valentines",
+              "nye", "spring", "autumn", "summer"):
+        resp = send_cmd(f"season {s}")
+        test(f"season {s} accepted",
+             resp.startswith("OK") and f"override={s}" in resp, resp)
+        time.sleep(0.1)
+    # Disable + re-enable
+    resp = send_cmd("season off")
+    test("season off accepted",
+         resp.startswith("OK") and "enabled=False" in resp, resp)
+    resp = send_cmd("season on")
+    test("season on accepted",
+         resp.startswith("OK") and "enabled=True" in resp, resp)
+    # Clear override (back to date resolver)
+    resp = send_cmd("season auto")
+    test("season auto accepted",
+         resp.startswith("OK") and "override=None" in resp, resp)
+    resp = send_cmd("season bogus")
+    test("season rejects unknown name", resp.startswith("ERR"), resp)
+
     # ── T16: Quit ─────────────────────────────────────────
     print("\n[T16] Quit via socket", flush=True)
     resp = send_cmd("click_menu_quit")

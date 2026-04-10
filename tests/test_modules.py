@@ -266,6 +266,77 @@ def test_drawing() -> None:
         test("draw_birth_sparkles runs (progress 0, 0.5, 1)", False, str(e))
 
 
+def test_seasonal() -> None:
+    print("\n[seasonal]", flush=True)
+    import cairo
+    import datetime as dt
+    import os
+
+    from catai_linux import seasonal
+
+    # Date resolver — broad seasons
+    cases = {
+        dt.date(2026, 1, 15):  "winter",
+        dt.date(2026, 4, 10):  "spring",
+        dt.date(2026, 7, 20):  "summer",
+        dt.date(2026, 10, 15): "autumn",
+    }
+    for d, expected in cases.items():
+        got = seasonal.resolve_season(d)
+        test(f"resolve_season({d}) = {expected}", got == expected, got)
+
+    # Special events override broad seasons
+    events = {
+        dt.date(2026, 10, 31): "halloween",
+        dt.date(2026, 11, 1):  "halloween",
+        dt.date(2026, 12, 20): "christmas",
+        dt.date(2026, 12, 25): "christmas",
+        dt.date(2026, 12, 31): "nye",
+        dt.date(2027, 1, 1):   "nye",
+        dt.date(2026, 2, 14):  "valentines",
+    }
+    for d, expected in events.items():
+        got = seasonal.resolve_season(d)
+        test(f"resolve_season({d}) = {expected}", got == expected, got)
+
+    # CATAI_SEASON env override wins over everything
+    orig = os.environ.get("CATAI_SEASON")
+    try:
+        os.environ["CATAI_SEASON"] = "nye"
+        test("CATAI_SEASON override wins",
+             seasonal.resolve_season(dt.date(2026, 7, 4)) == "nye")
+        os.environ["CATAI_SEASON"] = "not_a_real_season"
+        test("Invalid CATAI_SEASON is ignored",
+             seasonal.resolve_season(dt.date(2026, 7, 4)) == "summer")
+    finally:
+        if orig is None:
+            os.environ.pop("CATAI_SEASON", None)
+        else:
+            os.environ["CATAI_SEASON"] = orig
+
+    # draw_overlay never crashes for any valid season on an offscreen surface
+    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 400, 300)
+    ctx = cairo.Context(surface)
+    for s in seasonal.ALL_SEASONS:
+        try:
+            seasonal.draw_overlay(ctx, 400, 300, season=s)
+            test(f"draw_overlay({s}) runs", True)
+        except Exception as e:
+            test(f"draw_overlay({s}) runs", False, str(e))
+    # Summer is a no-op — still safe
+    try:
+        seasonal.draw_overlay(ctx, 400, 300, season="summer")
+        test("draw_overlay(summer) no-op runs", True)
+    except Exception as e:
+        test("draw_overlay(summer) no-op runs", False, str(e))
+    # Unknown season → silent no-op (not an error)
+    try:
+        seasonal.draw_overlay(ctx, 400, 300, season="not_a_season")
+        test("draw_overlay(unknown) silent no-op", True)
+    except Exception as e:
+        test("draw_overlay(unknown) silent no-op", False, str(e))
+
+
 # ── catai_linux (package smoke test) ─────────────────────────────────────────
 
 def test_import_smoke() -> None:
@@ -277,6 +348,7 @@ def test_import_smoke() -> None:
         "catai_linux.chat_backend",
         "catai_linux.voice",
         "catai_linux.drawing",
+        "catai_linux.seasonal",
         "catai_linux.reactions",
         "catai_linux.mood",
         "catai_linux.activity",
@@ -521,6 +593,7 @@ def main() -> int:
     _run_section("chat_backend", test_chat_backend)
     _run_section("x11_helpers", test_x11_helpers)
     _run_section("drawing", test_drawing)
+    _run_section("seasonal", test_seasonal)
     _run_section("reactions", test_reactions)
     _run_section("mood", test_mood)
     _run_section("activity", test_activity)

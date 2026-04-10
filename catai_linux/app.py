@@ -613,6 +613,7 @@ from catai_linux.x11_helpers import (  # noqa: E402
 from catai_linux.reactions import ReactionPool  # noqa: E402
 from catai_linux.mood import CatMood  # noqa: E402
 from catai_linux.activity import ActivityMonitor  # noqa: E402
+from catai_linux import seasonal as _seasonal  # noqa: E402
 
 
 from catai_linux.chat_backend import (  # noqa: E402
@@ -2238,6 +2239,11 @@ class CatAIApp(Gtk.Application):
         # Matrix effect state
         self._matrix_columns = []
         self._shake_amount = 0  # pixels — used by eg_shake
+        # Seasonal overlay state — date-aware particles (snow, pumpkins,
+        # hearts, fireworks, …). `_season_override` wins over the resolver
+        # when set via the `season` socket cmd or CATAI_SEASON env var.
+        self._seasonal_enabled = True
+        self._season_override: str | None = None
         self._timers = []
         # Drag state for canvas
         self._drag_cat = None
@@ -2294,6 +2300,10 @@ class CatAIApp(Gtk.Application):
         self.selected_model = cfg.get("model", "gemma3:1b")
         L10n.lang = cfg.get("lang", "fr")
         self.encounters_enabled = cfg.get("encounters", True)
+        # Seasonal overlay — enabled by default, user can opt out via
+        # `"seasonal": false` in config.json. The resolver does its own
+        # CATAI_SEASON env-var override, independent of this flag.
+        self._seasonal_enabled = cfg.get("seasonal", True)
         self.cat_configs = cfg.get("cats", [])
 
         # Voice chat: enabled from --voice CLI flag OR config.json
@@ -2790,6 +2800,34 @@ class CatAIApp(Gtk.Application):
             self._canvas_area.queue_draw()
         return "OK redraw queued"
 
+    def _cmd_season(self, parts):
+        """Query or force the seasonal overlay. Usage:
+            season                    → report active season (resolved)
+            season <name>             → override (winter/halloween/…)
+            season auto               → clear override, use date resolver
+            season off                → disable overlay entirely
+            season on                 → re-enable overlay"""
+        if len(parts) < 2:
+            active = self._season_override or _seasonal.resolve_season()
+            return (f"OK season={active} override={self._season_override} "
+                    f"enabled={self._seasonal_enabled}")
+        target = parts[1].lower()
+        if target == "off":
+            self._seasonal_enabled = False
+        elif target == "on":
+            self._seasonal_enabled = True
+        elif target == "auto":
+            self._season_override = None
+        elif target in _seasonal.ALL_SEASONS:
+            self._season_override = target
+            self._seasonal_enabled = True
+        else:
+            return f"ERR: unknown season '{target}'"
+        if self._canvas_area:
+            self._canvas_area.queue_draw()
+        return (f"OK override={self._season_override} "
+                f"enabled={self._seasonal_enabled}")
+
     def _handle_test_cmd(self, cmd):
         """Handle a test command. Returns response string."""
         parts = cmd.split()
@@ -2830,6 +2868,7 @@ class CatAIApp(Gtk.Application):
                 "notify": self._cmd_notify,
                 "get_chat_response": self._cmd_get_chat_response,
                 "screenshot": self._cmd_screenshot,
+                "season": self._cmd_season,
             }
         handler = self._test_cmd_handlers.get(parts[0])
         if handler is None:
@@ -2965,6 +3004,17 @@ class CatAIApp(Gtk.Application):
         ctx.set_source_rgba(0, 0, 0, 0)
         ctx.paint()
         ctx.set_operator(cairo.OPERATOR_OVER)
+
+        # Seasonal overlay (snowflakes in winter, pumpkins for Halloween,
+        # hearts on Valentine's, fireworks for NYE...). Drawn first so it
+        # sits behind cats and bubbles. Resolver returns SUMMER outside of
+        # any special window → draw_overlay is a cheap no-op then.
+        if self._seasonal_enabled:
+            try:
+                _seasonal.draw_overlay(ctx, width, height,
+                                       season=self._season_override)
+            except Exception:
+                log.exception("seasonal overlay crashed")
 
         # Global shake (eg_shake easter egg)
         if self._shake_amount > 0:
