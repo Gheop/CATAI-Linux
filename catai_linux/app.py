@@ -230,61 +230,16 @@ class L10n:
     def random_meow(cls):
         return random.choice(cls.meows.get(cls.lang, cls.meows["fr"]))
 
-# ── Cat Colors & Personalities ─────────────────────────────────────────────────
+# ── Cat Personalities ──────────────────────────────────────────────────────────
 
-class CatColorDef:
-    def __init__(self, id, color_rgba, hue_shift, sat_mul, bri_off, traits, names, skills):
-        self.id = id
-        self.color_rgba = color_rgba
-        self.hue_shift = hue_shift
-        self.sat_mul = sat_mul
-        self.bri_off = bri_off
-        self.traits = traits
-        self.names = names
-        self.skills = skills
+class _CatsetMarker:
+    """Sentinel marker indicating a cat uses pre-colored catset sprites
+    (set on every CatInstance.color_def since v0.3.0 — legacy color-tinting
+    system was removed in v0.5.0)."""
+    id = "catset"
 
-    def prompt(self, name, lang):
-        t = self.traits.get(lang, self.traits["fr"])
-        sk = self.skills.get(lang, self.skills["fr"])
-        if lang == "en":
-            return f"You are a little {t} cat named {name}. {sk} Respond briefly with cat sounds (meow, purr, mrrp). Max 2-3 sentences."
-        elif lang == "es":
-            return f"Eres un gatito {t} llamado {name}. {sk} Responde brevemente con sonidos de gato (miau, purr, mrrp). Máximo 2-3 frases."
-        return f"Tu es un petit chat {t} nommé {name}. {sk} Réponds brièvement avec des sons de chat (miaou, purr, mrrp). Max 2-3 phrases."
-
-
-CAT_COLORS = [
-    CatColorDef("orange", (1.0, 0.6, 0.2, 1.0), 0, 1, 0,
-        {"fr": "joueur et espiègle", "en": "playful and mischievous", "es": "juguetón y travieso"},
-        {"fr": "Citrouille", "en": "Pumpkin", "es": "Calabaza"},
-        {"fr": "Tu adores les blagues et jeux de mots.", "en": "You love jokes and puns.", "es": "Adoras los chistes y juegos de palabras."}),
-    CatColorDef("black", (0.15, 0.15, 0.18, 1.0), 0, 0.1, -0.45,
-        {"fr": "mystérieux et philosophe", "en": "mysterious and philosophical", "es": "misterioso y filósofo"},
-        {"fr": "Ombre", "en": "Shadow", "es": "Sombra"},
-        {"fr": "Tu poses des questions profondes et aimes réfléchir.", "en": "You ask deep questions and love to reflect.", "es": "Haces preguntas profundas y te encanta reflexionar."}),
-    CatColorDef("white", (0.95, 0.95, 0.97, 1.0), 0, 0.05, 0.4,
-        {"fr": "élégant et poétique", "en": "elegant and poetic", "es": "elegante y poético"},
-        {"fr": "Neige", "en": "Snow", "es": "Nieve"},
-        {"fr": "Tu t'exprimes avec grâce et tu adores la poésie.", "en": "You speak gracefully and love poetry.", "es": "Te expresas con gracia y adoras la poesía."}),
-    CatColorDef("grey", (0.55, 0.55, 0.58, 1.0), 0, 0, -0.05,
-        {"fr": "sage et savant", "en": "wise and scholarly", "es": "sabio y erudito"},
-        {"fr": "Einstein", "en": "Einstein", "es": "Einstein"},
-        {"fr": "Tu expliques des faits scientifiques fascinants.", "en": "You explain fascinating scientific facts.", "es": "Explicas datos científicos fascinantes."}),
-    CatColorDef("brown", (0.5, 0.3, 0.15, 1.0), -0.03, 0.7, -0.2,
-        {"fr": "aventurier et conteur", "en": "adventurous storyteller", "es": "aventurero y cuentacuentos"},
-        {"fr": "Indiana", "en": "Indiana", "es": "Indiana"},
-        {"fr": "Tu racontes des aventures extraordinaires.", "en": "You tell extraordinary adventures.", "es": "Cuentas aventuras extraordinarias."}),
-    CatColorDef("cream", (0.95, 0.88, 0.75, 1.0), 0.02, 0.3, 0.15,
-        {"fr": "câlin et réconfortant", "en": "cuddly and comforting", "es": "cariñoso y reconfortante"},
-        {"fr": "Caramel", "en": "Caramel", "es": "Caramelo"},
-        {"fr": "Tu remontes le moral avec tendresse.", "en": "You comfort with tenderness.", "es": "Animas con ternura."}),
-]
-
-def color_def(id):
-    return next((c for c in CAT_COLORS if c.id == id), None)
-
-# Sentinel: catset chars are pre-colored — skip tinting
-_CATSET_COLOR_DEF = CatColorDef("catset", None, 0, 1, 0, {}, {}, {})
+# Every cat's .color_def points to this singleton
+_CATSET_COLOR_DEF = _CatsetMarker()
 
 CATSET_CHARS = [
     ("cat_orange", "🟠"),
@@ -581,66 +536,6 @@ def load_metadata(cat_dir):
         print(f"ERROR: Cannot load {path}: {e}")
         sys.exit(1)
 
-def rgb_to_hsb(r, g, b):
-    mx = max(r, g, b)
-    mn = min(r, g, b)
-    delta = mx - mn
-    h = 0.0
-    if delta > 0.001:
-        if mx == r:
-            h = ((g - b) / delta) % 6 / 6.0
-        elif mx == g:
-            h = ((b - r) / delta + 2) / 6.0
-        else:
-            h = ((r - g) / delta + 4) / 6.0
-        if h < 0:
-            h += 1.0
-    s = delta / mx if mx > 0.001 else 0.0
-    return h, s, mx
-
-def hsb_to_rgb(h, s, b):
-    c = b * s
-    x = c * (1 - abs((h * 6) % 2 - 1))
-    m = b - c
-    sector = int(h * 6) % 6
-    if sector == 0:   r, g, bb = c, x, 0
-    elif sector == 1: r, g, bb = x, c, 0
-    elif sector == 2: r, g, bb = 0, c, x
-    elif sector == 3: r, g, bb = 0, x, c
-    elif sector == 4: r, g, bb = x, 0, c
-    else:             r, g, bb = c, 0, x
-    return r + m, g + m, bb + m
-
-def tint_sprite(img, color_def):
-    if color_def is _CATSET_COLOR_DEF or color_def.id == "orange":
-        return img
-    img = img.convert("RGBA")
-    pixels = list(img.getdata())
-    new_pixels = []
-    for r8, g8, b8, a8 in pixels:
-        if a8 < 3:
-            new_pixels.append((r8, g8, b8, a8))
-            continue
-        a = a8 / 255.0
-        r = (r8 / 255.0) / a if a > 0 else 0
-        g = (g8 / 255.0) / a if a > 0 else 0
-        b = (b8 / 255.0) / a if a > 0 else 0
-        h, s, br = rgb_to_hsb(r, g, b)
-        nh = (h + color_def.hue_shift + 1) % 1.0
-        ns = max(0, min(1, s * color_def.sat_mul))
-        nb = max(0, min(1, br + color_def.bri_off))
-        nr, ng, nbb = hsb_to_rgb(nh, ns, nb)
-        new_pixels.append((
-            max(0, min(255, int(nr * a * 255))),
-            max(0, min(255, int(ng * a * 255))),
-            max(0, min(255, int(nbb * a * 255))),
-            a8,
-        ))
-    out = Image.new("RGBA", img.size)
-    out.putdata(new_pixels)
-    return out
-
-
 def _sprite_floor_y(img):
     """Return Y of the lowest non-transparent pixel in a PIL RGBA image (sprite 'floor')."""
     data = img.load()
@@ -724,40 +619,15 @@ def pil_to_texture(img, target_w, target_h):
                                   gbytes, target_w * 4)
 
 
-CACHE_DIR = os.path.expanduser("~/.cache/catai")
-
-def _cache_path(path, color_id, size):
-    """Get cache file path for a tinted sprite."""
-    name = os.path.basename(os.path.dirname(os.path.dirname(path))) + "_" + \
-           os.path.basename(os.path.dirname(path)) + "_" + os.path.basename(path)
-    return os.path.join(CACHE_DIR, color_id, f"{size[0]}x{size[1]}", name)
-
-def load_and_tint(path, color_def, cache_size=None):
-    """Load a sprite PNG and apply color tinting. Uses disk cache if cache_size given."""
-    if cache_size and color_def is not _CATSET_COLOR_DEF:
-        cp = _cache_path(path, color_def.id, cache_size)
-        if os.path.exists(cp):
-            try:
-                return Image.open(cp).convert("RGBA")
-            except Exception:
-                pass
-
+def load_sprite(path):
+    """Load a sprite PNG as a PIL RGBA image. Returns a magenta placeholder on error.
+    Catset sprites are pre-colored, no tinting needed."""
     try:
-        src = Image.open(path).convert("RGBA")
+        return Image.open(path).convert("RGBA")
     except Exception:
         log.warning("Missing sprite: %s", path)
-        src = Image.new("RGBA", (68, 68), (255, 0, 255, 128))
-    tinted = tint_sprite(src, color_def)
+        return Image.new("RGBA", (80, 80), (255, 0, 255, 128))
 
-    if cache_size and color_def is not _CATSET_COLOR_DEF:
-        cp = _cache_path(path, color_def.id, cache_size)
-        try:
-            os.makedirs(os.path.dirname(cp), exist_ok=True)
-            tinted.save(cp, "PNG")
-        except Exception:
-            pass
-
-    return tinted
 
 # ── X11 Window Helpers (kept for chat bubble + context menu positioning) ──────
 
@@ -2071,11 +1941,7 @@ class CatInstance:
         threading.Thread(target=bg_setup, daemon=True).start()
 
     def setup_chat(self, model, lang):
-        char_id = self.config.get("char_id")
-        if char_id and self.color_def is _CATSET_COLOR_DEF:
-            prompt = _catset_prompt(char_id, self.config["name"], lang)
-        else:
-            prompt = self.color_def.prompt(self.config["name"], lang)
+        prompt = _catset_prompt(self.config["char_id"], self.config["name"], lang)
         self.chat_backend = create_chat(model)
         self.chat_backend.messages = [{"role": "system", "content": prompt}]
         mem = load_memory(self.config["id"])
@@ -2087,7 +1953,6 @@ class CatInstance:
         background thread so startup doesn't block the main thread/clicks.
         Remaining animations also load in background after."""
         dw, dh = self.display_w, self.display_h
-        size = (dw, dh)
         self.rotations = {}
         self.animations = {}
         walk_key = "running-8-frames"
@@ -2096,7 +1961,7 @@ class CatInstance:
             # 1. Rotations first (cat becomes visible & clickable as soon as these are ready)
             rots = {}
             for dir_name, rel_path in meta["frames"]["rotations"].items():
-                pil = load_and_tint(os.path.join(cat_dir, rel_path), self.color_def, cache_size=size)
+                pil = load_sprite(os.path.join(cat_dir, rel_path))
                 rots[dir_name] = pil_to_surface(pil, dw, dh)
             GLib.idle_add(lambda: self.rotations.update(rots) or False)
 
@@ -2105,7 +1970,7 @@ class CatInstance:
                 walk_data = {}
                 for dir_name, frame_paths in meta["frames"]["animations"][walk_key].items():
                     walk_data[dir_name] = [
-                        pil_to_surface(load_and_tint(os.path.join(cat_dir, p), self.color_def, cache_size=size), dw, dh)
+                        pil_to_surface(load_sprite(os.path.join(cat_dir, p)), dw, dh)
                         for p in frame_paths
                     ]
                 GLib.idle_add(lambda d=walk_data: self.animations.update({walk_key: d}) or False)
@@ -2117,7 +1982,7 @@ class CatInstance:
                     anim_data = {}
                     for dir_name, frame_paths in dirs.items():
                         anim_data[dir_name] = [
-                            pil_to_surface(load_and_tint(os.path.join(cat_dir, p), self.color_def, cache_size=size), dw, dh)
+                            pil_to_surface(load_sprite(os.path.join(cat_dir, p)), dw, dh)
                             for p in frame_paths
                         ]
                     GLib.idle_add(lambda an=anim_name, ad=anim_data: self.animations.update({an: ad}) or False)
@@ -2129,7 +1994,7 @@ class CatInstance:
                     anim_data = {}
                     for dir_name, frame_paths in dirs.items():
                         anim_data[dir_name] = [
-                            pil_to_surface(load_and_tint(os.path.join(cat_dir, p), self.color_def, cache_size=size), dw, dh)
+                            pil_to_surface(load_sprite(os.path.join(cat_dir, p)), dw, dh)
                             for p in frame_paths
                         ]
                     GLib.idle_add(lambda an=anim_name, ad=anim_data: self.animations.update({an: ad}) or False)
@@ -2620,11 +2485,7 @@ class CatInstance:
         self.chat_backend.send(text, on_token, on_done, on_error, on_status=on_status)
 
     def update_system_prompt(self, lang):
-        char_id = self.config.get("char_id")
-        if char_id and self.color_def is _CATSET_COLOR_DEF:
-            p = _catset_prompt(char_id, self.config["name"], lang)
-        else:
-            p = self.color_def.prompt(self.config["name"], lang)
+        p = _catset_prompt(self.config["char_id"], self.config["name"], lang)
         if self.chat_backend and self.chat_backend.messages:
             self.chat_backend.messages[0] = {"role": "system", "content": p}
 
@@ -2715,15 +2576,11 @@ class SettingsWindow:
     def __init__(self, app):
         self.app = app
         self.window = None
-        self.selected_color_id = None
         self.selected_char_id = None
         self.current_scale = DEFAULT_SCALE
         self.current_model = ""
         self._scale_timer = None
 
-        self.on_add = None
-        self.on_remove = None
-        self.on_rename = None
         self.on_add_catset = None
         self.on_remove_catset = None
         self.on_rename_catset = None
@@ -2753,14 +2610,10 @@ class SettingsWindow:
             self.window.add_css_class("settings-window")
             self.window.connect("close-request", self._on_close)
         cfgs = self.get_configs() if self.get_configs else []
-        if not self.selected_color_id and not self.selected_char_id:
-            legacy = next((c for c in cfgs if c.get("color_id")), None)
-            if legacy:
-                self.selected_color_id = legacy["color_id"]
-            else:
-                first_catset = next((c for c in cfgs if c.get("char_id")), None)
-                if first_catset:
-                    self.selected_char_id = first_catset["char_id"]
+        if not self.selected_char_id:
+            first_catset = next((c for c in cfgs if c.get("char_id")), None)
+            if first_catset:
+                self.selected_char_id = first_catset["char_id"]
         self._build()
 
     def _on_close(self, *args):
@@ -3110,21 +2963,8 @@ class SettingsWindow:
             pic.set_paintable(frames[idx[0]])
         return True
 
-    def _on_bubble_select(self, btn, color_id):
-        self.selected_color_id = color_id
-        self._build()
-
-    def _on_bubble_add(self, btn, color_id):
-        if self.on_add:
-            self.on_add(color_id)
-
-    def _on_bubble_remove(self, btn, color_id):
-        if self.on_remove:
-            self.on_remove(color_id)
-
     def _on_catset_select(self, btn, char_id):
         self.selected_char_id = char_id
-        self.selected_color_id = None
         self._build()
 
     def _on_catset_add(self, btn, char_id):
@@ -3142,10 +2982,6 @@ class SettingsWindow:
     def _on_lang_click(self, btn, lang_code):
         if self.on_lang_changed:
             self.on_lang_changed(lang_code)
-
-    def _on_name_changed(self, entry, color_id):
-        if self.on_rename:
-            self.on_rename(color_id, entry.get_text())
 
     def _on_model_select(self, dropdown, pspec, string_list):
         if getattr(self, '_model_loading', False):
@@ -3221,10 +3057,8 @@ class CatEncounter:
 
     @staticmethod
     def _cat_traits(cat, lang):
-        if cat.color_def is _CATSET_COLOR_DEF:
-            p = CATSET_PERSONALITIES.get(cat.config.get("char_id", "cat01"), CATSET_PERSONALITIES["cat01"])
-            return p["traits"].get(lang, p["traits"]["fr"])
-        return cat.color_def.traits.get(lang, cat.color_def.traits.get("fr", ""))
+        p = CATSET_PERSONALITIES.get(cat.config.get("char_id", "cat01"), CATSET_PERSONALITIES["cat01"])
+        return p["traits"].get(lang, p["traits"]["fr"])
 
     def _build_prompt(self, speaker, listener):
         lang = L10n.lang
@@ -3693,12 +3527,6 @@ class CatAIApp(Gtk.Application):
                          flags=Gio.ApplicationFlags.NON_UNIQUE)
         self.cat_instances = []
         self.cat_configs = []
-        self.cat_dir = ""
-        self.meta = None
-        self.sprite_w = 68
-        self.sprite_h = 68
-        self.display_w = 0
-        self.display_h = 0
         self.cat_scale = DEFAULT_SCALE
         self.screen_w = 1920
         self.screen_h = 1080
@@ -3743,17 +3571,6 @@ class CatAIApp(Gtk.Application):
         _setup_logging()
         apply_css()
         self._check_deps()
-
-        # Assets are inside the package directory
-        pkg_dir = os.path.dirname(os.path.abspath(__file__))
-        self.cat_dir = os.path.join(pkg_dir, "cute_orange_cat")
-        if not os.path.isdir(self.cat_dir):
-            print(f"ERROR: cute_orange_cat/ not found in {pkg_dir}")
-            sys.exit(1)
-
-        self.meta = load_metadata(self.cat_dir)
-        self.sprite_w = self.meta["character"]["size"]["width"]
-        self.sprite_h = self.meta["character"]["size"]["height"]
 
         display = Gdk.Display.get_default()
         monitors = display.get_monitors()
@@ -3813,8 +3630,6 @@ class CatAIApp(Gtk.Application):
             # Some legacy cats removed — save cleaned config
             self.cat_configs = catset_cfgs
             self._save_all()
-
-        self._recompute_size()
 
         # Create the single fullscreen transparent canvas window
         self._create_canvas()
@@ -4760,34 +4575,23 @@ class CatAIApp(Gtk.Application):
             if not shutil.which(tool):
                 log.debug("Optional tool not found: %s (%s %s)", tool, pkg_cmd, tool)
 
-    def _recompute_size(self):
-        self.display_w = int(round(self.sprite_w * self.cat_scale))
-        self.display_h = int(round(self.sprite_h * self.cat_scale))
-
     def _create_instance(self, config, index):
+        """Instantiate a catset character (all configs are catset-based since v0.3.0)."""
         char_id = config.get("char_id")
-        if char_id:
-            # Catset character: load its own metadata
-            pkg_dir = os.path.dirname(os.path.abspath(__file__))
-            char_dir = os.path.join(pkg_dir, char_id)
-            if not os.path.isdir(char_dir):
-                log.warning("Catset dir not found: %s — skipping", char_dir)
-                return
-            meta = load_metadata(char_dir)
-            sprite_w = meta["character"]["size"]["width"]
-            sprite_h = meta["character"]["size"]["height"]
-            dw = int(round(sprite_w * self.cat_scale))
-            dh = int(round(sprite_h * self.cat_scale))
-            cd = _CATSET_COLOR_DEF
-        else:
-            cd = color_def(config.get("color_id", ""))
-            if not cd:
-                return
-            meta = self.meta
-            char_dir = self.cat_dir
-            dw = self.display_w
-            dh = self.display_h
-        inst = CatInstance(config, cd)
+        if not char_id:
+            log.warning("Config without char_id — skipping: %r", config)
+            return
+        pkg_dir = os.path.dirname(os.path.abspath(__file__))
+        char_dir = os.path.join(pkg_dir, char_id)
+        if not os.path.isdir(char_dir):
+            log.warning("Catset dir not found: %s — skipping", char_dir)
+            return
+        meta = load_metadata(char_dir)
+        sprite_w = meta["character"]["size"]["width"]
+        sprite_h = meta["character"]["size"]["height"]
+        dw = int(round(sprite_w * self.cat_scale))
+        dh = int(round(sprite_h * self.cat_scale))
+        inst = CatInstance(config, _CATSET_COLOR_DEF)
         start_x = random.randint(int(dw), int(self.screen_w - dw * 2))
         start_x = max(0, min(start_x, self.screen_w - dw))
         inst.setup(self, meta, char_dir,
@@ -5517,7 +5321,7 @@ class CatAIApp(Gtk.Application):
         if self.cat_instances:
             target_h = self.cat_instances[0].display_h
         else:
-            target_h = int(round(self.sprite_h * self.cat_scale))
+            target_h = int(round(80 * self.cat_scale))  # catset sprites are 80×80
         self._nyan_scale = target_h / self._nyan_frame_h
         self._nyan_target_h = target_h
         self._nyan_target_w = int(self._nyan_frame_w * self._nyan_scale)
@@ -5651,51 +5455,6 @@ class CatAIApp(Gtk.Application):
         ctx.set_source_rgba(0.4, 0.3, 0.2, 0.8)
         PangoCairo.show_layout(ctx, lay_h)
 
-    def add_cat(self, color_id):
-        cd = color_def(color_id)
-        if not cd or any(c["color_id"] == color_id for c in self.cat_configs):
-            return
-        cfg = {"id": f"cat_{uuid.uuid4().hex[:8]}", "color_id": color_id,
-               "name": cd.names.get(L10n.lang, cd.names["fr"])}
-        self.cat_configs.append(cfg)
-        self._save_all()
-        self._create_instance(cfg, len(self.cat_instances))
-        if self.settings_ctrl:
-            self.settings_ctrl.selected_color_id = color_id
-            self.settings_ctrl.refresh()
-
-    def remove_cat(self, color_id):
-        if len(self.cat_configs) <= 1:
-            return
-        idx = next((i for i, c in enumerate(self.cat_instances) if c.color_def.id == color_id), None)
-        if idx is None:
-            return
-        cat = self.cat_instances[idx]
-        # If chat bubble is showing for this cat, hide it
-        if self._active_chat_cat is cat:
-            cat.chat_visible = False
-            self._chat_box.set_visible(False)
-            self._active_chat_cat = None
-        cat.cleanup()
-        self.cat_instances.pop(idx)
-        self.cat_configs = [c for c in self.cat_configs if c.get("color_id") != color_id]
-        delete_memory(cat.config["id"])
-        self._save_all()
-        if self.settings_ctrl:
-            first_legacy = next((c for c in self.cat_configs if c.get("color_id")), None)
-            self.settings_ctrl.selected_color_id = first_legacy["color_id"] if first_legacy else None
-            self.settings_ctrl.refresh()
-
-    def rename_cat(self, color_id, name):
-        for cfg in self.cat_configs:
-            if cfg.get("color_id") == color_id:
-                cfg["name"] = name; break
-        self._save_all()
-        for inst in self.cat_instances:
-            if inst.config.get("color_id") == color_id:
-                inst.config["name"] = name
-                inst.update_system_prompt(L10n.lang)
-
     def add_catset_char(self, char_id):
         if any(c.get("char_id") == char_id for c in self.cat_configs):
             return
@@ -5707,7 +5466,6 @@ class CatAIApp(Gtk.Application):
         self._create_instance(cfg, len(self.cat_instances))
         if self.settings_ctrl:
             self.settings_ctrl.selected_char_id = char_id
-            self.settings_ctrl.selected_color_id = None
             self.settings_ctrl.refresh()
 
     def remove_catset_char(self, char_id):
@@ -5743,7 +5501,6 @@ class CatAIApp(Gtk.Application):
 
     def apply_new_scale(self, s):
         self.cat_scale = s
-        self._recompute_size()
         self._save_all()
         for cat in self.cat_instances:
             # Each cat knows its own meta/cat_dir; dw/dh scaled from its sprite size
@@ -5784,9 +5541,6 @@ class CatAIApp(Gtk.Application):
         ctrl = self.settings_ctrl
         ctrl.get_configs = lambda: self.cat_configs
         ctrl.get_catset_preview = self._get_catset_preview
-        ctrl.on_add = self.add_cat
-        ctrl.on_remove = self.remove_cat
-        ctrl.on_rename = self.rename_cat
         ctrl.on_add_catset = self.add_catset_char
         ctrl.on_remove_catset = self.remove_catset_char
         ctrl.on_rename_catset = self.rename_catset_char

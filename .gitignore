@@ -8,3 +8,6 @@ upstream-catai-macos/
 .claude/
 .ruff_cache/
 .coverage
+# Raw sprite sources — regenerable via scripts/catset_to_catai.py etc.
+catset_assets/
+kittens_assets/
