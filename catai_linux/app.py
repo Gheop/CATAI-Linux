@@ -1401,20 +1401,6 @@ def apply_css():
 
 # ── Pixel Art Drawing Helpers (Cairo) ──────────────────────────────────────────
 
-def draw_pixel_border(ctx, w, h, px=3):
-    ctx.set_source_rgba(0.95, 0.9, 0.8, 1)
-    ctx.rectangle(0, 0, w, h)
-    ctx.fill()
-    ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
-    for rect in [(0, 0, w, px), (0, h-px, w, px), (0, 0, px, h), (w-px, 0, px, h)]:
-        ctx.rectangle(*rect); ctx.fill()
-    i = px * 2
-    for rect in [(i, i, w-i*2, px), (i, h-i-px, w-i*2, px), (i, i, px, h-i*2), (w-i-px, i, px, h-i*2)]:
-        ctx.rectangle(*rect); ctx.fill()
-    ctx.set_source_rgba(0.95, 0.9, 0.8, 1)
-    for cx, cy in [(0, 0), (w-px, 0), (0, h-px), (w-px, h-px)]:
-        ctx.rectangle(cx, cy, px, px); ctx.fill()
-
 def draw_pixel_tail(ctx, w, h, px=3):
     cx = w / 2
     ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
@@ -1430,14 +1416,6 @@ def draw_pixel_tail(ctx, w, h, px=3):
 # ── Meow bubble drawing on canvas ────────────────────────────────────────────
 
 _BUBBLE_FONT = "monospace bold 11"
-
-def _pango_text_width(ctx, text):
-    """Measure text width in pixels using Pango (supports emoji)."""
-    layout = PangoCairo.create_layout(ctx)
-    layout.set_font_description(Pango.FontDescription(_BUBBLE_FONT))
-    layout.set_text(text, -1)
-    w, _h = layout.get_pixel_size()
-    return w
 
 def _pango_show_text(ctx, text, r=0.3, g=0.2, b=0.1, a=1.0):
     """Render text with PangoCairo (supports COLRv1 emoji)."""
@@ -1987,158 +1965,6 @@ def _draw_context_menu(ctx, mx, my, label_settings, label_quit):
     ctx.show_text(label_quit)
 
 
-class ChatBubbleController:
-    def __init__(self, app):
-        self.app = app
-        self.window = None
-        self.response_text = ""
-        self.on_send = None
-        self.bubble_w = 300
-        self.tail_h = 15
-        self.padding = 18
-        self._entry = None
-        self._response_label = None
-        self._cat_pos = (0, 0, 0, 0)
-        self._active_cat = None  # which CatInstance this bubble is showing for
-
-    def setup(self):
-        self.window = Gtk.Window()
-        self.window.set_decorated(False)
-        self.window.add_css_class("bubble-window")
-        set_always_on_top(self.window)
-        self.window.set_default_size(self.bubble_w, -1)
-        self.window.set_resizable(False)
-        self.response_text = L10n.s("hi")
-        self._build()
-
-    def _build(self):
-        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-
-        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        body.set_margin_start(self.padding)
-        body.set_margin_end(self.padding)
-        body.set_margin_top(6)
-        body.set_margin_bottom(self.padding)
-        body.add_css_class("bubble-body")
-
-        close_btn = Gtk.Button(label="\u00d7")
-        close_css = Gtk.CssProvider()
-        close_css.load_from_data(b"button { background: transparent; color: #4d3319; min-width: 20px; min-height: 16px; font-size: 14px; padding: 0; border: none; }")
-        close_btn.get_style_context().add_provider(close_css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-        close_btn.set_halign(Gtk.Align.END)
-        close_btn.connect("clicked", lambda b: self._do_close())
-        body.append(close_btn)
-
-        self._response_label = Gtk.Label(label=self.response_text)
-        self._response_label.set_wrap(True)
-        self._response_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-        self._response_label.set_xalign(0)
-        self._response_label.set_yalign(0)
-        self._response_label.set_max_width_chars(35)
-        self._response_label.add_css_class("pixel-label-small")
-
-        self._scroll = Gtk.ScrolledWindow()
-        self._scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        self._scroll.set_max_content_height(200)
-        self._scroll.set_propagate_natural_height(True)
-        self._scroll.set_child(self._response_label)
-        self._scroll.set_vexpand(True)
-        body.append(self._scroll)
-
-        self._entry = Gtk.Entry()
-        self._entry.set_placeholder_text(L10n.s("talk"))
-        self._entry.add_css_class("pixel-entry")
-        self._entry.connect("activate", self._on_activate)
-        body.append(self._entry)
-
-        main_box.append(body)
-
-        tail = Gtk.DrawingArea()
-        tail.set_content_width(self.bubble_w)
-        tail.set_content_height(self.tail_h)
-        tail.set_draw_func(lambda a, ctx, w, h: draw_pixel_tail(ctx, w, h, 3))
-        main_box.append(tail)
-
-        self.window.set_child(main_box)
-
-    def _on_activate(self, entry):
-        text = entry.get_text().strip()
-        if text and self.on_send:
-            entry.set_text("")
-            self.on_send(text)
-
-    def show_for_cat(self, cat):
-        """Show the chat bubble for a specific cat instance."""
-        was_visible = self.window.get_visible()
-        old_cat = self._active_cat
-
-        # If switching cats, reset the response
-        if old_cat is not cat:
-            self._active_cat = cat
-            self.on_send = cat.send_chat
-            self.response_text = L10n.s("hi")
-            if self._response_label:
-                self._response_label.set_label(self.response_text)
-
-        self._cat_pos = (cat.x, cat.y, cat.display_w, cat.display_h)
-        bx = int(cat.x + cat.display_w / 2 - self.bubble_w / 2)
-        self.window.set_visible(True)
-        GLib.idle_add(self._move_above, bx, cat.y, cat.display_h)
-        GLib.timeout_add(100, self._move_above, bx, cat.y, cat.display_h)
-        if not was_visible:
-            self._entry.grab_focus()
-
-    def reposition(self):
-        """Move bubble to follow the active cat."""
-        cat = self._active_cat
-        if not self.is_visible or not cat:
-            return
-        self._cat_pos = (cat.x, cat.y, cat.display_w, cat.display_h)
-        bx = int(cat.x + cat.display_w / 2 - self.bubble_w / 2)
-        GLib.idle_add(self._move_above, bx, cat.y, cat.display_h)
-
-    def _do_close(self):
-        self._active_cat = None
-        self.hide()
-
-    def _move_above(self, bx, cat_y, cat_h):
-        alloc = self.window.get_allocation()
-        bubble_h = max(alloc.height, 120)
-        by = int(cat_y - bubble_h - 5)
-        if by < 0:
-            by = 0
-        move_window(self.window, max(0, bx), by)
-        return False
-
-    def hide(self):
-        if self.window:
-            self.window.set_visible(False)
-        self._active_cat = None
-
-    @property
-    def is_visible(self):
-        return self.window and self.window.get_visible()
-
-    def set_response(self, text):
-        self.response_text = text
-        if self._response_label:
-            self._response_label.set_label(text)
-
-    def append_response(self, token):
-        self.response_text += token
-        if self._response_label:
-            self._response_label.set_label(self.response_text)
-            if self._scroll and not getattr(self, '_scroll_pending', False):
-                self._scroll_pending = True
-                def _do_scroll():
-                    adj = self._scroll.get_vadjustment()
-                    adj.set_value(adj.get_upper())
-                    self._scroll_pending = False
-                    self.reposition()
-                    return False
-                GLib.timeout_add(200, _do_scroll)
-
-
 # ── Cat Instance ───────────────────────────────────────────────────────────────
 
 class CatInstance:
@@ -2312,18 +2138,6 @@ class CatInstance:
             threading.Thread(target=bg_load, daemon=True).start()
         else:
             bg_load()  # still threaded via GLib.idle_add for surface updates
-
-    def _load_anims_bg(self, anims, cat_dir, size):
-        """Background-load remaining animations."""
-        dw, dh = size
-        for anim_name, dirs in anims.items():
-            anim_data = {}
-            for dir_name, frame_paths in dirs.items():
-                anim_data[dir_name] = [
-                    pil_to_surface(load_and_tint(os.path.join(cat_dir, p), self.color_def, cache_size=size), dw, dh)
-                    for p in frame_paths
-                ]
-            GLib.idle_add(lambda an=anim_name, ad=anim_data: self.animations.update({an: ad}) or False)
 
     def _fallback_surface(self):
         if not self.rotations:
@@ -2918,9 +2732,7 @@ class SettingsWindow:
         self.on_lang_changed = None
         self.on_encounters_changed = None
         self.get_configs = None
-        self.get_preview = None
         self.get_catset_preview = None
-        self._get_anim_frames = None
         self._anim_pictures = []
         self._anim_timer = None
 
@@ -5971,9 +5783,7 @@ class CatAIApp(Gtk.Application):
             self.settings_ctrl = SettingsWindow(self)
         ctrl = self.settings_ctrl
         ctrl.get_configs = lambda: self.cat_configs
-        ctrl.get_preview = self._get_preview
         ctrl.get_catset_preview = self._get_catset_preview
-        ctrl._get_anim_frames = self._get_anim_frames
         ctrl.on_add = self.add_cat
         ctrl.on_remove = self.remove_cat
         ctrl.on_rename = self.rename_cat
@@ -5986,36 +5796,6 @@ class CatAIApp(Gtk.Application):
         ctrl.on_encounters_changed = self.set_encounters_enabled
         ctrl.setup(self.cat_scale, self.selected_model)
         ctrl.show()
-
-    def _get_preview(self, color_id):
-        cd = color_def(color_id)
-        if not cd:
-            return None
-        south_rel = self.meta["frames"]["rotations"].get("south")
-        if not south_rel:
-            return None
-        path = os.path.join(self.cat_dir, south_rel)
-        try:
-            img = Image.open(path).convert("RGBA")
-            return tint_sprite(img, cd)
-        except Exception:
-            return None
-
-    def _get_anim_frames(self, color_id, size):
-        """Get walking animation frames as textures for settings preview."""
-        cd = color_def(color_id)
-        if not cd:
-            return None
-        anim_key = "running-8-frames"
-        direction = "east"
-        frame_paths = self.meta["frames"]["animations"].get(anim_key, {}).get(direction, [])
-        if not frame_paths:
-            return None
-        textures = []
-        for p in frame_paths:
-            pil = load_and_tint(os.path.join(self.cat_dir, p), cd)
-            textures.append(pil_to_texture(pil, size, size))
-        return textures if textures else None
 
     def _get_catset_preview(self, char_id):
         """Get idle south sprite for a catset character."""
