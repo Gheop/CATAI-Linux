@@ -415,6 +415,23 @@ def run_tests():
     test("egg meow_party triggered", resp.startswith("OK"), resp)
     time.sleep(0.3)
 
+    # T13i: rm -rf / — full lifecycle assertion
+    # Expected sequence: rm_rf=False → trigger → rm_rf=True (during 5s anim)
+    # → rm_rf=False (after the shrink_back phase completes).
+    st = parse_egg(send_cmd("egg_state"))
+    test("rm_rf starts inactive", st.get("rm_rf") == "False", str(st))
+    resp = send_cmd("egg rm_rf")
+    test("egg rm_rf triggered", resp.startswith("OK"), resp)
+    # Check mid-animation (grow + wipe phase, ~0.5s in)
+    time.sleep(0.5)
+    st = parse_egg(send_cmd("egg_state"))
+    test("rm_rf active during animation", st.get("rm_rf") == "True", str(st))
+    # Full animation: 400ms grow + ~1.5s wipe + 1.5s kidding + 1.2s laugh
+    # + 600ms shrink = ~5.2s. Wait 7s with margin.
+    time.sleep(7)
+    st = parse_egg(send_cmd("egg_state"))
+    test("rm_rf cleans up after animation", st.get("rm_rf") == "False", str(st))
+
     # ── T14: Love encounter — all 3 outcomes ─────────────
     print("\n[T14] Love encounters", flush=True)
 

@@ -310,6 +310,13 @@ MAGIC_EGG_PHRASES = {
     "follow": "follow",
     "follow me": "follow",
     "follow the leader": "follow",
+    # rm -rf / (the normalizer in CatInstance.send_chat strips trailing
+    # punctuation+whitespace via [\s\W]+$, so 'rm -rf /' becomes 'rm -rf',
+    # 'format c:' becomes 'format c', etc.)
+    "rm -rf": "rm_rf",
+    "sudo rm -rf": "rm_rf",
+    "delete all": "rm_rf",
+    "format c": "rm_rf",
 }
 
 EASTER_EGGS = [
@@ -335,6 +342,7 @@ EASTER_EGGS = [
     ("boss_fight",  "\U0001f479", "Boss fight",    "eg_boss_fight"),
     ("follow",      "\U0001f463", "Follow leader", "eg_follow_leader"),
     ("nyan",        "\U0001f308", "Nyan!?",        "eg_nyan"),
+    ("rm_rf",       "\U0001f480", "rm -rf /",      "eg_rm_rf"),
 ]
 
 CATSET_PERSONALITIES = {
@@ -2512,9 +2520,11 @@ class CatAIApp(Gtk.Application):
                         if getattr(c, "_boss_scale", None) is not None)
         beam_cats = sum(1 for c in self.cat_instances
                         if getattr(c, "_beam_ticks", 0) > 0)
+        rm_rf_active = bool(getattr(self, "_rm_rf_active_app", False))
         return (f"OK nyan={nyan_active} matrix_cols={matrix_cols} "
                 f"apocalypse={apocalypse} shake={shake:.1f} "
-                f"hidden={hidden_cats} boss={boss_cats} beam={beam_cats}")
+                f"hidden={hidden_cats} boss={boss_cats} beam={beam_cats} "
+                f"rm_rf={rm_rf_active}")
 
     def _cmd_kitten_count(self, parts):
         """Return the number of real kittens currently on the canvas, i.e.
@@ -2735,6 +2745,14 @@ class CatAIApp(Gtk.Application):
         # Nyan cat overlay (drawn BEFORE cats so regular cats render on top)
         if getattr(self, '_nyan_active', False) and getattr(self, '_nyan_frames', None):
             self._draw_nyan(ctx)
+
+        # rm -rf easter egg — draw the 'wipe trail' band BEFORE the cats so
+        # the wiping cat renders on top of its own destruction path.
+        if getattr(self, "_rm_rf_active_app", False):
+            for cat in self.cat_instances:
+                if not getattr(cat, "_rm_rf_active", False):
+                    continue
+                self._draw_rm_rf_wipe(ctx, cat)
 
         for cat in self.cat_instances:
             # Hide & seek: skip hidden cats
@@ -3965,6 +3983,138 @@ class CatAIApp(Gtk.Application):
             return False
         GLib.timeout_add(22000, restore)
 
+    def eg_rm_rf(self):
+        """rm -rf / — a cat grows to 3×, 'wipes' across the screen, then laughs
+        it off and shrinks back. The effect is 100% harmless (nothing actually
+        gets deleted on disk or from the app state) — it's a playful reassurance
+        for anyone who typed the infamous command half-jokingly.
+
+        Phases:
+          1. Pick a cat (last active chat cat, else random) and freeze it.
+          2. Grow it to 3× over ~400 ms via _boss_scale tween.
+          3. Walk it across the screen (east→west or west→east depending on
+             which side it's closest to) at high speed, with WALKING anim.
+          4. While walking, the canvas draws a 'wipe' trail — a translucent
+             cream band growing behind the cat. This is the 'deletion'.
+          5. On the far side, the cat stops, turns SURPRISED, shows a
+             localized 'just kidding!' meow bubble.
+          6. After 1.5 s, enter LOVE for a laugh, shrink back to 1× over
+             ~600 ms, clear the wipe trail, release encounter lock.
+
+        State stored on the cat:
+          - _boss_scale (reused from boss_fight, already honoured by the draw loop)
+          - _rm_rf_active (True while animating so the wipe trail draws)
+          - _rm_rf_wipe_x (the x coord of the trailing edge of the wipe band)
+          - _rm_rf_wipe_direction ("east" or "west")
+        """
+        if not self.cat_instances:
+            return
+        if getattr(self, "_rm_rf_active_app", False):
+            return  # already running, ignore re-triggers
+        self._rm_rf_active_app = True
+
+        # Pick the cat: last active chat cat takes priority
+        victim = (self._active_chat_cat
+                  if self._active_chat_cat in self.cat_instances
+                  else random.choice(self.cat_instances))
+        victim.in_encounter = True
+        victim._flip_h = False
+        victim.meow_visible = False
+        victim.chat_visible = False
+        victim._rm_rf_active = True
+        # Start position: full-height center-ish, place at the side opposite
+        # to where it currently is so the wipe travels across the widest area
+        start_from_left = victim.x + victim.display_w / 2 < self.screen_w / 2
+        victim._rm_rf_wipe_direction = "east" if start_from_left else "west"
+
+        # Anchor position (keep vertically where it was, clamp to leave room
+        # for the 3× visual growth without clipping the top/bottom of screen)
+        eff_scale_final = 3.0
+        eff_h = int(victim.display_h * eff_scale_final)
+        anchor_y = max(0, min(victim.y, self.screen_h - eff_h))
+        if start_from_left:
+            anchor_x = 0
+            wipe_end_x = self.screen_w
+        else:
+            anchor_x = self.screen_w - victim.display_w
+            wipe_end_x = 0
+        victim.x = anchor_x
+        victim.y = anchor_y
+        victim._rm_rf_wipe_x = anchor_x + victim.display_w / 2
+        victim.direction = victim._rm_rf_wipe_direction
+        victim.state = CatState.WALKING
+        victim.frame_index = 0
+        victim._boss_scale = 1.0  # will tween up
+
+        log.info("rm -rf / easter egg: victim=%s start_from_left=%s",
+                 victim.config.get("name"), start_from_left)
+
+        # Phase 1: grow 1.0 → 3.0 over 400 ms (8 ticks × 50 ms)
+        grow_state = {"t": 0, "total": 8}
+        def grow():
+            grow_state["t"] += 1
+            if grow_state["t"] >= grow_state["total"]:
+                victim._boss_scale = eff_scale_final
+                GLib.timeout_add(30, wipe)
+                return False
+            p = grow_state["t"] / grow_state["total"]
+            victim._boss_scale = 1.0 + (eff_scale_final - 1.0) * p
+            return True
+        GLib.timeout_add(50, grow)
+
+        # Phase 2: walk across the screen at high speed, trailing the wipe
+        # band. Runs at 30 ms for smoothness (~33 fps).
+        wipe_speed_px = 32  # pixels per tick — fast enough to cross in ~1.5 s
+        def wipe():
+            if not getattr(victim, "_rm_rf_active", False):
+                return False  # aborted
+            if start_from_left:
+                victim.x += wipe_speed_px
+                victim._rm_rf_wipe_x = victim.x + victim.display_w / 2
+                done = victim.x + victim.display_w * eff_scale_final >= wipe_end_x
+            else:
+                victim.x -= wipe_speed_px
+                victim._rm_rf_wipe_x = victim.x + victim.display_w / 2
+                done = victim.x <= wipe_end_x
+            if done:
+                # Snap to final position and switch to the reveal phase
+                victim.state = CatState.SURPRISED
+                victim.frame_index = 0
+                victim.meow_text = L10n.s("rm_rf_jk")
+                victim.meow_visible = True
+                GLib.timeout_add(1500, laugh)
+                return False
+            return True
+
+        # Phase 3: laugh (LOVE state) for a beat, then shrink back
+        def laugh():
+            victim.state = CatState.LOVE
+            victim.frame_index = 0
+            victim.meow_visible = False
+            GLib.timeout_add(1200, shrink_back)
+            return False
+
+        # Phase 4: shrink back from 3.0 → 1.0 over 600 ms, then restore
+        def shrink_back():
+            shrink_state = {"t": 0, "total": 12}
+            def shrink():
+                shrink_state["t"] += 1
+                if shrink_state["t"] >= shrink_state["total"]:
+                    victim._boss_scale = 1.0
+                    if hasattr(victim, "_boss_scale"):
+                        del victim._boss_scale
+                    victim._rm_rf_active = False
+                    victim.state = CatState.IDLE
+                    victim.frame_index = 0
+                    victim.in_encounter = False
+                    self._rm_rf_active_app = False
+                    return False
+                p = shrink_state["t"] / shrink_state["total"]
+                victim._boss_scale = eff_scale_final + (1.0 - eff_scale_final) * p
+                return True
+            GLib.timeout_add(50, shrink)
+            return False
+
     def eg_follow_leader(self):
         if len(self.cat_instances) < 2:
             return
@@ -4093,6 +4243,46 @@ class CatAIApp(Gtk.Application):
         ctx.get_source().set_filter(cairo.FILTER_NEAREST)
         ctx.paint()
         ctx.restore()
+
+    def _draw_rm_rf_wipe(self, ctx, cat):
+        """Draw the rm -rf 'wipe trail' — a translucent band behind the cat
+        with a subtle scan-line effect that reads as 'this area is being
+        erased'. Runs only while cat._rm_rf_active is True."""
+        if not getattr(cat, "_rm_rf_active", False):
+            return
+        direction = getattr(cat, "_rm_rf_wipe_direction", "east")
+        wipe_x = getattr(cat, "_rm_rf_wipe_x", cat.x + cat.display_w / 2)
+        # Trail extends from the cat's trailing edge all the way back to the
+        # starting side of the screen.
+        if direction == "east":
+            band_x0 = 0
+            band_x1 = wipe_x
+        else:
+            band_x0 = wipe_x
+            band_x1 = self.screen_w
+        if band_x1 <= band_x0:
+            return
+        # Subtle translucent beige band — same palette as the chat bubble
+        # so it looks like 'paper' being revealed underneath.
+        ctx.set_source_rgba(0.95, 0.9, 0.8, 0.28)
+        ctx.rectangle(band_x0, 0, band_x1 - band_x0, self.screen_h)
+        ctx.fill()
+        # Scan-line effect — thin darker lines every 8 px for a retro
+        # 'wipe progress bar' vibe.
+        ctx.set_source_rgba(0.3, 0.2, 0.1, 0.20)
+        ctx.set_line_width(1)
+        for y in range(0, int(self.screen_h), 8):
+            ctx.move_to(band_x0, y)
+            ctx.line_to(band_x1, y)
+            ctx.stroke()
+        # Leading edge — a bright cream vertical line right behind the cat
+        # so you see exactly where the 'deletion' is happening.
+        ctx.set_source_rgba(1.0, 0.95, 0.75, 0.85)
+        ctx.set_line_width(3)
+        edge_x = wipe_x - (cat.display_w / 2 if direction == "east" else -cat.display_w / 2)
+        ctx.move_to(edge_x, 0)
+        ctx.line_to(edge_x, self.screen_h)
+        ctx.stroke()
 
     def _draw_easter_menu(self, ctx):
         bx, by = self._easter_menu_x, self._easter_menu_y
