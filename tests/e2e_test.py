@@ -300,8 +300,131 @@ def run_tests():
     resp = send_cmd("click_cat 0")  # close
     time.sleep(0.3)
 
-    # ── T13: Quit ─────────────────────────────────────────
-    print("\n[T13] Quit via socket", flush=True)
+    # ── T13: Easter eggs ──────────────────────────────────
+    # Trigger each egg by socket key and verify that the matching
+    # internal state flag flipped. Socket comes back in <16ms, so we
+    # don't need long waits — the state is mutated synchronously.
+    print("\n[T13] Easter eggs", flush=True)
+
+    def parse_egg(resp):
+        """Parse the key=value format returned by `egg_state`."""
+        out = {}
+        for tok in resp.split():
+            if "=" in tok:
+                k, _, v = tok.partition("=")
+                out[k] = v
+        return out
+
+    # T13a: nyan
+    resp = send_cmd("egg nyan")
+    test("egg nyan triggered", resp.startswith("OK"), resp)
+    time.sleep(0.5)
+    st = parse_egg(send_cmd("egg_state"))
+    test("nyan active after trigger", st.get("nyan") == "True", str(st))
+    # Let the nyan cat fly off so it doesn't stay active
+    time.sleep(6)
+
+    # T13b: matrix
+    resp = send_cmd("egg matrix")
+    test("egg matrix triggered", resp.startswith("OK"), resp)
+    time.sleep(0.5)
+    st = parse_egg(send_cmd("egg_state"))
+    test("matrix columns populated", int(st.get("matrix_cols", "0")) > 0, str(st))
+    time.sleep(3)
+
+    # T13c: apocalypse — cat count grows
+    before = send_cmd("status")
+    resp = send_cmd("egg apocalypse")
+    test("egg apocalypse triggered", resp.startswith("OK"), resp)
+    time.sleep(4)
+    st = parse_egg(send_cmd("egg_state"))
+    test("apocalypse flag ON", st.get("apocalypse") == "True", str(st))
+    after = send_cmd("status")
+    # cats=N in both responses
+    def _cats(s):
+        for tok in s.split():
+            if tok.startswith("cats="):
+                return int(tok.split("=")[1])
+        return 0
+    n_before = _cats(before)
+    n_after = _cats(after)
+    test("apocalypse spawned clones", n_after > n_before,
+         f"cats: {n_before} -> {n_after}")
+    # Toggle off
+    send_cmd("egg apocalypse")
+    time.sleep(0.5)
+
+    # T13d: shake
+    resp = send_cmd("egg shake")
+    test("egg shake triggered", resp.startswith("OK"), resp)
+    time.sleep(0.3)
+    st = parse_egg(send_cmd("egg_state"))
+    test("shake amount > 0", float(st.get("shake", "0")) > 0, str(st))
+    time.sleep(2)
+
+    # T13e: hide_seek
+    resp = send_cmd("egg hide_seek")
+    test("egg hide_seek triggered", resp.startswith("OK"), resp)
+    time.sleep(0.5)
+    st = parse_egg(send_cmd("egg_state"))
+    test("hide_seek hid cats", int(st.get("hidden", "0")) > 0, str(st))
+    time.sleep(5)  # let the egg clean up
+
+    # T13f: boss_fight — one cat becomes a boss
+    resp = send_cmd("egg boss_fight")
+    test("egg boss_fight triggered", resp.startswith("OK"), resp)
+    time.sleep(0.5)
+    st = parse_egg(send_cmd("egg_state"))
+    test("boss_fight scaled a cat", int(st.get("boss", "0")) >= 1, str(st))
+    time.sleep(6)  # boss fight takes ~5s to end
+
+    # T13g: beam
+    resp = send_cmd("egg beam")
+    test("egg beam triggered", resp.startswith("OK"), resp)
+    time.sleep(0.3)
+    st = parse_egg(send_cmd("egg_state"))
+    test("beam ticks > 0", int(st.get("beam", "0")) >= 1, str(st))
+    time.sleep(2)
+
+    # T13h: meow_party — not easily state-probed, but should return OK
+    resp = send_cmd("egg meow_party")
+    test("egg meow_party triggered", resp.startswith("OK"), resp)
+    time.sleep(0.3)
+
+    # ── T14: Love encounter — all 3 outcomes ─────────────
+    print("\n[T14] Love encounters", flush=True)
+
+    # T14a: forced LOVE → kitten birth
+    resp = send_cmd("kitten_count")
+    kittens_before = int(resp.split("=")[1]) if "kittens=" in resp else 0
+    resp = send_cmd("love_encounter 0 1 love")
+    test("love encounter (love) triggered", "OK" in resp and "forced=love" in resp, resp)
+    # Sequence: 1.2s cat B reacts, then 3s hold, then birth
+    time.sleep(5)
+    resp = send_cmd("kitten_count")
+    kittens_after = int(resp.split("=")[1]) if "kittens=" in resp else 0
+    test("kitten was born from love encounter", kittens_after > kittens_before,
+         f"kittens: {kittens_before} -> {kittens_after}")
+    time.sleep(4)  # let the encounter end gracefully
+
+    # T14b: forced SURPRISED → no birth, no drama
+    kittens_before = kittens_after
+    resp = send_cmd("love_encounter 0 2 surprised")
+    test("love encounter (surprised) triggered", "OK" in resp and "forced=surprised" in resp, resp)
+    time.sleep(5)
+    resp = send_cmd("kitten_count")
+    kittens_after = int(resp.split("=")[1]) if "kittens=" in resp else 0
+    test("surprised outcome produces NO kitten", kittens_after == kittens_before,
+         f"kittens stayed at {kittens_before}")
+    time.sleep(1)
+
+    # T14c: forced ANGRY → drama_queen on victim
+    resp = send_cmd("love_encounter 0 3 angry")
+    test("love encounter (angry) triggered", "OK" in resp and "forced=angry" in resp, resp)
+    time.sleep(5)
+
+    # ── T15: Quit ─────────────────────────────────────────
+    print("\n[T15] Quit via socket", flush=True)
     resp = send_cmd("click_menu_quit")
     test("Quit command sent", resp.startswith("OK"), resp)
     time.sleep(2)
