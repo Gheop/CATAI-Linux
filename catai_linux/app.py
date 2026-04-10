@@ -317,6 +317,11 @@ MAGIC_EGG_PHRASES = {
     "sudo rm -rf": "rm_rf",
     "delete all": "rm_rf",
     "format c": "rm_rf",
+    # Caps Lock (backup magic phrase for when caps-lock detection is not
+    # available, e.g. CI runners without a working X11 keyboard)
+    "capslock": "capslock",
+    "caps lock": "capslock",
+    "shouting": "capslock",
 }
 
 EASTER_EGGS = [
@@ -343,6 +348,7 @@ EASTER_EGGS = [
     ("follow",      "\U0001f463", "Follow leader", "eg_follow_leader"),
     ("nyan",        "\U0001f308", "Nyan!?",        "eg_nyan"),
     ("rm_rf",       "\U0001f480", "rm -rf /",      "eg_rm_rf"),
+    ("capslock",    "\U0001f520", "Caps Lock",     "eg_capslock"),
 ]
 
 CATSET_PERSONALITIES = {
@@ -586,6 +592,8 @@ from catai_linux.x11_helpers import (  # noqa: E402
     apply_above_all as _apply_above_all,
     update_input_shape as _update_input_shape,
 )
+
+from catai_linux.reactions import ReactionPool  # noqa: E402
 
 
 from catai_linux.chat_backend import (  # noqa: E402
@@ -2171,6 +2179,16 @@ class CatAIApp(Gtk.Application):
         self._regions_dirty = True
         self._regions_cache_key = None
         self._cairo_region_cache = None
+        # Reaction pool — AI-generated short replies per cat per event,
+        # lazy-filled on first trigger, cached in memory for the session.
+        self._reaction_pool = ReactionPool(
+            create_chat_fn=create_chat,
+            get_model_fn=lambda: self.selected_model,
+        )
+        # Caps lock detection (edge-triggered, with cooldown)
+        self._caps_lock_prev = False
+        self._caps_lock_last_trigger = 0.0
+        self._rm_rf_active_app = False
 
     def do_activate(self):
         _setup_logging()
@@ -2261,6 +2279,10 @@ class CatAIApp(Gtk.Application):
             GLib.timeout_add(BEHAVIOR_MS, self._behavior_tick),
             GLib.timeout_add(10000, _apply_above_all),
             GLib.timeout_add(30000, self._gc_collect),
+            # Caps lock poller — fires every 500 ms, triggers eg_capslock
+            # on the False → True transition. Cheap (reads a GDK device
+            # flag, no I/O).
+            GLib.timeout_add(500, self._check_caps_lock),
         ]
 
         # Test socket for E2E tests (--test-socket flag)
@@ -4114,6 +4136,73 @@ class CatAIApp(Gtk.Application):
                 return True
             GLib.timeout_add(50, shrink)
             return False
+
+    # ── Caps Lock detection + reaction ───────────────────────────────────────
+
+    def _get_caps_lock_state(self) -> bool:
+        """Query the Caps Lock modifier via GDK (no subprocess, no ctypes).
+        Returns False if the keyboard device isn't available (headless CI)."""
+        try:
+            display = Gdk.Display.get_default()
+            if not display:
+                return False
+            seat = display.get_default_seat()
+            if not seat:
+                return False
+            kbd = seat.get_keyboard()
+            if not kbd:
+                return False
+            return bool(kbd.get_caps_lock_state())
+        except Exception:
+            return False
+
+    def _check_caps_lock(self) -> bool:
+        """Poll Caps Lock; on False → True rising edge (with 8 s cooldown),
+        trigger the capslock easter egg. Returns True to keep the timer."""
+        try:
+            now_on = self._get_caps_lock_state()
+            prev = self._caps_lock_prev
+            self._caps_lock_prev = now_on
+            if now_on and not prev:
+                now_ts = time.monotonic()
+                if now_ts - self._caps_lock_last_trigger >= 8.0:
+                    self._caps_lock_last_trigger = now_ts
+                    self.eg_capslock()
+        except Exception:
+            log.exception("caps lock poll crashed")
+        return True  # keep the timer running
+
+    def eg_capslock(self):
+        """Caps Lock toggled ON — a cat notices and asks why you're shouting.
+        The reply is drawn from an AI-generated pool (varied across triggers)
+        with a deterministic L10n fallback on the first hit or when no AI
+        backend is available (offline / CI mock mode)."""
+        if not self.cat_instances:
+            return
+        # Pick the last-active chat cat if any, else a random cat
+        victim = (self._active_chat_cat
+                  if self._active_chat_cat in self.cat_instances
+                  else random.choice(self.cat_instances))
+        # Don't interrupt an ongoing encounter or the rm_rf animation
+        if victim.in_encounter or getattr(victim, "_rm_rf_active", False):
+            return
+
+        # Fetch a reaction from the pool (instant; kicks off background
+        # generation if the pool is empty)
+        text = self._reaction_pool.get(victim, ReactionPool.EVT_CAPSLOCK)
+        log.info("Caps Lock easter egg: %s says %r", victim.config.get("name"), text)
+
+        victim.state = CatState.SURPRISED
+        victim.frame_index = 0
+        victim.meow_text = text
+        victim.meow_visible = True
+        # Auto-hide after 3 s — reuse the existing meow timer slot on the cat
+        if victim._meow_timer_id:
+            try:
+                GLib.source_remove(victim._meow_timer_id)
+            except Exception:
+                pass
+        victim._meow_timer_id = GLib.timeout_add(3000, victim._hide_meow)
 
     def eg_follow_leader(self):
         if len(self.cat_instances) < 2:
