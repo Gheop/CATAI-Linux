@@ -286,10 +286,39 @@ class OllamaChat(ChatBackend):
                         pass
 
 
+# ── Mock backend (CI e2e tests) ───────────────────────────────────────────────
+
+class MockChat(ChatBackend):
+    """Deterministic mock backend used by the E2E test suite in CI.
+
+    Activated when ``CATAI_MOCK_CHAT=1`` is set in the environment (see
+    ``create_chat`` below). Streams a fixed cat-ish response word-by-word
+    so the T6 "Got AI response" and T12 "Chat still active after drag"
+    assertions pass without needing a real Claude key or a running Ollama
+    server.
+    """
+
+    MOCK_RESPONSE = "Miaou mon ami ! Voici une réponse mockée pour la CI. Prrr~"
+
+    def _stream_chunks(self):
+        # Stream word-by-word with a tiny delay so on_token fires several
+        # times — exercises the streaming path, not just a single big chunk.
+        for word in self.MOCK_RESPONSE.split():
+            if self._cancel:
+                return
+            yield word + " "
+            time.sleep(0.02)
+
+
 # ── Dispatcher ────────────────────────────────────────────────────────────────
 
 def create_chat(model: str) -> ChatBackend:
     """Create the best available chat backend for the requested model."""
+    # CI escape hatch: short-circuit to a deterministic mock so the e2e
+    # suite can run without a real AI backend.
+    if os.environ.get("CATAI_MOCK_CHAT") == "1":
+        log.debug("Using MockChat (CATAI_MOCK_CHAT=1)")
+        return MockChat(model)
     if model.startswith("claude-") and claude_available():
         log.debug("Using Claude API (%s)", model)
         return ClaudeChat(model)
