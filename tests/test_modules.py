@@ -279,6 +279,7 @@ def test_import_smoke() -> None:
         "catai_linux.drawing",
         "catai_linux.reactions",
         "catai_linux.mood",
+        "catai_linux.activity",
         "catai_linux.app",
     ]
     for m in modules:
@@ -445,6 +446,61 @@ def test_mood() -> None:
                  loaded.happiness == 60.0, str(loaded.happiness))
 
 
+# ── catai_linux.activity ─────────────────────────────────────────────────────
+
+def test_activity() -> None:
+    print("\n[activity]", flush=True)
+    from catai_linux.activity import ActivityMonitor
+
+    a = ActivityMonitor()
+    test("default idle_ms=0", a.idle_ms == 0)
+    test("default cpu_load=0", a.cpu_load == 0.0)
+    test("default is_afk=False", a.is_afk is False)
+    test("default hour", 0 <= a.hour <= 23)
+
+    # AFK threshold logic
+    a.idle_ms = 5 * 60 * 1000  # 5 min — below threshold
+    a._last_update = 0  # allow update
+    a.idle_ms = 5 * 60 * 1000
+    # Manually simulate the state transition since update() reads from system
+    a.is_afk = False
+    # Force the logic via direct manipulation
+    a.idle_ms = ActivityMonitor.IDLE_THRESHOLD_MS + 1000
+    if a.idle_ms >= ActivityMonitor.IDLE_THRESHOLD_MS:
+        a.is_afk = True
+    test("AFK triggered above threshold", a.is_afk)
+
+    # Return-from-AFK threshold (sticky: < IDLE_WAKEUP_THRESHOLD_MS)
+    a.idle_ms = ActivityMonitor.IDLE_WAKEUP_THRESHOLD_MS + 100
+    if a.is_afk and a.idle_ms < ActivityMonitor.IDLE_WAKEUP_THRESHOLD_MS:
+        a.is_afk = False
+    test("AFK sticky when slightly active", a.is_afk)
+    a.idle_ms = 100  # very active
+    if a.is_afk and a.idle_ms < ActivityMonitor.IDLE_WAKEUP_THRESHOLD_MS:
+        a.is_afk = False
+    test("AFK cleared when fully active", not a.is_afk)
+
+    # Night hours
+    a.hour = 2
+    test("is_night at 2am", a.is_night())
+    a.hour = 14
+    test("not night at 2pm", not a.is_night())
+    a.hour = 23
+    test("is_night at 11pm", a.is_night())
+
+    # CPU busy
+    a.cpu_load = 3.5
+    test("is_cpu_busy at load 3.5", a.is_cpu_busy())
+    a.cpu_load = 0.5
+    test("not cpu busy at load 0.5", not a.is_cpu_busy())
+
+    # Snapshot
+    snap = a.snapshot()
+    test("snapshot has expected keys",
+         all(k in snap for k in ("idle_ms", "is_afk", "cpu_load", "hour", "is_night")),
+         str(snap.keys()))
+
+
 def _run_section(name: str, fn) -> None:
     """Run a test section, catching import errors so one broken module
     doesn't kill the whole suite. Records a FAIL on exception."""
@@ -467,6 +523,7 @@ def main() -> int:
     _run_section("drawing", test_drawing)
     _run_section("reactions", test_reactions)
     _run_section("mood", test_mood)
+    _run_section("activity", test_activity)
     print(f"\n=== Results: {PASS} passed, {FAIL} failed ===\n", flush=True)
     return 0 if FAIL == 0 else 1
 

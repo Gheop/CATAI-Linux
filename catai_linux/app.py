@@ -606,6 +606,7 @@ from catai_linux.x11_helpers import (  # noqa: E402
 
 from catai_linux.reactions import ReactionPool  # noqa: E402
 from catai_linux.mood import CatMood  # noqa: E402
+from catai_linux.activity import ActivityMonitor  # noqa: E402
 
 
 from catai_linux.chat_backend import (  # noqa: E402
@@ -2262,6 +2263,9 @@ class CatAIApp(Gtk.Application):
         self._petting_timer_id = None
         # Mood system save interval (60 s periodic + on shutdown)
         self._mood_save_timer_id = None
+        # Activity monitor — polled from behavior_tick, drives AFK sleep
+        self._activity = ActivityMonitor()
+        self._afk_sleep_active = False  # cats currently mass-sleeping from AFK
 
     def do_activate(self):
         _setup_logging()
@@ -2655,6 +2659,23 @@ class CatAIApp(Gtk.Application):
                 log.debug("mood save failed for %s", cat.config.get("id"), exc_info=True)
         return True
 
+    def _cmd_activity_state(self, parts):
+        """Return the activity monitor snapshot + afk_sleep flag."""
+        snap = self._activity.snapshot()
+        return (f"OK idle_ms={snap['idle_ms']} is_afk={snap['is_afk']} "
+                f"cpu_load={snap['cpu_load']} hour={snap['hour']} "
+                f"is_night={snap['is_night']} afk_sleep={self._afk_sleep_active}")
+
+    def _cmd_force_afk(self, parts):
+        """E2E hook: force the AFK-sleep transition without waiting for
+        10 minutes of idle time. Usage: force_afk on | off"""
+        if len(parts) < 2 or parts[1] not in ("on", "off"):
+            return "ERR: usage: force_afk on|off"
+        self._activity.is_afk = (parts[1] == "on")
+        # Kick the activity application immediately
+        self._apply_activity_signals()
+        return f"OK afk={parts[1]}"
+
     def _cmd_mood_state(self, parts):
         """Return the mood snapshot for every cat. Usage: mood_state [idx]
         If an index is provided, returns just that cat's stats."""
@@ -2790,6 +2811,8 @@ class CatAIApp(Gtk.Application):
                 "petting_state": self._cmd_petting_state,
                 "mood_state": self._cmd_mood_state,
                 "mood_set": self._cmd_mood_set,
+                "activity_state": self._cmd_activity_state,
+                "force_afk": self._cmd_force_afk,
                 "get_chat_response": self._cmd_get_chat_response,
                 "screenshot": self._cmd_screenshot,
             }
@@ -3680,12 +3703,50 @@ class CatAIApp(Gtk.Application):
         return True
 
     def _behavior_tick(self):
+        # Activity monitor update is cheap (internally throttled to 2s),
+        # call it every tick so AFK detection feels responsive.
+        try:
+            self._activity.update()
+            self._apply_activity_signals()
+        except Exception:
+            log.exception("activity monitor update failed")
+
         for cat in self.cat_instances:
             try:
                 cat.behavior_tick()
             except Exception:
                 log.exception("behavior_tick crashed for %s", cat.config.get("char_id", "?"))
         return True
+
+    def _apply_activity_signals(self) -> None:
+        """Translate ActivityMonitor state into cat behavior. Edge-triggered
+        so a cat that's already sleeping doesn't get re-forced every tick."""
+        afk_now = self._activity.is_afk
+        if afk_now and not self._afk_sleep_active:
+            # Transition INTO AFK → send everyone to sleep
+            for cat in self.cat_instances:
+                if cat.in_encounter or cat.dragging:
+                    continue
+                if getattr(cat, "_petting_active", False):
+                    continue
+                cat.state = CatState.SLEEPING_BALL
+                cat.frame_index = 0
+                cat._sleep_tick = 0
+                cat.direction = "south"
+                cat.in_encounter = True  # freeze them until we wake them up
+            self._afk_sleep_active = True
+            log.info("activity: user AFK — cats are sleeping")
+        elif not afk_now and self._afk_sleep_active:
+            # Transition OUT of AFK → wake everyone up with a brief surprise
+            for cat in self.cat_instances:
+                if not cat.in_encounter:
+                    continue
+                cat.state = CatState.WAKING_UP
+                cat.frame_index = 0
+                cat.in_encounter = False
+                cat.idle_ticks = 0
+            self._afk_sleep_active = False
+            log.info("activity: user back — cats waking up")
 
     def _check_encounters(self):
         """Detect two nearby cats and maybe start an encounter (called at render rate)."""

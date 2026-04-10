@@ -567,6 +567,29 @@ def run_tests():
     # Restore to neutral so the rest of the tests see a normal cat
     send_cmd("mood_set 0 happiness 60")
 
+    # ── T15c: Activity monitor + AFK detection ──────────
+    print("\n[T15c] Activity monitor", flush=True)
+    resp = send_cmd("activity_state")
+    test("activity_state returns snapshot",
+         resp.startswith("OK") and "idle_ms=" in resp and "hour=" in resp,
+         resp[:120])
+    test("initial afk_sleep=False",
+         "afk_sleep=False" in resp, resp)
+    # Force AFK on — all cats should transition to SLEEPING_BALL + in_encounter
+    resp = send_cmd("force_afk on")
+    test("force_afk on accepted", resp.startswith("OK"), resp)
+    time.sleep(0.3)
+    resp = send_cmd("activity_state")
+    test("afk_sleep=True after force_afk on",
+         "afk_sleep=True" in resp, resp)
+    # Force AFK off — cats should wake up
+    resp = send_cmd("force_afk off")
+    test("force_afk off accepted", resp.startswith("OK"), resp)
+    time.sleep(0.3)
+    resp = send_cmd("activity_state")
+    test("afk_sleep=False after force_afk off",
+         "afk_sleep=False" in resp, resp)
+
     # ── T16: Quit ─────────────────────────────────────────
     print("\n[T16] Quit via socket", flush=True)
     resp = send_cmd("click_menu_quit")
