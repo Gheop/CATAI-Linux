@@ -2517,9 +2517,16 @@ class CatAIApp(Gtk.Application):
                 f"hidden={hidden_cats} boss={boss_cats} beam={beam_cats}")
 
     def _cmd_kitten_count(self, parts):
-        """Return the number of kittens currently on the canvas (separate from
-        the adult count so tests can verify love-encounter births)."""
-        kittens = sum(1 for c in self.cat_instances if getattr(c, "is_kitten", False))
+        """Return the number of real kittens currently on the canvas, i.e.
+        cats born from love encounters. Explicitly excludes apocalypse
+        clones which happen to share the is_kitten flag but are tagged
+        is_apocalypse_clone too — otherwise a lingering apocalypse would
+        make kitten_count report the entire clone army."""
+        kittens = sum(
+            1 for c in self.cat_instances
+            if getattr(c, "is_kitten", False)
+            and not getattr(c, "is_apocalypse_clone", False)
+        )
         return f"OK kittens={kittens}"
 
     def _cmd_get_chat_response(self, parts):

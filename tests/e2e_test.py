@@ -350,9 +350,16 @@ def run_tests():
     n_after = _cats(after)
     test("apocalypse spawned clones", n_after > n_before,
          f"cats: {n_before} -> {n_after}")
-    # Toggle off
-    send_cmd("egg apocalypse")
-    time.sleep(0.5)
+    # Stop apocalypse via the toggle command (eg_apocalypse itself only
+    # calls start_apocalypse — it is not idempotent), then wait for the
+    # synchronous clone cleanup to finish.
+    send_cmd("apocalypse")
+    time.sleep(1)
+    # Hard barrier: assert the clone army is actually gone before the
+    # love-encounter tests run, otherwise MAX_KITTENS would block births.
+    post = _cats(send_cmd("status"))
+    test("apocalypse clones cleaned up", post <= n_before + 1,
+         f"cats: {post} (started at {n_before})")
 
     # T13d: shake
     resp = send_cmd("egg shake")
