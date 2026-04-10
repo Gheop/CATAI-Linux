@@ -124,16 +124,52 @@ def apply_css() -> None:
         Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
 
+# ── Theme palette ────────────────────────────────────────────────────────────
+# Mutable singleton — switched at runtime by set_theme() when the desktop
+# dark/light preference changes. Each draw_* function reads its colors
+# from here instead of hardcoding, so swapping the palette in one place
+# ripples across every bubble / menu / overlay.
+
+LIGHT_THEME = {
+    "bubble_bg": (0.95, 0.9, 0.8, 1.0),         # cream background
+    "bubble_bg_translucent": (0.95, 0.9, 0.8, 0.95),
+    "bubble_border": (0.3, 0.2, 0.1, 1.0),      # dark brown border
+    "bubble_text": (0.3, 0.2, 0.1, 1.0),        # dark brown text
+    "overlay_text": (0.3, 0.2, 0.1, 1.0),       # ZzZ etc.
+}
+
+DARK_THEME = {
+    "bubble_bg": (0.16, 0.13, 0.10, 1.0),         # deep coffee background
+    "bubble_bg_translucent": (0.16, 0.13, 0.10, 0.93),
+    "bubble_border": (0.95, 0.82, 0.55, 1.0),     # warm tan border
+    "bubble_text": (0.95, 0.88, 0.70, 1.0),       # warm cream text
+    "overlay_text": (0.95, 0.88, 0.70, 1.0),
+}
+
+# Current active palette — mutated in place by set_theme() so existing
+# module-level references stay valid.
+THEME: dict = dict(LIGHT_THEME)
+
+
+def set_theme(dark: bool) -> None:
+    """Swap the active bubble/menu palette. Called by the CatAIApp theme
+    poller (catai_linux.theme.is_dark_mode) when the desktop color-scheme
+    preference flips."""
+    src = DARK_THEME if dark else LIGHT_THEME
+    THEME.clear()
+    THEME.update(src)
+
+
 # ── Pixel-art atoms ───────────────────────────────────────────────────────────
 
 def draw_pixel_tail(ctx, w: int, h: int, px: int = 3) -> None:
     """Pixel-art speech-bubble tail pointing down. Used by the chat bubble."""
     cx = w / 2
-    ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
+    ctx.set_source_rgba(*THEME["bubble_border"])
     for row in range(5):
         bw = px * (5 - row)
         ctx.rectangle(cx - bw/2, row * px, bw, px); ctx.fill()
-    ctx.set_source_rgba(0.95, 0.9, 0.8, 1)
+    ctx.set_source_rgba(*THEME["bubble_bg"])
     for row in range(4):
         bw = px * (5 - row) - px * 2
         if bw > 0:
@@ -145,9 +181,16 @@ def draw_pixel_tail(ctx, w: int, h: int, px: int = 3) -> None:
 BUBBLE_FONT = "monospace bold 11"
 
 
-def _pango_show_text(ctx, text: str, r: float = 0.3, g: float = 0.2,
-                     b: float = 0.1, a: float = 1.0) -> None:
-    """Render text with PangoCairo (supports COLRv1 emoji)."""
+def _pango_show_text(ctx, text: str, r: float | None = None, g: float | None = None,
+                     b: float | None = None, a: float | None = None) -> None:
+    """Render text with PangoCairo (supports COLRv1 emoji).
+
+    When r/g/b/a are None, uses the active THEME["bubble_text"] — so bubbles
+    pick up the dark/light palette automatically without every caller having
+    to thread the color through.
+    """
+    if r is None or g is None or b is None or a is None:
+        r, g, b, a = THEME["bubble_text"]
     ctx.set_source_rgba(r, g, b, a)
     lay = PangoCairo.create_layout(ctx)
     lay.set_font_description(Pango.FontDescription(BUBBLE_FONT))
@@ -197,13 +240,13 @@ def draw_meow_bubble(ctx, text: str, cat_x: float, cat_y: float,
     bx = max(4, bx)
 
     # Background
-    ctx.set_source_rgba(0.95, 0.9, 0.8, 1)
+    ctx.set_source_rgba(*THEME["bubble_bg"])
     ctx.rectangle(bx, by, bw, bh)
     ctx.fill()
 
     # Border (2px)
     px = 2
-    ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
+    ctx.set_source_rgba(*THEME["bubble_border"])
     ctx.rectangle(bx, by, bw, px); ctx.fill()
     ctx.rectangle(bx, by + bh - px, bw, px); ctx.fill()
     ctx.rectangle(bx, by, px, bh); ctx.fill()
@@ -215,12 +258,11 @@ def draw_meow_bubble(ctx, text: str, cat_x: float, cat_y: float,
     ctx.rectangle(bx + i, by + i, px, bh - i*2); ctx.fill()
     ctx.rectangle(bx + i + bw - i*2 - px, by + i, px, bh - i*2); ctx.fill()
     # Corner cleanup
-    ctx.set_source_rgba(0.95, 0.9, 0.8, 1)
+    ctx.set_source_rgba(*THEME["bubble_bg"])
     for cx, cy in [(bx, by), (bx + bw - px, by), (bx, by + bh - px), (bx + bw - px, by + bh - px)]:
         ctx.rectangle(cx, cy, px, px); ctx.fill()
 
     # Text (centered)
-    ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
     tx = bx + (bw - text_w) / 2
     ty = by + (bh - text_h) / 2
     ctx.move_to(tx, ty)
@@ -248,20 +290,20 @@ def draw_encounter_bubble(ctx, text: str, cat_x: float, cat_y: float,
     if by < 4:
         by = cat_y + cat_h + 8
 
-    ctx.set_source_rgba(0.95, 0.9, 0.8, 1)
+    ctx.set_source_rgba(*THEME["bubble_bg"])
     ctx.rectangle(bx, by, bw, bh)
     ctx.fill()
     px = 2
-    ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
+    ctx.set_source_rgba(*THEME["bubble_border"])
     for rx, ry, rw, rh in [(bx, by, bw, px), (bx, by + bh - px, bw, px),
                             (bx, by, px, bh), (bx + bw - px, by, px, bh)]:
         ctx.rectangle(rx, ry, rw, rh); ctx.fill()
-    ctx.set_source_rgba(0.95, 0.9, 0.8, 1)
+    ctx.set_source_rgba(*THEME["bubble_bg"])
     for cx, cy in [(bx, by), (bx + bw - px, by), (bx, by + bh - px), (bx + bw - px, by + bh - px)]:
         ctx.rectangle(cx, cy, px, px); ctx.fill()
 
     ctx.move_to(bx + pad_x, by + pad_y)
-    ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
+    ctx.set_source_rgba(*THEME["bubble_text"])
     PangoCairo.show_layout(ctx, lay)
 
 
@@ -288,13 +330,13 @@ def draw_chat_bubble(ctx, text: str, cat_x: float, cat_y: float,
         by = cat_y + cat_h + 10
 
     # Background
-    ctx.set_source_rgba(0.95, 0.9, 0.8, 0.95)
+    ctx.set_source_rgba(*THEME["bubble_bg_translucent"])
     ctx.rectangle(bx, by, bw, bh)
     ctx.fill()
 
     # Border
     px = 3
-    ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
+    ctx.set_source_rgba(*THEME["bubble_border"])
     ctx.rectangle(bx, by, bw, px); ctx.fill()
     ctx.rectangle(bx, by + bh - px, bw, px); ctx.fill()
     ctx.rectangle(bx, by, px, bh); ctx.fill()
@@ -302,13 +344,13 @@ def draw_chat_bubble(ctx, text: str, cat_x: float, cat_y: float,
 
     # Text via Pango (handles emoji width correctly)
     ctx.move_to(bx + pad, by + pad)
-    ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
+    ctx.set_source_rgba(*THEME["bubble_text"])
     PangoCairo.show_layout(ctx, lay)
 
     # Tail (small triangle pointing down)
     tx = bx + bw / 2
     ty = by + bh
-    ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
+    ctx.set_source_rgba(*THEME["bubble_border"])
     ctx.move_to(tx - 8, ty)
     ctx.line_to(tx + 8, ty)
     ctx.line_to(tx, ty + 10)
@@ -321,11 +363,11 @@ def draw_context_menu(ctx, mx: float, my: float,
     """Draw a right-click context menu on the canvas."""
     bw, bh = 120, 50
     pad = 8
-    ctx.set_source_rgba(0.95, 0.9, 0.8, 0.95)
+    ctx.set_source_rgba(*THEME["bubble_bg_translucent"])
     ctx.rectangle(mx, my, bw, bh)
     ctx.fill()
     # Border
-    ctx.set_source_rgba(0.3, 0.2, 0.1, 1)
+    ctx.set_source_rgba(*THEME["bubble_border"])
     ctx.set_line_width(2)
     ctx.rectangle(mx, my, bw, bh)
     ctx.stroke()
@@ -334,6 +376,7 @@ def draw_context_menu(ctx, mx: float, my: float,
     ctx.line_to(mx + bw - pad, my + 25)
     ctx.stroke()
     # Text
+    ctx.set_source_rgba(*THEME["bubble_text"])
     ctx.select_font_face("monospace", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
     ctx.set_font_size(11)
     ctx.move_to(mx + pad, my + 17)
@@ -355,7 +398,8 @@ def draw_zzz(ctx, cat_x: float, cat_y: float, cat_w: float) -> None:
         x = cat_x + cat_w // 2 + dx
         y = base_y - int(offset_y * 18)
         ctx.set_font_size(size)
-        ctx.set_source_rgba(0.3, 0.2, 0.1, alpha)
+        tr, tg, tb, _ta = THEME["overlay_text"]
+        ctx.set_source_rgba(tr, tg, tb, alpha)
         ctx.move_to(x, y)
         ctx.show_text("Z")
 
