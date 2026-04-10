@@ -22,6 +22,7 @@ Port of [CATAI](https://github.com/wil-pe/CATAI) (macOS/Swift) to Linux.
 - **Click-through** -- Cats float above all windows, clicks pass through to apps below
 - **6 unique characters** -- Pre-colored 80×80 sprites from the catset collection, each with a distinct look and personality
 - **AI chat** -- Click a cat to open a pixel-art chat bubble, powered by [Claude](https://claude.ai) or [Ollama](https://ollama.ai)
+- **Voice chat** 🎤 (optional) -- Hold the mic button or simply hold **Space** to talk to your cats. 100% local transcription via [faster-whisper](https://github.com/SYSTRAN/faster-whisper), GPU-accelerated if you have CUDA
 - **Rich animations** -- 23 animation states including running, dashing, sleeping, grooming, climbing, wall grab, ledge climbing, dying & resurrection, and more
 - **Animation sequences** -- Multi-step scripted behaviors: wall adventures, ledge climbing, dash crashes, dramatic deaths with resurrection
 - **Visual overlays** -- Floating ZzZ, hearts, speed lines, hurt stars, skulls, sparkles above cats during animations
@@ -75,6 +76,11 @@ sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-4.0
 
 # Install from PyPI
 pip install catai-linux
+
+# Optional: adds ~100 MB of extra deps (faster-whisper + CTranslate2)
+# needed for the push-to-talk voice chat feature. Only install this if
+# you actually want to talk to your cats.
+pip install catai-linux[voice]
 ```
 
 ## Run
@@ -94,6 +100,8 @@ Right-click any cat to access Settings:
 - **Model** -- Choose between Claude and Ollama models
 - **Autostart** -- Launch at login
 - **Cat encounters** -- Enable/disable random cat-to-cat conversations
+- **Voice chat** -- Enable push-to-talk mic button + hold-Space recording (requires `pip install catai-linux[voice]`)
+- **Voice model** -- Pick the Whisper model (tiny → large-v3), each annotated with size and recommended device
 
 ## How It Works
 
@@ -166,6 +174,18 @@ MIT
 ---
 
 ## Changelog
+
+### v0.4.0 — Voice chat + instant startup (2026-04-10)
+
+- **Voice chat (push-to-talk)** 🎤 — talk to your cats instead of typing. Hold the mic button next to the chat entry, or simply **hold Space** while the entry is focused and empty (just like `/voice` in Claude Code). Release to auto-transcribe and send.
+- **100% local & private** — speech-to-text runs on-device via [faster-whisper](https://github.com/SYSTRAN/faster-whisper). Nothing is sent to any cloud service for transcription.
+- **GPU auto-detection** — CUDA is used automatically if available (float16), otherwise CPU int8. Tested on RTX 2050 / 5090.
+- **Whisper model picker in Settings** — 7 models from `tiny` (39 MB, CPU) to `large-v3` (1.5 GB, GPU), each annotated with size and recommended device. Changes take effect immediately, no restart needed.
+- **Model preload at startup** — if the selected Whisper model is already cached, it loads into memory in the background while the cats spawn, so the first recording is instant (no 1–3 s wait).
+- **Token refresh feedback** — when the Claude OAuth token needs refreshing mid-conversation, the chat bubble now shows an animated braille spinner with "Renouvellement du token Claude..." instead of a silent stall.
+- **Instant click on startup** — fixed a 4–5 s freeze where clicking on a cat did nothing during the first seconds. All heavy per-cat setup (sprite loading, animation offsets, pixel-scan floor detection, chat backend creation) now runs in background threads so the main event loop is responsive from t=0.
+- **Soft dependency** — the voice feature is opt-in. Install with `pip install catai-linux[voice]`, then enable via `--voice` CLI flag or Settings checkbox. The mic button only appears when enabled, and the feature degrades gracefully if `faster-whisper` is not installed.
+- **Settings window** — auto-sized to fit screen height (max 900 px, min 480 px), scrollable for smaller displays.
 
 ### v0.3.6 — 22 easter eggs + Nyan Cat + magic phrases (2026-04-10)
 

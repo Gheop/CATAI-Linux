@@ -35,15 +35,28 @@ def _setup_logging():
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("anthropic").setLevel(logging.WARNING)
+    logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+    logging.getLogger("faster_whisper").setLevel(logging.WARNING)
 
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 gi.require_version("GdkX11", "4.0")
-from gi.repository import Gdk, GdkX11, Gio, GLib, Gtk, Pango, PangoCairo
+gi.require_version("Gst", "1.0")
+from gi.repository import Gdk, GdkX11, Gio, GLib, Gst, Gtk, Pango, PangoCairo
+
+Gst.init(None)
 
 from PIL import Image
 import httpx
+
+# ── Optional voice support (faster-whisper) ──────────────────────────────────
+try:
+    from faster_whisper import WhisperModel as _WhisperModel
+    VOICE_AVAILABLE = True
+except ImportError:
+    _WhisperModel = None
+    VOICE_AVAILABLE = False
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -197,6 +210,7 @@ class L10n:
         "no_ollama": {"fr": "(Ollama indisponible)", "en": "(Ollama unavailable)", "es": "(Ollama no disponible)"},
         "err":      {"fr": "Mrrp... pas de connexion", "en": "Mrrp... no connection", "es": "Mrrp... sin conexión"},
         "err_auth": {"fr": "Mrrp... token expiré, relance 'claude' pour renouveler", "en": "Mrrp... token expired, run 'claude' to renew", "es": "Mrrp... token expirado, ejecuta 'claude' para renovar"},
+        "refreshing_auth": {"fr": "Renouvellement du token Claude...", "en": "Refreshing Claude token...", "es": "Renovando token de Claude..."},
         "lang_label": {"fr": "LANGUE", "en": "LANGUAGE", "es": "IDIOMA"},
         "autostart": {"fr": "Lancer au démarrage", "en": "Start at login", "es": "Iniciar al arrancar"},
         "encounters": {"fr": "Rencontres entre chats", "en": "Cat encounters", "es": "Encuentros entre gatos"},
@@ -1118,13 +1132,15 @@ class ChatBackend:
         self._cancel = False
         self._lock = threading.Lock()
 
-    def send(self, text, on_token, on_done, on_error=None):
+    def send(self, text, on_token, on_done, on_error=None, on_status=None):
         with self._lock:
             self.messages.append({"role": "user", "content": text})
             if len(self.messages) > MEM_MAX * 2 + 1:
                 self.messages = [self.messages[0]] + self.messages[-(MEM_MAX * 2):]
         self.is_streaming = True
         self._cancel = False
+        # Status callback (e.g. "refreshing auth...") — used by ClaudeChat
+        self._on_status = on_status
 
         def _run():
             full = ""
@@ -1199,6 +1215,8 @@ class ClaudeChat(ChatBackend):
         except Exception as e:
             if "401" in str(e) or "authentication" in str(e).lower():
                 log.warning("Auth failed, refreshing token via Claude CLI...")
+                if getattr(self, "_on_status", None):
+                    GLib.idle_add(self._on_status, "refreshing")
                 _refresh_claude_token()
                 new_key = _read_claude_oauth()
                 if new_key:
@@ -1343,6 +1361,24 @@ CSS = b"""
     border: 2px solid #4d3319;
     color: #4d3319;
     min-height: 24px;
+}
+.pixel-mic-btn {
+    font-family: monospace;
+    background-color: #fff9ee;
+    background-image: none;
+    border: 2px solid #4d3319;
+    color: #4d3319;
+    min-height: 24px;
+    padding: 0 4px;
+    box-shadow: none;
+    text-shadow: none;
+}
+.pixel-mic-btn:hover {
+    background-color: #f0e4d0;
+}
+.pixel-mic-btn-recording {
+    background-color: #ffdddd;
+    border-color: #cc2222;
 }
 .pixel-title {
     font-family: monospace;
@@ -2169,32 +2205,44 @@ class CatInstance:
         self.dest_y = self.y
         self._meta = meta
         self._cat_dir = cat_dir
+        # Default offsets + padding until bg thread computes them
+        self._anim_offsets = {}
+        self._sprite_bottom_padding = 0
 
+        # Everything heavy (sprite loading, anim offset computation, pixel
+        # scans, chat backend creation which may do HTTP + subprocess) goes
+        # into one background thread so main loop (including clicks) stays
+        # responsive from t=0.
         self.load_assets(meta, cat_dir)
-        self.setup_chat(model, lang)
-
-        # Compute sprite-pixel offsets to align next anim after climbing
         sprite_w = meta["character"]["size"]["width"]
         sprite_h = meta["character"]["size"]["height"]
-        raw_offsets = _compute_anim_offsets(meta, cat_dir)
         scale_x = dw / sprite_w
         scale_y = dh / sprite_h
-        self._anim_offsets = {}
-        for anim_key, dirs in raw_offsets.items():
-            self._anim_offsets[anim_key] = {}
-            for direction, (y_off, x_off) in dirs.items():
-                self._anim_offsets[anim_key][direction] = (round(y_off * scale_y), round(x_off * scale_x))
 
-        # Compute the empty padding between the sprite feet and the bottom of
-        # its bounding box — so the clamp can let cats go further down visually
-        try:
-            south_rel = meta["frames"]["rotations"].get("south", "")
-            ref_img = Image.open(os.path.join(cat_dir, south_rel)).convert("RGBA")
-            ref_floor = _sprite_floor_y(ref_img)  # in native sprite pixels
-            # Empty rows below feet = native_h - 1 - ref_floor
-            self._sprite_bottom_padding = round((sprite_h - 1 - ref_floor) * scale_y)
-        except Exception:
-            self._sprite_bottom_padding = 0
+        def bg_setup():
+            # 1. Anim offsets (14 anims × PIL Image.open + pixel-loop)
+            raw_offsets = _compute_anim_offsets(meta, cat_dir)
+            scaled_offsets = {}
+            for anim_key, dirs in raw_offsets.items():
+                scaled_offsets[anim_key] = {}
+                for direction, (y_off, x_off) in dirs.items():
+                    scaled_offsets[anim_key][direction] = (round(y_off * scale_y), round(x_off * scale_x))
+            GLib.idle_add(lambda d=scaled_offsets: setattr(self, "_anim_offsets", d) or False)
+
+            # 2. Sprite floor/bottom padding
+            try:
+                south_rel = meta["frames"]["rotations"].get("south", "")
+                ref_img = Image.open(os.path.join(cat_dir, south_rel)).convert("RGBA")
+                ref_floor = _sprite_floor_y(ref_img)
+                padding = round((sprite_h - 1 - ref_floor) * scale_y)
+            except Exception:
+                padding = 0
+            GLib.idle_add(lambda p=padding: setattr(self, "_sprite_bottom_padding", p) or False)
+
+            # 3. Chat backend (may do httpx.get Ollama probe + subprocess OAuth refresh)
+            self.setup_chat(model, lang)
+
+        threading.Thread(target=bg_setup, daemon=True).start()
 
     def setup_chat(self, model, lang):
         char_id = self.config.get("char_id")
@@ -2209,41 +2257,61 @@ class CatInstance:
             self.chat_backend.messages.extend(mem[1:])
 
     def load_assets(self, meta, cat_dir, lazy=True):
-        """Load sprites as cairo.ImageSurface with disk cache."""
+        """Load sprites as cairo.ImageSurface. Rotations + running anim in a
+        background thread so startup doesn't block the main thread/clicks.
+        Remaining animations also load in background after."""
         dw, dh = self.display_w, self.display_h
         size = (dw, dh)
-
-        # Always load rotations immediately (8 sprites, fast)
         self.rotations = {}
-        for dir_name, rel_path in meta["frames"]["rotations"].items():
-            pil = load_and_tint(os.path.join(cat_dir, rel_path), self.color_def, cache_size=size)
-            self.rotations[dir_name] = pil_to_surface(pil, dw, dh)
-
-        # Load walking animation immediately (needed right away)
         self.animations = {}
         walk_key = "running-8-frames"
-        if walk_key in meta["frames"]["animations"]:
-            self.animations[walk_key] = {}
-            for dir_name, frame_paths in meta["frames"]["animations"][walk_key].items():
-                self.animations[walk_key][dir_name] = [
-                    pil_to_surface(load_and_tint(os.path.join(cat_dir, p), self.color_def, cache_size=size), dw, dh)
-                    for p in frame_paths
-                ]
 
-        if lazy:
-            remaining = {k: v for k, v in meta["frames"]["animations"].items() if k != walk_key}
-            if remaining:
-                threading.Thread(target=self._load_anims_bg, args=(remaining, cat_dir, size), daemon=True).start()
-        else:
-            for anim_name, dirs in meta["frames"]["animations"].items():
-                if anim_name == walk_key:
-                    continue
-                self.animations[anim_name] = {}
-                for dir_name, frame_paths in dirs.items():
-                    self.animations[anim_name][dir_name] = [
+        def bg_load():
+            # 1. Rotations first (cat becomes visible & clickable as soon as these are ready)
+            rots = {}
+            for dir_name, rel_path in meta["frames"]["rotations"].items():
+                pil = load_and_tint(os.path.join(cat_dir, rel_path), self.color_def, cache_size=size)
+                rots[dir_name] = pil_to_surface(pil, dw, dh)
+            GLib.idle_add(lambda: self.rotations.update(rots) or False)
+
+            # 2. Running anim (needed for WALKING)
+            if walk_key in meta["frames"]["animations"]:
+                walk_data = {}
+                for dir_name, frame_paths in meta["frames"]["animations"][walk_key].items():
+                    walk_data[dir_name] = [
                         pil_to_surface(load_and_tint(os.path.join(cat_dir, p), self.color_def, cache_size=size), dw, dh)
                         for p in frame_paths
                     ]
+                GLib.idle_add(lambda d=walk_data: self.animations.update({walk_key: d}) or False)
+
+            # 3. Everything else (only if lazy mode)
+            if lazy:
+                remaining = {k: v for k, v in meta["frames"]["animations"].items() if k != walk_key}
+                for anim_name, dirs in remaining.items():
+                    anim_data = {}
+                    for dir_name, frame_paths in dirs.items():
+                        anim_data[dir_name] = [
+                            pil_to_surface(load_and_tint(os.path.join(cat_dir, p), self.color_def, cache_size=size), dw, dh)
+                            for p in frame_paths
+                        ]
+                    GLib.idle_add(lambda an=anim_name, ad=anim_data: self.animations.update({an: ad}) or False)
+            else:
+                # Synchronous for scale changes
+                for anim_name, dirs in meta["frames"]["animations"].items():
+                    if anim_name == walk_key:
+                        continue
+                    anim_data = {}
+                    for dir_name, frame_paths in dirs.items():
+                        anim_data[dir_name] = [
+                            pil_to_surface(load_and_tint(os.path.join(cat_dir, p), self.color_def, cache_size=size), dw, dh)
+                            for p in frame_paths
+                        ]
+                    GLib.idle_add(lambda an=anim_name, ad=anim_data: self.animations.update({an: ad}) or False)
+
+        if lazy:
+            threading.Thread(target=bg_load, daemon=True).start()
+        else:
+            bg_load()  # still threaded via GLib.idle_add for surface updates
 
     def _load_anims_bg(self, anims, cat_dir, size):
         """Background-load remaining animations."""
@@ -2258,6 +2326,8 @@ class CatInstance:
             GLib.idle_add(lambda an=anim_name, ad=anim_data: self.animations.update({an: ad}) or False)
 
     def _fallback_surface(self):
+        if not self.rotations:
+            return None  # still loading in background
         return self.rotations.get(self.direction) or self.rotations.get("south") or next(iter(self.rotations.values()))
 
     def _current_surface(self):
@@ -2637,13 +2707,19 @@ class CatInstance:
         """Close the chat bubble AND the floating input entry."""
         self.chat_visible = False
         self.chat_response = ""
-        if self._app and self._app._chat_entry:
-            self._app._chat_entry.set_visible(False)
-            self._app._chat_entry.set_text("")
+        if self._app and getattr(self._app, "_chat_box", None):
+            self._app._chat_box.set_visible(False)
+            if self._app._chat_entry:
+                self._app._chat_entry.set_text("")
         if self._app:
             self._app._active_chat_cat = None
 
     def send_chat(self, text):
+        if not self.chat_backend:
+            # Background init still running — show a friendly hint and drop the text
+            self.chat_response = "..."
+            self.chat_visible = True
+            return
         if self.chat_backend.is_streaming:
             return
         # Magic phrase: "Don't panic" triggers/stops apocalypse mode (HGttG 🚀)
@@ -2672,8 +2748,20 @@ class CatInstance:
         self.frame_index = 0
 
         first_token = True
+        # Animated spinner for status messages (e.g. token refresh)
+        status_state = {"timer": None}
+        def stop_status_spinner():
+            if status_state["timer"]:
+                try:
+                    GLib.source_remove(status_state["timer"])
+                except Exception:
+                    pass
+                status_state["timer"] = None
+
         def on_token(token):
             nonlocal first_token
+            # Real tokens arrived → stop any status spinner
+            stop_status_spinner()
             if first_token:
                 self.chat_response = token
                 first_token = False
@@ -2682,6 +2770,7 @@ class CatInstance:
             return False
 
         def on_done():
+            stop_status_spinner()
             self.state = CatState.IDLE
             self.frame_index = 0
             self.idle_ticks = 0
@@ -2690,12 +2779,31 @@ class CatInstance:
             return False
 
         def on_error(msg):
+            stop_status_spinner()
             self.chat_response = msg
             self.state = CatState.IDLE
             self.frame_index = 0
             return False
 
-        self.chat_backend.send(text, on_token, on_done, on_error)
+        def on_status(kind):
+            # Animated braille spinner in the chat bubble until tokens start streaming
+            spinner_frames = ["\u280b", "\u2819", "\u2839", "\u2838", "\u283c", "\u2834", "\u2826", "\u2827", "\u2807", "\u280f"]
+            idx = {"i": 0}
+            if kind == "refreshing":
+                label = L10n.s("refreshing_auth")
+            else:
+                label = kind
+            def tick():
+                frame = spinner_frames[idx["i"] % len(spinner_frames)]
+                idx["i"] += 1
+                self.chat_response = f"{frame} {label}"
+                return True
+            tick()  # show immediately
+            stop_status_spinner()
+            status_state["timer"] = GLib.timeout_add(120, tick)
+            return False
+
+        self.chat_backend.send(text, on_token, on_done, on_error, on_status=on_status)
 
     def update_system_prompt(self, lang):
         char_id = self.config.get("char_id")
@@ -2703,7 +2811,7 @@ class CatInstance:
             p = _catset_prompt(char_id, self.config["name"], lang)
         else:
             p = self.color_def.prompt(self.config["name"], lang)
-        if self.chat_backend.messages:
+        if self.chat_backend and self.chat_backend.messages:
             self.chat_backend.messages[0] = {"role": "system", "content": p}
 
     # States that have native east/west frames in catset metadata
@@ -2825,7 +2933,10 @@ class SettingsWindow:
             self.window.set_decorated(False)
             set_notification_type(self.window)
             set_always_on_top(self.window)
-            self.window.set_default_size(340, 720)
+            # Clamp height to fit small screens (keep 80 px margin for top bar etc.)
+            screen_h = getattr(self.app, "screen_h", 0) or 900
+            win_h = min(900, max(480, screen_h - 80))
+            self.window.set_default_size(340, win_h)
             self.window.set_resizable(False)
             self.window.add_css_class("settings-window")
             self.window.connect("close-request", self._on_close)
@@ -3076,6 +3187,105 @@ class SettingsWindow:
         enc_check.set_margin_top(4)
         enc_check.connect("toggled", lambda btn: self.on_encounters_changed(btn.get_active()) if self.on_encounters_changed else None)
         box.append(enc_check)
+
+        # Voice chat (push-to-talk) — optional feature
+        voice_check = Gtk.CheckButton(label="Voice chat (hold mic button)")
+        voice_check.set_active(getattr(self.app, "_voice_enabled", False))
+        voice_check.add_css_class("pixel-label-small")
+        voice_check.set_margin_top(4)
+        if not VOICE_AVAILABLE:
+            voice_check.set_sensitive(False)
+        def _on_voice_toggled(btn):
+            enabled = btn.get_active() and VOICE_AVAILABLE
+            self.app._voice_enabled = enabled
+            if enabled and self.app._voice_recorder is None:
+                self.app._voice_recorder = VoiceRecorder()
+            self.app._save_all()
+        voice_check.connect("toggled", _on_voice_toggled)
+        box.append(voice_check)
+
+        if not VOICE_AVAILABLE:
+            hint = Gtk.Label()
+            hint.set_markup(
+                '<span foreground="#cc2222" size="x-small">'
+                'Not installed — run: <tt>pip install catai-linux[voice]</tt>'
+                '</span>'
+            )
+            hint.set_wrap(True)
+            hint.set_xalign(0)
+            hint.set_margin_start(24)
+            box.append(hint)
+        else:
+            restart_hint = Gtk.Label()
+            restart_hint.set_markup(
+                '<span foreground="#888888" size="x-small">'
+                'Restart CATAI to apply enable/disable'
+                '</span>'
+            )
+            restart_hint.set_xalign(0)
+            restart_hint.set_margin_start(24)
+            box.append(restart_hint)
+
+            # Whisper model dropdown (size + recommended device hint)
+            # Entry format: "name — <size> MB (<device>)"
+            voice_models = [
+                ("tiny",             39, "CPU"),
+                ("base",             74, "CPU"),
+                ("small",           244, "CPU/GPU"),
+                ("medium",          769, "GPU"),
+                ("distil-large-v3", 756, "GPU"),
+                ("large-v3-turbo",  809, "GPU"),
+                ("large-v3",       1550, "GPU"),
+            ]
+            model_label = Gtk.Label(label="Voice model")
+            model_label.add_css_class("pixel-label-small")
+            model_label.set_margin_top(8)
+            model_label.set_margin_start(24)
+            model_label.set_xalign(0)
+            box.append(model_label)
+
+            voice_drop = Gtk.DropDown()
+            voice_drop.set_margin_top(2)
+            voice_drop.set_margin_start(24)
+            voice_labels = [f"{name} — {size} MB ({dev})" for name, size, dev in voice_models]
+            voice_drop.set_model(Gtk.StringList.new(voice_labels))
+            current_model = getattr(self.app, "_voice_model", "base")
+            for i, (name, _sz, _d) in enumerate(voice_models):
+                if name == current_model:
+                    voice_drop.set_selected(i)
+                    break
+            voice_drop.set_sensitive(VOICE_AVAILABLE)
+
+            def _on_voice_model_changed(drop, _param):
+                idx = drop.get_selected()
+                if 0 <= idx < len(voice_models):
+                    name = voice_models[idx][0]
+                    self.app._voice_model = name
+                    if self.app._voice_recorder:
+                        self.app._voice_recorder.set_model(name)
+                        # Preload the new model in background if already cached
+                        if _whisper_model_cached(name):
+                            rec = self.app._voice_recorder
+                            def _preload():
+                                try:
+                                    rec._ensure_model()
+                                except Exception:
+                                    log.exception("Whisper preload failed")
+                            threading.Thread(target=_preload, daemon=True).start()
+                    self.app._save_all()
+                    log.info("Voice model set to %r", name)
+            voice_drop.connect("notify::selected", _on_voice_model_changed)
+            box.append(voice_drop)
+
+            voice_model_hint = Gtk.Label()
+            voice_model_hint.set_markup(
+                '<span foreground="#888888" size="x-small">'
+                'Larger = more accurate but slower. GPU needs CUDA.'
+                '</span>'
+            )
+            voice_model_hint.set_xalign(0)
+            voice_model_hint.set_margin_start(24)
+            box.append(voice_model_hint)
 
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -3479,6 +3689,190 @@ class LoveEncounter:
             cat._flip_h = False
 
 
+# ── Voice recorder (optional, faster-whisper) ──────────────────────────────────
+
+# Approx download sizes (MB) for user-facing status display
+WHISPER_MODEL_SIZES = {
+    "tiny": 39, "tiny.en": 39,
+    "base": 74, "base.en": 74,
+    "small": 244, "small.en": 244,
+    "medium": 769, "medium.en": 769,
+    "large-v1": 1550, "large-v2": 1550, "large-v3": 1550,
+    "large-v3-turbo": 809, "turbo": 809,
+    "distil-large-v3": 756,
+}
+
+
+def _whisper_model_cached(name):
+    """Return True if the faster-whisper model is already in HuggingFace cache.
+    Scans all orgs since different models live under different namespaces
+    (Systran, mobiuslabsgmbh, deepdml, distil-whisper, ...)."""
+    cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
+    if not os.path.isdir(cache_dir):
+        return False
+    suffix = f"faster-whisper-{name}"
+    try:
+        entries = os.listdir(cache_dir)
+    except OSError:
+        return False
+    for entry in entries:
+        # HF cache format: "models--<org>--<repo>"
+        if not entry.startswith("models--"):
+            continue
+        # Repo name is the last segment after the final "--"
+        repo = entry.split("--")[-1]
+        if repo != suffix:
+            continue
+        snapshots = os.path.join(cache_dir, entry, "snapshots")
+        if not os.path.isdir(snapshots):
+            continue
+        for snap in os.listdir(snapshots):
+            p = os.path.join(snapshots, snap)
+            if os.path.isdir(p) and os.listdir(p):
+                return True
+    return False
+
+
+class VoiceRecorder:
+    """Push-to-talk audio recording + Whisper transcription.
+    - start() begins GStreamer capture to a WAV file
+    - stop_and_transcribe() ends capture, runs Whisper in a thread, calls on_result(text) on the main thread
+    """
+    MIN_RECORDING_MS = 300  # ignore tiny accidental presses
+
+    def __init__(self, model_name=None):
+        # Precedence: explicit arg > env var > "base" default
+        self.MODEL_NAME = model_name or os.environ.get("CATAI_WHISPER_MODEL", "base")
+        self._model = None
+        self._pipeline = None
+        self._wav_path = None
+        self._recording = False
+        self._start_time = 0.0
+
+    def set_model(self, model_name):
+        """Change the Whisper model. Clears the cached model so the next
+        recording reloads with the new name."""
+        if model_name == self.MODEL_NAME:
+            return
+        self.MODEL_NAME = model_name
+        self._model = None  # force reload on next _ensure_model()
+
+    def _ensure_model(self):
+        """Lazy-load the whisper model (downloads it on first use)."""
+        if self._model is None and VOICE_AVAILABLE:
+            # Device selection: env override, else auto (CUDA > CPU)
+            device = os.environ.get("CATAI_WHISPER_DEVICE", "auto").lower()
+            if device == "auto":
+                try:
+                    import ctranslate2
+                    device = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
+                except Exception:
+                    device = "cpu"
+            compute_type = "float16" if device == "cuda" else "int8"
+            log.warning("VOICE: loading Whisper %r on %s (%s)...", self.MODEL_NAME, device, compute_type)
+            t0 = time.monotonic()
+            try:
+                self._model = _WhisperModel(
+                    self.MODEL_NAME, device=device, compute_type=compute_type
+                )
+            except Exception as e:
+                log.warning("VOICE: Whisper %s failed (%s), falling back to CPU int8", device, e)
+                self._model = _WhisperModel(
+                    self.MODEL_NAME, device="cpu", compute_type="int8"
+                )
+            log.warning("VOICE: Whisper ready in %.1fs", time.monotonic() - t0)
+
+    def start(self):
+        if self._recording:
+            return
+        import tempfile
+        fd, self._wav_path = tempfile.mkstemp(prefix="catai_voice_", suffix=".wav")
+        os.close(fd)
+        pipeline_desc = (
+            "autoaudiosrc ! "
+            "audioconvert ! "
+            "audioresample ! "
+            "audio/x-raw,format=S16LE,channels=1,rate=16000 ! "
+            f"wavenc ! filesink location={self._wav_path}"
+        )
+        try:
+            self._pipeline = Gst.parse_launch(pipeline_desc)
+            ret = self._pipeline.set_state(Gst.State.PLAYING)
+            log.warning("VOICE: pipeline state change = %s", ret)
+        except Exception:
+            log.exception("VOICE: failed to start pipeline")
+            self._pipeline = None
+            return
+        self._recording = True
+        self._start_time = time.monotonic()
+        log.warning("VOICE: recording started -> %s", self._wav_path)
+
+    def stop_and_transcribe(self, lang, on_result):
+        """Stop recording. Runs transcription in background thread, calls on_result(text)
+        on the main thread. text is None on error / empty / too short."""
+        if not self._recording:
+            log.warning("VOICE: stop called while not recording")
+            on_result(None)
+            return
+        duration_ms = (time.monotonic() - self._start_time) * 1000
+        log.warning("VOICE: stopping after %.0fms", duration_ms)
+        self._pipeline.send_event(Gst.Event.new_eos())
+        bus = self._pipeline.get_bus()
+        bus.timed_pop_filtered(1000 * Gst.MSECOND, Gst.MessageType.EOS | Gst.MessageType.ERROR)
+        self._pipeline.set_state(Gst.State.NULL)
+        self._pipeline = None
+        self._recording = False
+        wav_path = self._wav_path
+        self._wav_path = None
+
+        if duration_ms < self.MIN_RECORDING_MS:
+            log.warning("VOICE: recording too short (%dms), ignored", duration_ms)
+            try:
+                os.remove(wav_path)
+            except Exception:
+                pass
+            on_result(None)
+            return
+
+        try:
+            wav_size = os.path.getsize(wav_path)
+            log.warning("VOICE: wav file size = %d bytes", wav_size)
+        except Exception:
+            log.warning("VOICE: could not stat wav file")
+
+        def work():
+            try:
+                if self._model is None:
+                    log.warning("VOICE: model not preloaded, loading now...")
+                else:
+                    log.warning("VOICE: model already loaded (preloaded), go straight to transcribe")
+                self._ensure_model()
+                if not self._model:
+                    log.warning("VOICE: model load returned None")
+                    GLib.idle_add(on_result, None)
+                    return
+                log.warning("VOICE: transcribing lang=%s file=%s", lang, wav_path)
+                segments, info = self._model.transcribe(
+                    wav_path, language=lang, beam_size=1, vad_filter=True
+                )
+                seg_list = list(segments)
+                log.warning("VOICE: got %d segments, detected_lang=%s",
+                            len(seg_list), getattr(info, 'language', '?'))
+                text = " ".join(seg.text.strip() for seg in seg_list).strip()
+                log.warning("VOICE: transcription result = %r", text)
+                GLib.idle_add(on_result, text or None)
+            except Exception:
+                log.exception("VOICE: transcription failed")
+                GLib.idle_add(on_result, None)
+            finally:
+                try:
+                    os.remove(wav_path)
+                except Exception:
+                    pass
+
+        threading.Thread(target=work, daemon=True).start()
+
+
 # ── Main Application ───────────────────────────────────────────────────────────
 
 class CatAIApp(Gtk.Application):
@@ -3509,6 +3903,11 @@ class CatAIApp(Gtk.Application):
         self._canvas_y_offset = 0  # GNOME top bar height (detected at launch)
         self._apocalypse_active = False
         self._apocalypse_timer = None
+        # Voice chat state (push-to-talk microphone)
+        self._voice_enabled = False
+        self._voice_model = "base"
+        self._voice_recorder = None
+        self._voice_btn = None
         # Easter egg menu state
         self._easter_menu_visible = False
         self._easter_menu_x = 0
@@ -3561,6 +3960,32 @@ class CatAIApp(Gtk.Application):
         L10n.lang = cfg.get("lang", "fr")
         self.encounters_enabled = cfg.get("encounters", True)
         self.cat_configs = cfg.get("cats", [])
+
+        # Voice chat: enabled from --voice CLI flag OR config.json
+        cli_voice = "--voice" in sys.argv
+        cfg_voice = cfg.get("voice_enabled", False)
+        wanted = cli_voice or cfg_voice
+        self._voice_enabled = wanted and VOICE_AVAILABLE
+        self._voice_model = cfg.get("voice_model", "base")
+        if self._voice_enabled:
+            self._voice_recorder = VoiceRecorder(model_name=self._voice_model)
+            log.warning("VOICE: enabled (push-to-talk) with model %r", self._voice_model)
+            # Preload the Whisper model in a background thread — but only if
+            # it's already cached locally, so we don't trigger a silent
+            # background download on first launch.
+            if _whisper_model_cached(self._voice_model):
+                log.warning("VOICE: model %r cached, preloading in background...", self._voice_model)
+                def _preload():
+                    try:
+                        self._voice_recorder._ensure_model()
+                    except Exception:
+                        log.exception("VOICE: preload failed")
+                threading.Thread(target=_preload, daemon=True).start()
+            else:
+                log.warning("VOICE: model %r not cached, will download on first use", self._voice_model)
+        elif wanted and not VOICE_AVAILABLE:
+            log.warning("Voice chat requested but faster-whisper not installed. "
+                        "Run: pip install catai-linux[voice]")
 
         # Migrate: drop any legacy color_id-only configs (replaced by catset chars)
         catset_cfgs = [c for c in self.cat_configs if c.get("char_id")]
@@ -3812,7 +4237,7 @@ class CatAIApp(Gtk.Application):
             cat = self._active_chat_cat
             if cat:
                 cat.chat_visible = False
-                self._chat_entry.set_visible(False)
+                self._chat_box.set_visible(False)
                 self._active_chat_cat = None
                 return "OK chat closed"
             return "ERR: no active chat"
@@ -3865,16 +4290,43 @@ class CatAIApp(Gtk.Application):
         area.set_can_target(False)  # Don't capture mouse on DrawingArea → passthrough
         overlay.set_child(area)
 
-        # Chat input entry inside the overlay (visible + positioned dynamically)
+        # Chat input box (entry + optional mic button) inside the overlay
+        self._chat_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+        self._chat_box.set_halign(Gtk.Align.START)
+        self._chat_box.set_valign(Gtk.Align.START)
+        self._chat_box.set_visible(False)
+
         self._chat_entry = Gtk.Entry()
         self._chat_entry.set_placeholder_text(L10n.s("talk"))
         self._chat_entry.add_css_class("pixel-entry")
-        self._chat_entry.set_halign(Gtk.Align.START)
-        self._chat_entry.set_valign(Gtk.Align.START)
-        self._chat_entry.set_size_request(256, -1)
-        self._chat_entry.set_visible(False)
+        entry_w = 226 if self._voice_enabled else 256
+        self._chat_entry.set_size_request(entry_w, -1)
         self._chat_entry.connect("activate", self._on_chat_entry_activate)
-        overlay.add_overlay(self._chat_entry)
+        self._chat_box.append(self._chat_entry)
+
+        # Space push-to-talk: hold Space inside the empty chat entry to record.
+        # Intercept in CAPTURE phase so we run BEFORE the entry's default text
+        # handler inserts a space character.
+        if self._voice_enabled:
+            key_ctrl = Gtk.EventControllerKey()
+            key_ctrl.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+            key_ctrl.connect("key-pressed", self._on_entry_key_pressed)
+            key_ctrl.connect("key-released", self._on_entry_key_released)
+            self._chat_entry.add_controller(key_ctrl)
+
+        if self._voice_enabled:
+            self._voice_btn = Gtk.Button(label="\U0001f3a4")  # 🎤
+            self._voice_btn.add_css_class("pixel-mic-btn")
+            self._voice_btn.set_size_request(30, -1)
+            self._voice_btn.set_tooltip_text("Hold to talk (or hold Space in the entry)")
+            press_gesture = Gtk.GestureClick()
+            press_gesture.set_button(1)
+            press_gesture.connect("pressed", self._on_voice_press)
+            press_gesture.connect("released", self._on_voice_release)
+            self._voice_btn.add_controller(press_gesture)
+            self._chat_box.append(self._voice_btn)
+
+        overlay.add_overlay(self._chat_box)
 
         win.set_child(overlay)
         self._entry_window = None  # no separate window needed
@@ -4003,7 +4455,10 @@ class CatAIApp(Gtk.Application):
                 ctx.rectangle(bcx - 30, 0, 60, self.screen_h)
                 ctx.fill()
 
-            surface, _data_ref = cat._current_surface()
+            result = cat._current_surface()
+            if result is None:
+                continue  # assets still loading in background
+            surface, _data_ref = result
             boss_scale = getattr(cat, '_boss_scale', None)
             if cat._birth_progress is not None:
                 # Birth animation: grow from 10% to 100%, fade in from 0.15 to 1.0
@@ -4136,11 +4591,11 @@ class CatAIApp(Gtk.Application):
         # Include easter egg menu (covers whole screen so clicks anywhere dismiss)
         if self._easter_menu_visible:
             rects.append((0, 0, self.screen_w, self.screen_h))
-        # Include chat entry area
-        # Include chat entry in input region when visible
-        if self._chat_entry and self._chat_entry.get_visible():
-            rects.append((self._chat_entry.get_margin_start(),
-                         self._chat_entry.get_margin_top(), 260, 30))
+        # Include chat box (entry + optional mic button) in input region when visible
+        if getattr(self, '_chat_box', None) and self._chat_box.get_visible():
+            box_w = 290 if self._voice_enabled else 260
+            rects.append((self._chat_box.get_margin_start(),
+                         self._chat_box.get_margin_top(), box_w, 32))
         # XShape for X11 level (skip if not X11)
         if self._canvas_xid:
             _update_input_shape(self._canvas_xid, rects)
@@ -4173,7 +4628,7 @@ class CatAIApp(Gtk.Application):
             return
         if cat.chat_visible:
             cat.chat_visible = False
-            self._chat_entry.set_visible(False)
+            self._chat_box.set_visible(False)
             self._active_chat_cat = None
         else:
             # Close other chats
@@ -4184,7 +4639,7 @@ class CatAIApp(Gtk.Application):
                 cat.chat_response = L10n.s("hi")
             self._active_chat_cat = cat
             self._position_chat_entry(cat)
-            self._chat_entry.set_visible(True)
+            self._chat_box.set_visible(True)
             self._chat_entry.grab_focus()
 
     def _position_chat_entry(self, cat):
@@ -4214,8 +4669,8 @@ class CatAIApp(Gtk.Application):
 
         entry_x = int(bx + pad)
         entry_y = int(by + bh - 36)
-        self._chat_entry.set_margin_start(max(0, entry_x))
-        self._chat_entry.set_margin_top(max(0, entry_y))
+        self._chat_box.set_margin_start(max(0, entry_x))
+        self._chat_box.set_margin_top(max(0, entry_y))
 
     def _on_chat_entry_activate(self, entry):
         """User pressed Enter in the chat entry."""
@@ -4225,6 +4680,145 @@ class CatAIApp(Gtk.Application):
         entry.set_text("")
         cat = self._active_chat_cat
         cat.send_chat(text)
+
+    # ── Voice chat (push-to-talk) ─────────────────────────────────────────────
+
+    def _start_voice_recording(self):
+        """Start recording + update UI. Shared by mic button press & Space keydown.
+        Returns True if recording started, False otherwise."""
+        if not self._voice_recorder or self._voice_recorder._recording:
+            return False
+        # Cancel any pending delayed submit from a previous recording
+        if getattr(self, "_voice_submit_timer", None):
+            try:
+                GLib.source_remove(self._voice_submit_timer)
+            except Exception:
+                pass
+            self._voice_submit_timer = None
+        self._chat_entry.set_text("")
+        if self._voice_btn:
+            self._voice_btn.set_label("\U0001f534")  # 🔴
+            self._voice_btn.add_css_class("pixel-mic-btn-recording")
+        self._chat_entry.set_placeholder_text("Recording... (release to send)")
+        try:
+            self._voice_recorder.start()
+            return True
+        except Exception:
+            log.exception("Failed to start voice recording")
+            if self._voice_btn:
+                self._voice_btn.set_label("\U0001f3a4")
+                self._voice_btn.remove_css_class("pixel-mic-btn-recording")
+            self._chat_entry.set_placeholder_text(L10n.s("talk"))
+            return False
+
+    def _stop_voice_recording(self):
+        """Stop recording + transcribe + auto-submit. Shared by mic button release
+        & Space keyup. Returns True if a stop was triggered."""
+        if not self._voice_recorder or not self._voice_recorder._recording:
+            return False
+        if self._voice_btn:
+            self._voice_btn.set_label("\u23f3")  # ⏳
+            self._voice_btn.set_sensitive(False)
+            self._voice_btn.remove_css_class("pixel-mic-btn-recording")
+
+        # Detect if we need to download the model (first-time use for this model)
+        model_name = self._voice_recorder.MODEL_NAME
+        need_download = (
+            self._voice_recorder._model is None
+            and not _whisper_model_cached(model_name)
+        )
+        size_mb = WHISPER_MODEL_SIZES.get(model_name, 0)
+
+        # Animated spinner on the placeholder
+        spinner_frames = ["\u280b", "\u2819", "\u2839", "\u2838", "\u283c", "\u2834", "\u2826", "\u2827", "\u2807", "\u280f"]
+        spinner_state = {"i": 0}
+        def tick_spinner():
+            i = spinner_state["i"]
+            spinner_state["i"] = (i + 1) % len(spinner_frames)
+            frame = spinner_frames[i]
+            if need_download:
+                msg = f"{frame} Downloading {model_name} model (~{size_mb} MB)..."
+            elif self._voice_recorder._model is None:
+                msg = f"{frame} Loading voice model..."
+            else:
+                msg = f"{frame} Transcribing..."
+            self._chat_entry.set_placeholder_text(msg)
+            return True
+        # Run spinner every 120ms
+        spinner_timer = GLib.timeout_add(120, tick_spinner)
+        # Kick off the initial frame immediately
+        tick_spinner()
+
+        def on_result(text):
+            log.debug("VOICE: on_result called with text=%r", text)
+            # Stop the download/transcribing spinner
+            try:
+                GLib.source_remove(spinner_timer)
+            except Exception:
+                pass
+            if self._voice_btn:
+                self._voice_btn.set_label("\U0001f3a4")  # 🎤
+                self._voice_btn.set_sensitive(True)
+            self._chat_entry.set_placeholder_text(L10n.s("talk"))
+            if text and self._active_chat_cat:
+                # Show the transcribed text briefly AND submit immediately in
+                # parallel — the chat generation starts right away, the text
+                # stays visible ~1.5s as confirmation then clears.
+                self._chat_entry.set_text(text)
+                self._active_chat_cat.send_chat(text)
+                # Cancel any previous clear timer
+                if getattr(self, "_voice_submit_timer", None):
+                    try:
+                        GLib.source_remove(self._voice_submit_timer)
+                    except Exception:
+                        pass
+                def clear_entry():
+                    self._voice_submit_timer = None
+                    self._chat_entry.set_text("")
+                    return False
+                self._voice_submit_timer = GLib.timeout_add(1500, clear_entry)
+            return False  # idle_add callback
+
+        self._voice_recorder.stop_and_transcribe(L10n.lang, on_result)
+        return True
+
+    def _on_voice_press(self, gesture, n_press, x, y):
+        """Mic button pressed down → start recording."""
+        if self._start_voice_recording():
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+
+    def _on_voice_release(self, gesture, n_press, x, y):
+        """Mic button released → stop recording, transcribe, auto-submit."""
+        if self._stop_voice_recording():
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+
+    def _on_entry_key_pressed(self, ctrl, keyval, keycode, state):
+        """Hold Space inside the empty chat entry → push-to-talk record.
+        Runs in CAPTURE phase so we intercept before Gtk.Entry inserts ' '."""
+        if keyval != Gdk.KEY_space:
+            return False
+        # Modifier keys: let Ctrl+Space / Shift+Space pass through untouched
+        if state & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK):
+            return False
+        # Only act when the entry is empty AND voice is enabled
+        if not self._voice_enabled or self._chat_entry.get_text():
+            return False
+        # Ignore auto-repeat: if we're already recording, swallow the event
+        # (return True) so Space is not inserted, but don't restart.
+        if self._voice_recorder and self._voice_recorder._recording:
+            return True
+        if self._start_voice_recording():
+            return True  # consume — do not type a space
+        return False
+
+    def _on_entry_key_released(self, ctrl, keyval, keycode, state):
+        """Release Space → stop recording + auto-submit."""
+        if keyval != Gdk.KEY_space:
+            return False
+        if self._voice_recorder and self._voice_recorder._recording:
+            self._stop_voice_recording()
+            return True
+        return False
 
     def _on_canvas_right_click(self, gesture, n_press, x, y):
         cat = self._find_cat_at(x, y)
@@ -4335,7 +4929,7 @@ class CatAIApp(Gtk.Application):
         for cat in self.cat_instances:
             cat.cleanup()
         self.cat_instances.clear()
-        self._chat_entry.set_visible(False)
+        self._chat_box.set_visible(False)
         if self._canvas_window:
             unregister_window(self._canvas_window)
         if self.settings_ctrl and self.settings_ctrl.window:
@@ -4398,6 +4992,8 @@ class CatAIApp(Gtk.Application):
             "model": self.selected_model,
             "lang": L10n.lang,
             "encounters": self.encounters_enabled,
+            "voice_enabled": self._voice_enabled,
+            "voice_model": getattr(self, "_voice_model", "base"),
         })
 
     def _render_tick(self):
@@ -4409,7 +5005,7 @@ class CatAIApp(Gtk.Application):
                 log.exception("render_tick crashed for %s", cat.config.get("char_id", "?"))
         self._check_encounters()
         # Reposition chat entry if following a walking cat
-        if self._active_chat_cat and self._chat_entry.get_visible():
+        if self._active_chat_cat and self._chat_box.get_visible():
             self._position_chat_entry(self._active_chat_cat)
         # Redraw the canvas
         if self._canvas_area:
@@ -5266,7 +5862,7 @@ class CatAIApp(Gtk.Application):
         # If chat bubble is showing for this cat, hide it
         if self._active_chat_cat is cat:
             cat.chat_visible = False
-            self._chat_entry.set_visible(False)
+            self._chat_box.set_visible(False)
             self._active_chat_cat = None
         cat.cleanup()
         self.cat_instances.pop(idx)
@@ -5311,7 +5907,7 @@ class CatAIApp(Gtk.Application):
         cat = self.cat_instances[idx]
         if self._active_chat_cat is cat:
             cat.chat_visible = False
-            self._chat_entry.set_visible(False)
+            self._chat_box.set_visible(False)
             self._active_chat_cat = None
         cat.cleanup()
         self.cat_instances.pop(idx)
@@ -5440,7 +6036,7 @@ class CatAIApp(Gtk.Application):
 # ── Entry Point ────────────────────────────────────────────────────────────────
 
 def main():
-    gtk_args = [a for a in sys.argv if a not in ("--debug", "--test-socket")]
+    gtk_args = [a for a in sys.argv if a not in ("--debug", "--test-socket", "--voice")]
     app = CatAIApp()
     app.run(gtk_args)
 
