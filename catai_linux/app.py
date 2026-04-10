@@ -3333,6 +3333,12 @@ class CatAIApp(Gtk.Application):
         self._active_encounter = None
         self.encounters_enabled = True
         self._last_encounter_check = 0.0
+        # Perf caches (reused across render frames)
+        self._bubble_layout_cache = None
+        self._bubble_layout_cached_text = None
+        self._regions_dirty = True
+        self._regions_cache_key = None
+        self._cairo_region_cache = None
 
     def do_activate(self):
         _setup_logging()
@@ -3930,8 +3936,30 @@ class CatAIApp(Gtk.Application):
         if self._easter_menu_visible:
             self._draw_easter_menu(ctx)
 
-    def _update_input_regions(self):
-        """Update XShape input regions to only cover cat bounding rects."""
+    def _compute_regions_key(self):
+        """Return a hashable snapshot of every input that affects input regions.
+        If this is identical frame-to-frame, we can skip the Cairo region rebuild."""
+        cat_keys = tuple(
+            (round(c.x), round(c.y), c.display_w, c.display_h,
+             c.meow_visible, c.meow_text if c.meow_visible else "",
+             c.chat_visible, bool(c.chat_response) and c.chat_visible,
+             c.encounter_visible, c.encounter_text if c.encounter_visible else "")
+            for c in self.cat_instances
+        )
+        box = getattr(self, '_chat_box', None)
+        box_visible = bool(box and box.get_visible())
+        return (
+            cat_keys,
+            self._menu_visible, self._menu_x, self._menu_y,
+            self._easter_menu_visible,
+            box_visible,
+            box.get_margin_start() if box_visible else 0,
+            box.get_margin_top() if box_visible else 0,
+            self._voice_enabled,
+        )
+
+    def _build_rects(self):
+        """Build the list of input rectangles that should pass mouse events through."""
         rects = []
         for cat in self.cat_instances:
             # Add some padding for easier clicking
@@ -3973,6 +4001,19 @@ class CatAIApp(Gtk.Application):
             box_w = 290 if self._voice_enabled else 260
             rects.append((self._chat_box.get_margin_start(),
                          self._chat_box.get_margin_top(), box_w, 32))
+        return rects
+
+    def _update_input_regions(self):
+        """Update XShape + GDK input regions. Uses a dirty-key cache to skip
+        the (expensive) Cairo region rebuild when no cat has moved between
+        frames — typically the common case when cats are IDLE."""
+        key = self._compute_regions_key()
+        if key == self._regions_cache_key and self._cairo_region_cache is not None:
+            return  # nothing changed → reuse previously applied regions
+        self._regions_cache_key = key
+
+        rects = self._build_rects()
+
         # XShape for X11 level (skip if not X11)
         if self._canvas_xid:
             _update_input_shape(self._canvas_xid, rects)
@@ -3986,6 +4027,7 @@ class CatAIApp(Gtk.Application):
                 for rx, ry, rw, rh in rects:
                     region.union(cairo.RectangleInt(int(rx), int(ry), max(1, int(rw)), max(1, int(rh))))
                 surface.set_input_region(region)
+                self._cairo_region_cache = region
 
     def _find_cat_at(self, x, y):
         """Find the topmost cat at position (x, y). Returns CatInstance or None."""
@@ -4020,21 +4062,30 @@ class CatAIApp(Gtk.Application):
             self._chat_entry.grab_focus()
 
     def _position_chat_entry(self, cat):
-        """Position the entry inside the chat bubble (same layout as _draw_chat_bubble)."""
+        """Position the entry inside the chat bubble (same layout as _draw_chat_bubble).
+        Caches the Pango layout across frames — only the bubble text needs to change
+        when the AI streams new tokens, the font/wrap/width setup is constant."""
         text = cat.chat_response or ""
         pad = 12
         content_w = 256
 
-        # Measure text height with Pango — must match _draw_chat_bubble exactly
-        tmp = cairo.ImageSurface(cairo.FORMAT_ARGB32, 1, 1)
-        tctx = cairo.Context(tmp)
-        lay = PangoCairo.create_layout(tctx)
-        lay.set_font_description(Pango.FontDescription(_BUBBLE_FONT))
-        lay.set_text(text, -1)
-        lay.set_width(content_w * Pango.SCALE)
-        lay.set_wrap(Pango.WrapMode.WORD_CHAR)
-        lay.set_height(-8)
-        lay.set_ellipsize(Pango.EllipsizeMode.END)
+        # Lazy-create + cache the Pango layout (once per CatAIApp lifetime)
+        lay = self._bubble_layout_cache
+        if lay is None:
+            tmp = cairo.ImageSurface(cairo.FORMAT_ARGB32, 1, 1)
+            tctx = cairo.Context(tmp)
+            lay = PangoCairo.create_layout(tctx)
+            lay.set_font_description(Pango.FontDescription(_BUBBLE_FONT))
+            lay.set_width(content_w * Pango.SCALE)
+            lay.set_wrap(Pango.WrapMode.WORD_CHAR)
+            lay.set_height(-8)
+            lay.set_ellipsize(Pango.EllipsizeMode.END)
+            self._bubble_layout_cache = lay
+            self._bubble_layout_cached_text = None
+
+        if text != self._bubble_layout_cached_text:
+            lay.set_text(text, -1)
+            self._bubble_layout_cached_text = text
         _tw, th = lay.get_pixel_size()
 
         bw = content_w + pad * 2  # 280
