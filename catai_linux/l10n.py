@@ -27,6 +27,12 @@ class L10n:
         "lang_label": {"fr": "LANGUE", "en": "LANGUAGE", "es": "IDIOMA"},
         "autostart": {"fr": "Lancer au démarrage", "en": "Start at login", "es": "Iniciar al arrancar"},
         "encounters": {"fr": "Rencontres entre chats", "en": "Cat encounters", "es": "Encuentros entre gatos"},
+        # rm -rf easter egg — 'just kidding!' shown by the wiping cat at the end
+        "rm_rf_jk": {
+            "fr": "Je plaisante ! 😹",
+            "en": "Just kidding! 😹",
+            "es": "¡Es broma! 😹",
+        },
     }
     meows = {
         "fr": ["Miaou~", "Mrrp!", "Prrrr...", "Miaou miaou!", "Nyaa~", "*ronron*", "Mew!", "Prrrt?"],
