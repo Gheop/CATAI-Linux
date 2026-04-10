@@ -2815,7 +2815,9 @@ class CatAIApp(Gtk.Application):
                                     the given point
         Used by e2e tests and for manual debugging of multi-monitor
         geometry (e.g. when a cat walks into a dead zone)."""
-        if len(parts) == 4 and parts[1] == "at":
+        if len(parts) >= 2 and parts[1] == "at":
+            if len(parts) != 4:
+                return "ERR: usage: monitors at <x> <y>"
             try:
                 px, py = int(parts[2]), int(parts[3])
             except ValueError:
