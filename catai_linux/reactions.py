@@ -41,8 +41,8 @@ class ReactionPool:
     # Canonical event names — add new constants here as new events are wired up.
     EVT_CAPSLOCK = "capslock_on"
     EVT_PETTING = "petting_start"
+    EVT_NOTIFICATION = "notification_received"
     # Future:
-    # EVT_NOTIFICATION = "notification_received"
     # EVT_IDLE_START   = "user_idle"
     # EVT_TYPING_FAST  = "typing_fast"
 
@@ -205,6 +205,27 @@ class ReactionPool:
                 "react like a happy cat — very brief, purr/mew-style "
                 "onomatopoeia is great. Stay in character."
             )
+        if event == self.EVT_NOTIFICATION:
+            if lang == "fr":
+                return (
+                    "L'utilisateur vient de recevoir une notification sur son "
+                    "bureau (Slack, mail, calendrier...). Réagis comme un chat "
+                    "curieux qui a entendu le son. Très court, intéressé ou "
+                    "interrogatif. Reste en personnalité."
+                )
+            if lang == "es":
+                return (
+                    "El usuario acaba de recibir una notificación en el "
+                    "escritorio. Reacciona como un gato curioso que oyó el "
+                    "sonido. Muy breve, interesado o interrogativo. Mantén "
+                    "tu personalidad."
+                )
+            return (
+                "The user just got a desktop notification (Slack, email, "
+                "calendar, etc.). React like a curious cat that heard the "
+                "ping. Very brief, interested or questioning. Stay in "
+                "character."
+            )
         return f"React briefly to the event '{event}'."
 
     # ── Parser ───────────────────────────────────────────────────────────────
@@ -276,4 +297,6 @@ class ReactionPool:
             return L10n.s("capslock_yell")
         if event == self.EVT_PETTING:
             return L10n.s("petting_purr")
+        if event == self.EVT_NOTIFICATION:
+            return L10n.s("notification_react")
         return "?"

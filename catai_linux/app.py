@@ -331,6 +331,11 @@ MAGIC_EGG_PHRASES = {
     "fullscreen": "fullscreen",
     "applause": "fullscreen",
     "bravo": "fullscreen",
+    # Notification reaction — manual trigger for the same code path as
+    # the (future) D-Bus monitor
+    "notify": "notification",
+    "ping": "notification",
+    "notification": "notification",
 }
 
 EASTER_EGGS = [
@@ -360,6 +365,7 @@ EASTER_EGGS = [
     ("capslock",    "\U0001f520", "Caps Lock",     "eg_capslock"),
     ("uptime",      "\u23f1",     "Uptime party",  "eg_uptime"),
     ("fullscreen",  "\U0001f64c", "Fullscreen",    "eg_fullscreen"),
+    ("notification","\U0001f514", "Notification",  "eg_notification"),
 ]
 
 CATSET_PERSONALITIES = {
@@ -2659,6 +2665,14 @@ class CatAIApp(Gtk.Application):
                 log.debug("mood save failed for %s", cat.config.get("id"), exc_info=True)
         return True
 
+    def _cmd_notify(self, parts):
+        """E2E + manual trigger for the notification reaction.
+        Usage: notify [<app_name> [<summary>]]"""
+        app_name = parts[1] if len(parts) > 1 else ""
+        summary = " ".join(parts[2:]) if len(parts) > 2 else ""
+        self.eg_notification(app_name=app_name, summary=summary)
+        return f"OK notify app={app_name!r} summary={summary[:40]!r}"
+
     def _cmd_activity_state(self, parts):
         """Return the activity monitor snapshot + afk_sleep flag."""
         snap = self._activity.snapshot()
@@ -2813,6 +2827,7 @@ class CatAIApp(Gtk.Application):
                 "mood_set": self._cmd_mood_set,
                 "activity_state": self._cmd_activity_state,
                 "force_afk": self._cmd_force_afk,
+                "notify": self._cmd_notify,
                 "get_chat_response": self._cmd_get_chat_response,
                 "screenshot": self._cmd_screenshot,
             }
@@ -4562,6 +4577,55 @@ class CatAIApp(Gtk.Application):
             except Exception:
                 pass
         victim._meow_timer_id = GLib.timeout_add(3000, victim._hide_meow)
+
+    # ── Notification reaction ────────────────────────────────────────────────
+
+    def eg_notification(self, app_name: str = "", summary: str = ""):
+        """A desktop notification arrived — the nearest cat reacts. Uses
+        the AI-backed ReactionPool (EVT_NOTIFICATION) for a varied quip.
+
+        Currently triggered manually (via the 'notify' socket command or
+        a magic phrase in chat) because full D-Bus monitor eavesdropping
+        requires additional permissions on modern GNOME. The automatic
+        trigger will be a drop-in replacement in a follow-up PR that adds
+        a pydbus subscription to org.freedesktop.Notifications.
+
+        Args:
+            app_name: optional originating application (Slack, Thunderbird…)
+            summary: optional notification summary text
+        """
+        if not self.cat_instances:
+            return
+        # Pick the last-active chat cat if any, else a random cat, else the
+        # first one. Avoid cats that are busy with another animation.
+        candidates = [
+            c for c in self.cat_instances
+            if not c.in_encounter
+            and not c.dragging
+            and not getattr(c, "_petting_active", False)
+            and not getattr(c, "_rm_rf_active", False)
+        ]
+        if not candidates:
+            return
+        victim = (self._active_chat_cat
+                  if self._active_chat_cat in candidates
+                  else random.choice(candidates))
+
+        text = self._reaction_pool.get(victim, ReactionPool.EVT_NOTIFICATION)
+        log.info("notification egg: %s (%s) → %s says %r",
+                 app_name or "?", summary[:30] or "?",
+                 victim.config.get("name"), text)
+
+        victim.state = CatState.SURPRISED
+        victim.frame_index = 0
+        victim.meow_text = text
+        victim.meow_visible = True
+        if victim._meow_timer_id:
+            try:
+                GLib.source_remove(victim._meow_timer_id)
+            except Exception:
+                pass
+        victim._meow_timer_id = GLib.timeout_add(2500, victim._hide_meow)
 
     # ── Uptime party ─────────────────────────────────────────────────────────
 

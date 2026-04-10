@@ -47,6 +47,13 @@ class L10n:
             "en": "*purrrr* 💕",
             "es": "*ronroneo* 💕",
         },
+        # Notification reaction — fallback shown when a desktop notification
+        # arrives and the AI pool isn't ready yet.
+        "notification_react": {
+            "fr": "Quoi ? 🔔",
+            "en": "What? 🔔",
+            "es": "¿Qué? 🔔",
+        },
     }
     meows = {
         "fr": ["Miaou~", "Mrrp!", "Prrrr...", "Miaou miaou!", "Nyaa~", "*ronron*", "Mew!", "Prrrt?"],

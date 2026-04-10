@@ -567,6 +567,21 @@ def run_tests():
     # Restore to neutral so the rest of the tests see a normal cat
     send_cmd("mood_set 0 happiness 60")
 
+    # ── T15b2: Notification reactions ────────────────────
+    print("\n[T15b2] Notification reactions", flush=True)
+    # Bare notify with no app/summary
+    resp = send_cmd("notify")
+    test("notify with no args", resp.startswith("OK"), resp)
+    time.sleep(0.3)
+    # Notify with app + summary
+    resp = send_cmd("notify Slack Hello there")
+    test("notify with app + summary", resp.startswith("OK"), resp)
+    time.sleep(0.5)
+    # Also via the egg trigger
+    resp = send_cmd("egg notification")
+    test("egg notification triggered", resp.startswith("OK"), resp)
+    time.sleep(0.5)
+
     # ── T15c: Activity monitor + AFK detection ──────────
     print("\n[T15c] Activity monitor", flush=True)
     resp = send_cmd("activity_state")
