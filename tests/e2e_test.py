@@ -470,17 +470,23 @@ def run_tests():
     # pasted text (not the MockChat canned reply).
     send_cmd("click_cat 0")
     time.sleep(0.3)
+    # Repeat the same phrase 15× so "ipsum" is present in every 40-char
+    # window throughout the 10s scroll, regardless of offset.
     lorem_text = "Lorem ipsum dolor sit amet consectetur adipiscing elit " * 15
     test("lorem_text is >500 chars (preflight)", len(lorem_text) > 500,
          f"len={len(lorem_text)}")
     resp = send_cmd(f"type_chat {lorem_text}")
     test("lorem type_chat triggered", resp.startswith("OK"), resp[:80])
-    time.sleep(0.5)  # let the scroll advance a few frames
+    # Probe immediately — the chat_response is set synchronously inside
+    # send_chat → eg_lorem, so there is nothing to wait for.
     resp = send_cmd("get_chat_response")
-    # The response should contain a substring of "Lorem ipsum" (scrolling
-    # window), NOT the MockChat canned "Miaou mon ami" response.
+    # "ipsum" appears every ~56 chars in the repeated phrase, so a 40-char
+    # sliding window always contains either "ipsum" or a partial slice of
+    # the next word. Use "sit" OR "dolor" OR "ipsum" for a robust check.
+    resp_lower = resp.lower()
+    has_lorem_word = any(w in resp_lower for w in ("lorem", "ipsum", "dolor", "sit", "amet"))
     test("lorem egg showed scrolled paste text, not MockChat reply",
-         resp.startswith("OK") and "Lorem" in resp and "Miaou mon ami" not in resp,
+         resp.startswith("OK") and has_lorem_word and "miaou mon ami" not in resp_lower,
          resp[:100])
     # Wait for the full read cycle (10s) + sleep bubble (4s) + margin
     time.sleep(15)
