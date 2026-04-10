@@ -6,9 +6,13 @@ Virtual desktop pet cats for Linux (GNOME/Wayland) -- pixel art cats that roam y
 
 Port of [CATAI](https://github.com/wil-pe/CATAI) (macOS/Swift) to Linux.
 
-![CATAI-Linux Screenshot](screenshot2.png)
+![CATAI-Linux demo](demo.gif)
 
-![CATAI-Linux Chat](screenshot1.png)
+![Overlays showcase — sleeping, love, surprised, grooming](screenshot1.png)
+
+![Chat bubble with AI response](screenshot2.png)
+
+![Animation sequences — dashing, drama queen, wall climb](screenshot3.png)
 
 ## Features
 
@@ -115,6 +119,13 @@ Sprite conversion (catset spritesheets → CATAI character directories):
 python3 scripts/catset_to_catai.py catset_assets/catset_spritesheets catai_linux/
 ```
 
+Regenerate README assets (screenshots + demo GIF, no screen capture required):
+
+```bash
+python3 tools/render_screenshots.py   # → screenshot1..3.png
+python3 tools/render_demo_gif.py      # → demo.gif
+```
+
 ## Project Structure
 
 ```
@@ -151,6 +162,14 @@ MIT
 ---
 
 ## Changelog
+
+### v0.3.2 — README demo + proactive auth refresh (2026-04-10)
+
+- **New README assets**: animated `demo.gif` + 3 static screenshots rendered directly via Cairo (no screen capture needed — bypasses Wayland entirely)
+- **Rendering tools**: `tools/render_screenshots.py` and `tools/render_demo_gif.py` — reproducible, deterministic, GIF palette-optimized (~230 KB for 14s @ 12fps)
+- **Proactive Claude auth refresh**: token is now refreshed BEFORE it expires (5 min buffer) instead of waiting for a 401, eliminating authentication errors during chat
+- **Test socket extensions**: new commands `force_state`, `start_sequence`, `meow`, `move_cat`, `fake_chat` for scripted testing and automation
+- **Fix**: `cat_positions` test command was using the old `color_id` field that no longer exists on catset cats
 
 ### v0.3.1 — Animation sequences + visual overlays (2026-04-09)
 

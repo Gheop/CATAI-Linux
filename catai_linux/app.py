@@ -915,16 +915,32 @@ def _refresh_claude_token():
         log.debug("Token refresh failed: %s", e)
         return False
 
-def _read_claude_oauth():
+def _read_claude_oauth_raw():
+    """Read credentials JSON without refreshing. Returns oauth dict or None."""
     try:
         if os.path.exists(CLAUDE_CREDS):
             mode = os.stat(CLAUDE_CREDS).st_mode
             if mode & 0o077:
                 log.warning("Credentials file %s is accessible by others (mode %o)", CLAUDE_CREDS, mode)
         with open(CLAUDE_CREDS) as f:
-            return json.load(f)["claudeAiOauth"]["accessToken"]
+            return json.load(f).get("claudeAiOauth")
     except Exception:
         return None
+
+
+def _read_claude_oauth():
+    """Return a valid access token, proactively refreshing if near expiry."""
+    oa = _read_claude_oauth_raw()
+    if not oa:
+        return None
+    # Check expiresAt (milliseconds). Refresh if < 5 min remaining.
+    exp_ms = oa.get("expiresAt", 0)
+    now_ms = time.time() * 1000
+    if exp_ms and (exp_ms - now_ms) < 5 * 60 * 1000:
+        log.debug("Claude token expires in < 5min, refreshing proactively")
+        if _refresh_claude_token():
+            oa = _read_claude_oauth_raw() or oa
+    return oa.get("accessToken")
 
 _claude_available = None
 def claude_available():
@@ -3146,8 +3162,83 @@ class CatAIApp(Gtk.Application):
             return f"OK cats={len(self.cat_instances)} canvas_xid={self._canvas_xid}"
 
         elif action == "cat_positions":
-            positions = [f"{c.config['color_id']}:{c.x:.0f},{c.y:.0f}" for c in self.cat_instances]
+            positions = [f"{c.config.get('char_id', c.config.get('color_id', '?'))}:{c.x:.0f},{c.y:.0f}" for c in self.cat_instances]
             return "OK " + " ".join(positions)
+
+        elif action == "force_state":
+            if len(parts) < 3:
+                return "ERR: usage: force_state <idx> <state_name>"
+            idx = int(parts[1])
+            state_name = parts[2]
+            if 0 <= idx < len(self.cat_instances):
+                cat = self.cat_instances[idx]
+                try:
+                    cat.state = CatState(state_name)
+                except ValueError:
+                    return f"ERR: unknown state {state_name}"
+                cat.frame_index = 0
+                cat.idle_ticks = 0
+                cat._sequence = None
+                cat._sequence_index = 0
+                cat._sequence_pause_ticks = 0
+                if state_name in ("dashing",):
+                    cat.direction = "east"
+                elif state_name in ("surprised",):
+                    cat.direction = "east"
+                else:
+                    cat.direction = "south"
+                return f"OK cat {idx} -> {state_name}"
+            return "ERR: invalid cat index"
+
+        elif action == "start_sequence":
+            if len(parts) < 3:
+                return "ERR: usage: start_sequence <idx> <seq_name>"
+            idx = int(parts[1])
+            seq_name = parts[2]
+            if 0 <= idx < len(self.cat_instances):
+                if seq_name not in SEQUENCES:
+                    return f"ERR: unknown sequence {seq_name} (available: {list(SEQUENCES.keys())})"
+                self.cat_instances[idx]._start_sequence(seq_name)
+                return f"OK cat {idx} -> sequence {seq_name}"
+            return "ERR: invalid cat index"
+
+        elif action == "meow":
+            if len(parts) < 2:
+                return "ERR: usage: meow <idx> [text]"
+            idx = int(parts[1])
+            text = " ".join(parts[2:]) if len(parts) > 2 else "Meow~"
+            if 0 <= idx < len(self.cat_instances):
+                cat = self.cat_instances[idx]
+                cat.meow_text = text
+                cat.meow_visible = True
+                return f"OK meow on cat {idx}"
+            return "ERR: invalid cat index"
+
+        elif action == "move_cat":
+            if len(parts) < 4:
+                return "ERR: usage: move_cat <idx> <x> <y>"
+            idx = int(parts[1])
+            x = int(parts[2])
+            y = int(parts[3])
+            if 0 <= idx < len(self.cat_instances):
+                cat = self.cat_instances[idx]
+                cat.x = max(0, min(x, cat.screen_w - cat.display_w))
+                cat.y = max(0, min(y, cat.screen_h - cat.display_h))
+                return f"OK cat {idx} at {cat.x},{cat.y}"
+            return "ERR: invalid cat index"
+
+        elif action == "fake_chat":
+            if len(parts) < 3:
+                return "ERR: usage: fake_chat <idx> <text>"
+            idx = int(parts[1])
+            text = " ".join(parts[2:])
+            if 0 <= idx < len(self.cat_instances):
+                cat = self.cat_instances[idx]
+                cat.chat_response = text
+                cat.chat_visible = True
+                self._active_chat_cat = cat
+                return f"OK fake chat on cat {idx}"
+            return "ERR: invalid cat index"
 
         elif action == "click_cat":
             idx = int(parts[1]) if len(parts) > 1 else 0

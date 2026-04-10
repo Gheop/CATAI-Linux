@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "catai-linux"
-version = "0.3.1"
+version = "0.3.2"
 description = "Virtual desktop pet cats for Linux — pixel art cats that roam your screen and chat via AI"
 readme = "PYPI_README.md"
 license = "MIT"
