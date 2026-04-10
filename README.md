@@ -166,6 +166,20 @@ MIT
 
 ## Changelog
 
+### v0.3.4 — Aggressive love + wall slide polish (2026-04-10)
+
+- **Love encounter flow swap (ANGRY)**: when the reaction is angry, cat A is now the aggressor (starts in ANGRY from the beginning) and cat B becomes the victim who plays the drama_queen sequence — previously it was the opposite
+- **Cats face each other during encounters**: new `_face_toward()` helper on CatInstance flips the sprite horizontally when needed, since love/angry/flat sprites only exist as south (east-facing) frames
+- **No more random deaths**: the `drama_queen` sequence is no longer triggered randomly during idle — deaths now only happen contextually:
+  - Wall slide crash at the bottom of the screen (40% chance after a significant slide)
+  - ANGRY reaction during a love encounter (cat B dies and revives)
+- **Wall slide "glass surface" feel**: WALLGRAB now slides with acceleration (2 → 8 px/tick), slides up to ~360 px over ~4 s, much more natural movement vs the previous 1 px/tick constant
+- **Rebalanced behavior**: climbing probability boosted (3% → 7%) and wall_adventure reduced (4% → 2%) to prevent cats accumulating at the bottom of the screen over time
+- **Screen-bounds clamp**: triple defensive clamp (render_tick start + end + draw loop) with a 5px safety margin so cats can never be drawn off the bottom of the screen, regardless of animation or sequence side-effects
+- **Fix love_demo.gif**: cat B now faces west (toward cat A) in all still scenes — previously was facing away
+- **Fix test socket**: survives `ncat --send-only` (BrokenPipeError is caught) so scripted testing works reliably
+- **Makefile**: new `make run-test` target launches with `--test-socket`
+
 ### v0.3.3 — Love encounters + baby kittens (2026-04-10)
 
 - **Love encounters**: 40% of cat-to-cat encounters now skip the dialogue and become silent love moments. The initiator enters LOVE state with floating hearts, and the other cat reacts with ANGRY 💢 (30%), SURPRISED !!! (30%), or LOVE ♥ (40%)

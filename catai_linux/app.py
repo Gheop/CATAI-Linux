@@ -2152,6 +2152,9 @@ class CatInstance:
             if self._birth_progress >= 1.0:
                 self._birth_progress = None
 
+        # Defensive: make sure we always start a tick inside screen bounds
+        self._clamp_to_screen()
+
         if self.state == CatState.WALKING:
             dest_y = self.dest_y
             dx = self.dest_x - self.x
@@ -2245,16 +2248,30 @@ class CatInstance:
             else:
                 self.frame_index += 1
         elif self.state == CatState.WALLGRAB:
-            # Slide slowly downward, loop animation, then let go
+            # Slide downward with acceleration (glass surface feel)
             frames = self.animations.get("wallgrab", {}).get(self.direction, [])
             if not frames:
                 self._end_current_step()
             else:
                 self._state_tick = getattr(self, '_state_tick', 0) + 1
-                self.y += 1  # slide down 1px per tick
+                # v₀=2, +0.15/tick, capped at 8 → ~360px over 60 ticks (~4s)
+                velocity = min(8.0, 2.0 + self._state_tick * 0.15)
+                self.y += velocity
                 self.frame_index = (self.frame_index + 1) % len(frames)
-                # After ~3s or hitting bottom, let go
-                if self._state_tick > random.randint(20, 30) or self.y >= self.screen_h - self.display_h:
+
+                hit_bottom = self.y >= self.screen_h - self.display_h - 5
+                if hit_bottom:
+                    self.y = self.screen_h - self.display_h - 5
+                    # Crash! If slid significantly, 40% chance of drama_queen
+                    if self._state_tick > 15 and random.random() < 0.40:
+                        self._state_tick = 0
+                        self._sequence = None
+                        self._sequence_index = 0
+                        self._start_sequence("drama_queen")
+                        return
+                    self._state_tick = 0
+                    self._end_current_step()
+                elif self._state_tick > 60:  # ~4s max slide
                     self._state_tick = 0
                     self._end_current_step()
         elif self.state == CatState.LEDGEIDLE:
@@ -2295,6 +2312,9 @@ class CatInstance:
                     self._end_current_step()
                 else:
                     self.frame_index += 1
+
+        # Safety clamp after any handler mutated position
+        self._clamp_to_screen()
 
     def _end_current_step(self):
         """Called when the current animation finishes. Advance sequence or go IDLE."""
@@ -2356,9 +2376,10 @@ class CatInstance:
             total_y, total_x = dy, dx
         self.y -= total_y
         self.x += total_x
-        self.x = max(0, min(self.x, self.screen_w - self.display_w))
         if self.y < 0:
-            self.y = self.screen_h - self.display_h
+            # Wrapped off the top (e.g. climbing up past the screen) → bottom
+            self.y = self.screen_h - self.display_h - 5
+        self._clamp_to_screen()
 
     def _start_sequence(self, seq_name):
         """Begin a multi-step animation sequence."""
@@ -2382,6 +2403,13 @@ class CatInstance:
         self.direction = first_dir
         self.frame_index = 0
         self.idle_ticks = 0
+
+    def _clamp_to_screen(self):
+        """Defensive clamp — keep cat within screen bounds with a safety margin."""
+        self.x = max(0, min(self.x, self.screen_w - self.display_w))
+        # Extra 5px safety margin at bottom: some animations (dying) have sprite
+        # pixels right at the box edge, and sub-pixel rendering can bleed past
+        self.y = max(0, min(self.y, self.screen_h - self.display_h - 5))
 
     def behavior_tick(self):
         if self.chat_visible or self.dragging or self.in_encounter:
@@ -2435,24 +2463,26 @@ class CatInstance:
                 self.state = CatState.JUMPING
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.68:
+            elif r < 0.75:
+                # Climbing is now much more common to counter wall slides
                 self.state = CatState.CLIMBING
                 self.frame_index = 0
                 self.direction = random.choice(["east", "west"])
-            elif r < 0.72:
+            elif r < 0.78:
                 self.state = CatState.ANGRY
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.76:
-                self._start_sequence("wall_adventure")
             elif r < 0.80:
+                # Wall adventure (slide down) — rare
+                self._start_sequence("wall_adventure")
+            elif r < 0.85:
+                # Ledge adventure ends with climbing up — more common
                 self._start_sequence("ledge_adventure")
-            elif r < 0.84:
-                self._start_sequence("dash_crash")
             elif r < 0.88:
+                self._start_sequence("dash_crash")
+            elif r < 0.91:
                 self._start_sequence("full_jump")
-            elif r < 0.92:
-                self._start_sequence("drama_queen")
+            # drama_queen no longer random — only triggered by wall crash or angry attack
         elif self.state == CatState.SLEEPING_BALL:
             self.idle_ticks += 1
             if self.idle_ticks > random.randint(5, 15):
@@ -3104,19 +3134,23 @@ class CatEncounter:
 
 
 class LoveEncounter:
-    """Silent encounter: cat A shows love, cat B reacts (love/surprised/angry).
-    If both show love, a kitten is born at the midpoint."""
+    """Silent encounter between two cats. Cat A is the initiator; the outcome
+    is decided up front:
+      - LOVE (40%):       both in LOVE → a kitten is born
+      - SURPRISED (30%):  A in LOVE, B surprised, no drama
+      - ANGRY (30%):      A attacks with ANGRY, B is the victim → drama_queen
+    """
 
     PROXIMITY = CatEncounter.PROXIMITY
     COOLDOWN = 300.0  # 5 min — no baby-boom
 
     def __init__(self, cat_a, cat_b, app):
-        self.cat_a = cat_a  # initiator (falls in love first)
-        self.cat_b = cat_b  # responder
+        self.cat_a = cat_a  # initiator
+        self.cat_b = cat_b  # responder / potential victim
         self.app = app
         self.active = True
         self._timers = []
-        self._reaction = None  # CatState picked for cat_b
+        self._outcome = None  # "love" | "surprised" | "angry"
 
     def start(self):
         for cat in (self.cat_a, self.cat_b):
@@ -3124,12 +3158,25 @@ class LoveEncounter:
             cat.meow_visible = False
             cat.chat_visible = False
 
-        # Cat A immediately enters LOVE state, facing cat B
-        self.cat_a.state = CatState.LOVE
-        self.cat_a._face_toward(self.cat_b, CatState.LOVE)
+        # Decide the outcome up front so cat A shows the right initial state
+        r = random.random()
+        if r < 0.40:
+            self._outcome = "love"
+        elif r < 0.70:
+            self._outcome = "surprised"
+        else:
+            self._outcome = "angry"
+
+        # Cat A enters its initial state based on outcome
+        if self._outcome == "angry":
+            self.cat_a.state = CatState.ANGRY  # aggressor
+            self.cat_a._face_toward(self.cat_b, CatState.ANGRY)
+        else:
+            self.cat_a.state = CatState.LOVE
+            self.cat_a._face_toward(self.cat_b, CatState.LOVE)
         self.cat_a.frame_index = 0
 
-        # Cat B stays idle but oriented toward cat A so it looks like they're interacting
+        # Cat B stays idle but faces cat A
         self.cat_b.state = CatState.IDLE
         self.cat_b._face_toward(self.cat_a, CatState.IDLE)
 
@@ -3140,16 +3187,14 @@ class LoveEncounter:
     def _cat_b_reacts(self):
         if not self.active:
             return False
-        # Reaction weights: 40% love (baby chance), 30% surprised, 30% angry
-        r = random.random()
-        if r < 0.40:
-            self._reaction = CatState.LOVE
-        elif r < 0.70:
-            self._reaction = CatState.SURPRISED
-        else:
-            self._reaction = CatState.ANGRY
-        self.cat_b.state = self._reaction
-        self.cat_b._face_toward(self.cat_a, self._reaction)
+        # Reaction depends on the pre-decided outcome
+        if self._outcome == "love":
+            self.cat_b.state = CatState.LOVE
+        elif self._outcome == "surprised":
+            self.cat_b.state = CatState.SURPRISED
+        else:  # angry → cat B is surprised/scared before the attack
+            self.cat_b.state = CatState.SURPRISED
+        self.cat_b._face_toward(self.cat_a, self.cat_b.state)
         self.cat_b.frame_index = 0
 
         # Hold reaction for 3s, then decide outcome
@@ -3160,15 +3205,34 @@ class LoveEncounter:
     def _decide_outcome(self):
         if not self.active:
             return False
-        if self._reaction == CatState.LOVE:
+        if self._outcome == "love":
             # Both in love → birth!
             self._give_birth()
-            # Let parents stay in LOVE during birth animation, then end
             tid = GLib.timeout_add(3500, self._end)
             self._timers.append(tid)
+        elif self._outcome == "angry":
+            # Attack! Cat A was the aggressor, cat B is now the victim
+            self._attack_cat_b()
         else:
             self._end()
         return False
+
+    def _attack_cat_b(self):
+        """Cat A attacks cat B. Cat B plays drama_queen, both exit encounter."""
+        log.info("Love encounter attack: %s -> %s", self.cat_a.config["name"], self.cat_b.config["name"])
+        # Release cat_b from encounter so drama_queen can play freely
+        self.cat_b.in_encounter = False
+        self.cat_b._flip_h = False
+        self.cat_b._start_sequence("drama_queen")
+        # Cat A steps out with cooldown
+        self.cat_a.state = CatState.IDLE
+        self.cat_a.in_encounter = False
+        self.cat_a._flip_h = False
+        self.cat_a._encounter_cooldown_until = time.monotonic() + self.COOLDOWN
+        self.cat_a.idle_ticks = 0
+        # Global encounter end (but cat_b still running drama_queen on its own)
+        self.active = False
+        self.app._active_encounter = None
 
     def _give_birth(self):
         # Check global kitten limit
@@ -3674,6 +3738,10 @@ class CatAIApp(Gtk.Application):
         ctx.set_operator(cairo.OPERATOR_OVER)
 
         for cat in self.cat_instances:
+            # Defensive: always clamp before drawing (except during birth scale anim)
+            if cat._birth_progress is None:
+                cat._clamp_to_screen()
+
             # Background props (drawn BEFORE tinted sprite)
             if cat.state == CatState.SCRATCHING_TREE:
                 _draw_tree_bg_cairo(ctx, cat)
