@@ -40,6 +40,7 @@ class ReactionPool:
 
     # Canonical event names — add new constants here as new events are wired up.
     EVT_CAPSLOCK = "capslock_on"
+    EVT_PETTING = "petting_start"
     # Future:
     # EVT_NOTIFICATION = "notification_received"
     # EVT_IDLE_START   = "user_idle"
@@ -185,6 +186,25 @@ class ReactionPool:
                 "React as a mildly annoyed or concerned cat, very briefly. "
                 "Stay in character."
             )
+        if event == self.EVT_PETTING:
+            if lang == "fr":
+                return (
+                    "L'utilisateur te caresse. Tu ronronnes et tu adores ça. "
+                    "Réagis comme un chat content, en très court, avec des "
+                    "ronrons / petits miaous / onomatopées. Reste en "
+                    "personnalité."
+                )
+            if lang == "es":
+                return (
+                    "El usuario te está acariciando. Ronroneas y te encanta. "
+                    "Reacciona como un gato feliz, muy breve, con ronroneos "
+                    "o maullidos suaves. Mantén tu personalidad."
+                )
+            return (
+                "The user is petting you and it feels wonderful. Purr and "
+                "react like a happy cat — very brief, purr/mew-style "
+                "onomatopoeia is great. Stay in character."
+            )
         return f"React briefly to the event '{event}'."
 
     # ── Parser ───────────────────────────────────────────────────────────────
@@ -254,4 +274,6 @@ class ReactionPool:
         the AI backend isn't available (e.g. CI / offline)."""
         if event == self.EVT_CAPSLOCK:
             return L10n.s("capslock_yell")
+        if event == self.EVT_PETTING:
+            return L10n.s("petting_purr")
         return "?"

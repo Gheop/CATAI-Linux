@@ -40,6 +40,13 @@ class L10n:
             "en": "WHY ARE YOU SHOUTING?!",
             "es": "¿POR QUÉ GRITAS?!",
         },
+        # Petting — shown while the user long-presses a cat (before the
+        # AI-generated purr pool fills, and as an offline fallback).
+        "petting_purr": {
+            "fr": "*ronron* 💕",
+            "en": "*purrrr* 💕",
+            "es": "*ronroneo* 💕",
+        },
     }
     meows = {
         "fr": ["Miaou~", "Mrrp!", "Prrrr...", "Miaou miaou!", "Nyaa~", "*ronron*", "Mew!", "Prrrt?"],

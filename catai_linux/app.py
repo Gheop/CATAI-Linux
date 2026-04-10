@@ -58,6 +58,7 @@ from catai_linux.voice import (
 RENDER_MS = 125        # 8 FPS
 BEHAVIOR_MS = 1000     # 1 Hz
 WALK_SPEED = 4
+PETTING_THRESHOLD_MS = 800  # long-press duration to enter petting mode
 DEFAULT_SCALE = 1.5
 MIN_SCALE = 0.5
 MAX_SCALE = 4.0
@@ -2213,6 +2214,8 @@ class CatAIApp(Gtk.Application):
         self._fullscreen_prev = False
         self._fullscreen_last_trigger = 0.0
         self._fullscreen_applause_active = False
+        # Petting state
+        self._petting_timer_id = None
 
     def do_activate(self):
         _setup_logging()
@@ -2577,6 +2580,40 @@ class CatAIApp(Gtk.Application):
                 f"hidden={hidden_cats} boss={boss_cats} beam={beam_cats} "
                 f"rm_rf={rm_rf_active}")
 
+    def _cmd_pet_cat(self, parts):
+        """E2E hook: simulate a long-press on a cat to enter petting mode,
+        without actually waiting for the PETTING_THRESHOLD_MS timer.
+        Usage: pet_cat <idx>"""
+        cat, err = self._get_cat_at_idx(parts)
+        if err:
+            return err
+        # Spoof the drag state so _try_enter_petting accepts the call
+        self._drag_cat = cat
+        cat.dragging = True
+        cat.mouse_moved = False
+        self._try_enter_petting(cat)
+        if getattr(cat, "_petting_active", False):
+            return f"OK petting {parts[1]}"
+        return "ERR: petting did not start (cat busy?)"
+
+    def _cmd_unpet_cat(self, parts):
+        """E2E hook: release a cat from petting mode."""
+        cat, err = self._get_cat_at_idx(parts)
+        if err:
+            return err
+        self._exit_petting(cat)
+        self._drag_cat = None
+        cat.dragging = False
+        return f"OK unpet {parts[1]}"
+
+    def _cmd_petting_state(self, parts):
+        """Return which cats are currently being petted."""
+        petted = [
+            i for i, c in enumerate(self.cat_instances)
+            if getattr(c, "_petting_active", False)
+        ]
+        return f"OK petted={','.join(map(str, petted)) if petted else 'none'}"
+
     def _cmd_kitten_count(self, parts):
         """Return the number of real kittens currently on the canvas, i.e.
         cats born from love encounters. Explicitly excludes apocalypse
@@ -2631,6 +2668,9 @@ class CatAIApp(Gtk.Application):
                 "settings_state": self._cmd_settings_state,
                 "egg_state": self._cmd_egg_state,
                 "kitten_count": self._cmd_kitten_count,
+                "pet_cat": self._cmd_pet_cat,
+                "unpet_cat": self._cmd_unpet_cat,
+                "petting_state": self._cmd_petting_state,
                 "get_chat_response": self._cmd_get_chat_response,
                 "screenshot": self._cmd_screenshot,
             }
@@ -3294,6 +3334,13 @@ class CatAIApp(Gtk.Application):
         cat.mouse_moved = False
         cat.drag_win_x = cat.x
         cat.drag_win_y = cat.y
+        # Petting detection: schedule a "check still stationary" callback
+        # after PETTING_THRESHOLD_MS. If the user hasn't moved by then, we
+        # enter petting mode. Cancelled by _on_canvas_drag_update on move.
+        self._cancel_petting_timer()
+        self._petting_timer_id = GLib.timeout_add(
+            PETTING_THRESHOLD_MS, self._try_enter_petting, cat
+        )
 
     def _on_canvas_drag_update(self, gesture, offset_x, offset_y):
         cat = self._drag_cat
@@ -3301,6 +3348,11 @@ class CatAIApp(Gtk.Application):
             return
         if abs(offset_x) > 3 or abs(offset_y) > 3:
             cat.mouse_moved = True
+            # Real drag — cancel any pending petting trigger
+            self._cancel_petting_timer()
+            # If we were already petting, a drag 'pulls out' of petting mode
+            if getattr(cat, "_petting_active", False):
+                self._exit_petting(cat)
         cat.x = max(0, min(cat.drag_win_x + offset_x, cat.screen_w - cat.display_w))
         cat.y = max(0, min(cat.drag_win_y + offset_y, cat.screen_h - cat.display_h))
         # Force immediate redraw for smooth drag
@@ -3309,12 +3361,104 @@ class CatAIApp(Gtk.Application):
 
     def _on_canvas_drag_end(self, gesture, offset_x, offset_y):
         cat = self._drag_cat
+        self._cancel_petting_timer()
         if cat:
+            was_petting = getattr(cat, "_petting_active", False)
             cat.dragging = False
-            if not cat.mouse_moved:
-                # No movement → treat as click → toggle chat
+            if was_petting:
+                # End petting gracefully — no chat toggle, just restore state
+                self._exit_petting(cat)
+            elif not cat.mouse_moved:
+                # Short press, no movement → treat as click → toggle chat
                 self._toggle_chat_for(cat)
         self._drag_cat = None
+
+    # ── Petting (long-press on a stationary cat) ─────────────────────────────
+
+    def _cancel_petting_timer(self) -> None:
+        tid = getattr(self, "_petting_timer_id", None)
+        if tid:
+            try:
+                GLib.source_remove(tid)
+            except Exception:
+                pass
+            self._petting_timer_id = None
+
+    def _try_enter_petting(self, cat) -> bool:
+        """Called by GLib timeout PETTING_THRESHOLD_MS after a drag began.
+        If the user hasn't moved the mouse and the cat is still the active
+        drag target, commit to petting mode."""
+        self._petting_timer_id = None
+        if cat is not self._drag_cat:
+            return False
+        if cat.mouse_moved:
+            return False
+        if cat.in_encounter or getattr(cat, "_rm_rf_active", False):
+            return False
+        # Enter petting mode
+        cat._petting_active = True
+        cat._petting_prev_state = cat.state
+        cat.state = CatState.LOVE  # hearts auto-drawn by the canvas
+        cat.frame_index = 0
+        # Show a short purr bubble — pool-backed so it varies across pets
+        try:
+            text = self._reaction_pool.get(cat, ReactionPool.EVT_PETTING)
+        except Exception:
+            text = L10n.s("petting_purr")
+        cat.meow_text = text
+        cat.meow_visible = True
+        # Keep the bubble up until the user releases — refresh every 2.5s
+        def refresh():
+            if not getattr(cat, "_petting_active", False):
+                return False
+            try:
+                cat.meow_text = self._reaction_pool.get(cat, ReactionPool.EVT_PETTING)
+            except Exception:
+                pass
+            return True
+        if cat._meow_timer_id:
+            try:
+                GLib.source_remove(cat._meow_timer_id)
+            except Exception:
+                pass
+        cat._meow_timer_id = GLib.timeout_add(2500, refresh)
+        # Mood boost hook — no-op until the mood system lands
+        hook = getattr(self, "_on_petting_start", None)
+        if callable(hook):
+            try:
+                hook(cat)
+            except Exception:
+                log.exception("petting start hook failed")
+        log.info("petting: start %s", cat.config.get("name"))
+        return False  # one-shot timer
+
+    def _exit_petting(self, cat) -> None:
+        """Release a cat from petting mode — restore its previous state and
+        clear the purr bubble."""
+        if not getattr(cat, "_petting_active", False):
+            return
+        cat._petting_active = False
+        # Stop the refresh timer
+        if cat._meow_timer_id:
+            try:
+                GLib.source_remove(cat._meow_timer_id)
+            except Exception:
+                pass
+            cat._meow_timer_id = None
+        cat.meow_visible = False
+        cat.meow_text = ""
+        # Restore the pre-petting state (usually IDLE / WALKING)
+        prev = getattr(cat, "_petting_prev_state", CatState.IDLE)
+        cat.state = prev
+        cat.frame_index = 0
+        # Mood hook for the end of petting (duration-aware mood boost later)
+        hook = getattr(self, "_on_petting_end", None)
+        if callable(hook):
+            try:
+                hook(cat)
+            except Exception:
+                log.exception("petting end hook failed")
+        log.info("petting: end %s", cat.config.get("name"))
 
     # ── Tick callbacks ───────────────────────────────────────────────────────
 
