@@ -314,6 +314,10 @@ class MockChat(ChatBackend):
     MOCK_POOL_PETTING = (
         '["*ronron*", "*prrrr*", "mrrrp~", "miaou \u2665", "*snurgle*", "oh ouiiii"]'
     )
+    MOCK_POOL_NOTIFICATION = (
+        '["Quoi ?! \U0001f514", "Qui \u00e7a ?", "Ooh !", "\U0001f431 ?!", '
+        '"Mrrp ?!", "Encore ?!"]'
+    )
     MOCK_POOL_GENERIC = '["Miaou ?", "Prrrt ?", "Hmm ?", "Quoi ?", "Oui ?", "Mrrp ?"]'
 
     def _stream_chunks(self):
@@ -323,10 +327,13 @@ class MockChat(ChatBackend):
         )
         if "[CATAI_REACTION_POOL]" in sys_prompt:
             # Pick a canned pool matching the scenario if we can.
-            if "Caps Lock" in sys_prompt or "Verr. Maj." in sys_prompt or "Bloq Mayús" in sys_prompt:
+            low = sys_prompt.lower()
+            if "caps lock" in low or "verr. maj." in low or "bloq mayús" in low:
                 payload = self.MOCK_POOL_CAPSLOCK
-            elif "petting" in sys_prompt.lower() or "caresse" in sys_prompt.lower() or "acaricia" in sys_prompt.lower():
+            elif "petting" in low or "caresse" in low or "acaricia" in low:
                 payload = self.MOCK_POOL_PETTING
+            elif "notification" in low or "desktop notification" in low:
+                payload = self.MOCK_POOL_NOTIFICATION
             else:
                 payload = self.MOCK_POOL_GENERIC
             # Stream as a single chunk — the parser doesn't care about chunking.
