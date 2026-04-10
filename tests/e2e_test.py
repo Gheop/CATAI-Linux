@@ -526,8 +526,27 @@ def run_tests():
     test("love encounter (angry) triggered", "OK" in resp and "forced=angry" in resp, resp)
     time.sleep(5)
 
-    # ── T15: Quit ─────────────────────────────────────────
-    print("\n[T15] Quit via socket", flush=True)
+    # ── T15: Petting (long-press on a cat) ───────────────
+    print("\n[T15] Petting", flush=True)
+    # Initial state: nobody being petted
+    resp = send_cmd("petting_state")
+    test("no cats petted initially", "petted=none" in resp, resp)
+    # Start petting cat 0
+    resp = send_cmd("pet_cat 0")
+    test("pet_cat 0 triggered", resp.startswith("OK"), resp)
+    time.sleep(0.3)
+    resp = send_cmd("petting_state")
+    test("cat 0 is now being petted", "petted=0" in resp, resp)
+    time.sleep(1)  # enjoy the petting for a moment
+    # Release
+    resp = send_cmd("unpet_cat 0")
+    test("unpet_cat 0 released", resp.startswith("OK"), resp)
+    time.sleep(0.3)
+    resp = send_cmd("petting_state")
+    test("cat 0 released from petting", "petted=none" in resp, resp)
+
+    # ── T16: Quit ─────────────────────────────────────────
+    print("\n[T16] Quit via socket", flush=True)
     resp = send_cmd("click_menu_quit")
     test("Quit command sent", resp.startswith("OK"), resp)
     time.sleep(2)

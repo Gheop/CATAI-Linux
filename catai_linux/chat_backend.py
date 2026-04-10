@@ -311,6 +311,9 @@ class MockChat(ChatBackend):
         '["POURQUOI CRIES ?!", "ON SE CALME !", "TROP FORT !!!", '
         '"AÏE MES OREILLES", "CHUT !!", "BAISSE LE TON"]'
     )
+    MOCK_POOL_PETTING = (
+        '["*ronron*", "*prrrr*", "mrrrp~", "miaou \u2665", "*snurgle*", "oh ouiiii"]'
+    )
     MOCK_POOL_GENERIC = '["Miaou ?", "Prrrt ?", "Hmm ?", "Quoi ?", "Oui ?", "Mrrp ?"]'
 
     def _stream_chunks(self):
@@ -322,6 +325,8 @@ class MockChat(ChatBackend):
             # Pick a canned pool matching the scenario if we can.
             if "Caps Lock" in sys_prompt or "Verr. Maj." in sys_prompt or "Bloq Mayús" in sys_prompt:
                 payload = self.MOCK_POOL_CAPSLOCK
+            elif "petting" in sys_prompt.lower() or "caresse" in sys_prompt.lower() or "acaricia" in sys_prompt.lower():
+                payload = self.MOCK_POOL_PETTING
             else:
                 payload = self.MOCK_POOL_GENERIC
             # Stream as a single chunk — the parser doesn't care about chunking.
