@@ -545,6 +545,28 @@ def run_tests():
     resp = send_cmd("petting_state")
     test("cat 0 released from petting", "petted=none" in resp, resp)
 
+    # ── T15b: Mood system ────────────────────────────────
+    print("\n[T15b] Mood system", flush=True)
+    # mood_state without index returns snapshot for all cats
+    resp = send_cmd("mood_state")
+    test("mood_state returns all cats",
+         resp.startswith("OK") and "[0]" in resp and "h=" in resp and "e=" in resp,
+         resp[:100])
+    # mood_state with index
+    resp = send_cmd("mood_state 0")
+    test("mood_state 0 returns cat-specific stats",
+         resp.startswith("OK") and "happiness=" in resp and "energy=" in resp,
+         resp[:80])
+    # Force a low happiness via mood_set
+    resp = send_cmd("mood_set 0 happiness 10")
+    test("mood_set accepted", resp.startswith("OK") and "happiness=10" in resp, resp)
+    # Check it stuck
+    resp = send_cmd("mood_state 0")
+    test("mood_set persisted to state",
+         "happiness=10" in resp, resp[:80])
+    # Restore to neutral so the rest of the tests see a normal cat
+    send_cmd("mood_set 0 happiness 60")
+
     # ── T16: Quit ─────────────────────────────────────────
     print("\n[T16] Quit via socket", flush=True)
     resp = send_cmd("click_menu_quit")
