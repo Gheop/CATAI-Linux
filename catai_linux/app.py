@@ -613,6 +613,7 @@ from catai_linux.x11_helpers import (  # noqa: E402
 from catai_linux.reactions import ReactionPool  # noqa: E402
 from catai_linux.mood import CatMood  # noqa: E402
 from catai_linux.activity import ActivityMonitor  # noqa: E402
+from catai_linux import personality as _personality  # noqa: E402
 
 
 from catai_linux.chat_backend import (  # noqa: E402
@@ -715,6 +716,9 @@ class CatInstance:
         self._sprite_bottom_padding = 0
         # Load persisted mood state (fresh default on any error / first run)
         self.mood = CatMood.load(self.config["id"])
+        # Load persisted personality drift state (quirks accumulated from
+        # previous chat sessions — appended to the system prompt below).
+        self.personality = _personality.PersonalityState.load(self.config["id"])
 
         # Everything heavy (sprite loading, anim offset computation, pixel
         # scans, chat backend creation which may do HTTP + subprocess) goes
@@ -753,6 +757,9 @@ class CatInstance:
 
     def setup_chat(self, model, lang):
         prompt = _catset_prompt(self.config["char_id"], self.config["name"], lang)
+        # Append any drifted personality quirks collected over prior chats
+        if getattr(self, "personality", None) is not None:
+            prompt = self.personality.append_to_prompt(prompt, lang)
         self.chat_backend = create_chat(model)
         self.chat_backend.messages = [{"role": "system", "content": prompt}]
         mem = load_memory(self.config["id"])
@@ -1281,6 +1288,32 @@ class CatInstance:
             self.idle_ticks = 0
             if self.chat_backend:
                 save_memory(self.config["id"], self.chat_backend.messages)
+            # Personality drift — bump the message counter and, if the
+            # cat has hit its DRIFT_EVERY_MESSAGES threshold, kick off
+            # a background reflection call on the recent history.
+            # Gated by the app-level _personality_drift_enabled flag so
+            # users can opt out via `"personality_drift": false` in
+            # config.json. The actual LLM call is non-blocking and
+            # idempotent per cat_id (no concurrent drifts).
+            app = self._app
+            if (getattr(self, "personality", None) is not None
+                    and getattr(app, "_personality_drift_enabled", True)):
+                self.personality.on_message_added()
+                self.personality.save()
+                if self.personality.should_drift():
+                    char_id = self.config.get("char_id", "cat01")
+                    p = CATSET_PERSONALITIES.get(
+                        char_id, CATSET_PERSONALITIES["cat01"])
+                    base_traits = (p.get("traits") or {}).get(
+                        L10n.lang, p["traits"]["fr"])
+                    _personality.drift_async(
+                        state=self.personality,
+                        cat_name=self.config.get("name", "Cat"),
+                        base_traits=base_traits,
+                        lang=L10n.lang,
+                        create_chat_fn=create_chat,
+                        model=app.selected_model,
+                    )
             return False
 
         def on_error(msg):
@@ -1317,6 +1350,8 @@ class CatInstance:
 
     def update_system_prompt(self, lang):
         p = _catset_prompt(self.config["char_id"], self.config["name"], lang)
+        if getattr(self, "personality", None) is not None:
+            p = self.personality.append_to_prompt(p, lang)
         if self.chat_backend and self.chat_backend.messages:
             self.chat_backend.messages[0] = {"role": "system", "content": p}
 
@@ -2295,6 +2330,10 @@ class CatAIApp(Gtk.Application):
         L10n.lang = cfg.get("lang", "fr")
         self.encounters_enabled = cfg.get("encounters", True)
         self.cat_configs = cfg.get("cats", [])
+        # Personality drift — on by default. Users can opt out via
+        # config.json key `"personality_drift": false`. The drift engine
+        # respects this flag in the chat on_done hook.
+        self._personality_drift_enabled = cfg.get("personality_drift", True)
 
         # Voice chat: enabled from --voice CLI flag OR config.json
         cli_voice = "--voice" in sys.argv
@@ -2790,6 +2829,48 @@ class CatAIApp(Gtk.Application):
             self._canvas_area.queue_draw()
         return "OK redraw queued"
 
+    def _cmd_personality(self, parts):
+        """Query, force-drift, or reset a cat's personality state.
+        Usage:
+            personality state <idx>               → dump quirks + counters
+            personality force_drift <idx> <trait> → inject a trait (e2e)
+            personality reset <idx>               → clear all quirks
+        """
+        if len(parts) < 2:
+            return ("ERR: usage: personality state|force_drift|reset "
+                    "<idx> [trait]")
+        sub = parts[1]
+        if sub == "state":
+            cat, err = self._get_cat_at_idx(parts[1:])
+            if err:
+                return err
+            st = cat.personality
+            return (f"OK count={st.message_count} "
+                    f"quirks={st.drifted_traits} "
+                    f"enabled={self._personality_drift_enabled}")
+        if sub == "force_drift":
+            if len(parts) < 4:
+                return "ERR: usage: personality force_drift <idx> <trait>"
+            cat, err = self._get_cat_at_idx(parts[1:])
+            if err:
+                return err
+            trait = " ".join(parts[3:])
+            cat.personality.apply_drift(trait)
+            cat.personality.save()
+            cat.update_system_prompt(L10n.lang)
+            return f"OK quirks={cat.personality.drifted_traits}"
+        if sub == "reset":
+            cat, err = self._get_cat_at_idx(parts[1:])
+            if err:
+                return err
+            cat.personality.drifted_traits = []
+            cat.personality.message_count = 0
+            cat.personality.last_drift_at = 0.0
+            cat.personality.save()
+            cat.update_system_prompt(L10n.lang)
+            return "OK reset"
+        return f"ERR: unknown subcommand {sub}"
+
     def _handle_test_cmd(self, cmd):
         """Handle a test command. Returns response string."""
         parts = cmd.split()
@@ -2830,6 +2911,7 @@ class CatAIApp(Gtk.Application):
                 "notify": self._cmd_notify,
                 "get_chat_response": self._cmd_get_chat_response,
                 "screenshot": self._cmd_screenshot,
+                "personality": self._cmd_personality,
             }
         handler = self._test_cmd_handlers.get(parts[0])
         if handler is None:

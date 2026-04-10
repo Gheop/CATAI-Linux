@@ -605,6 +605,35 @@ def run_tests():
     test("afk_sleep=False after force_afk off",
          "afk_sleep=False" in resp, resp)
 
+    # ── T15d: Personality drift ───────────────────────────
+    print("\n[T15d] Personality drift", flush=True)
+    # Fresh cat should have no quirks
+    resp = send_cmd("personality state 0")
+    test("personality state query returns OK",
+         resp.startswith("OK count="), resp)
+    test("fresh cat has empty quirks",
+         "quirks=[]" in resp, resp)
+    # force_drift injects a quirk immediately, bypassing the LLM round-trip
+    resp = send_cmd("personality force_drift 0 aime les tests e2e")
+    test("personality force_drift accepted",
+         resp.startswith("OK quirks="), resp)
+    test("force_drift added our trait",
+         "aime les tests e2e" in resp, resp)
+    # State query shows the quirk
+    resp = send_cmd("personality state 0")
+    test("state query reflects forced quirk",
+         "aime les tests e2e" in resp, resp)
+    # Reset clears
+    resp = send_cmd("personality reset 0")
+    test("personality reset accepted", resp == "OK reset", resp)
+    resp = send_cmd("personality state 0")
+    test("after reset quirks are empty",
+         "quirks=[]" in resp, resp)
+    # Bad usage
+    resp = send_cmd("personality bogus 0")
+    test("personality rejects unknown subcommand",
+         resp.startswith("ERR"), resp)
+
     # ── T16: Quit ─────────────────────────────────────────
     print("\n[T16] Quit via socket", flush=True)
     resp = send_cmd("click_menu_quit")
