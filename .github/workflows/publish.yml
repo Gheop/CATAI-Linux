@@ -7,6 +7,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # Opt into Node.js 24 for JavaScript-based actions (Node 20 is deprecated,
+  # will be removed from runners on 2026-09-16).
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   build:
     runs-on: ubuntu-latest
