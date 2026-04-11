@@ -675,6 +675,7 @@ from catai_linux import seasonal as _seasonal  # noqa: E402
 from catai_linux import tts as _tts  # noqa: E402
 from catai_linux import updater as _updater  # noqa: E402
 from catai_linux import metrics as _metrics  # noqa: E402
+from catai_linux import character_packs as _character_packs  # noqa: E402
 
 
 from catai_linux.chat_backend import (  # noqa: E402
@@ -2642,6 +2643,19 @@ class CatAIApp(Gtk.Application):
         _set_theme(dark=self._dark_mode)
         self._check_deps()
 
+        # Discover external character packs (#9 Tier 1) and merge them
+        # into CATSET_PERSONALITIES so they show up in the catset picker
+        # exactly like the bundled cats. Each pack lives in
+        # ~/.local/share/catai/characters/<char_id>/ and is auto-loaded
+        # at startup. Invalid packs are silently skipped.
+        try:
+            external = _character_packs.discover_packs()
+            if external:
+                CATSET_PERSONALITIES.update(external)
+                log.info("Loaded %d external character pack(s)", len(external))
+        except Exception:
+            log.exception("character pack discovery crashed")
+
         display = Gdk.Display.get_default()
         monitors = display.get_monitors()
         # Collect per-monitor rects for multi-monitor awareness (dead-zone
@@ -4538,8 +4552,15 @@ class CatAIApp(Gtk.Application):
         if not char_id:
             log.warning("Config without char_id — skipping: %r", config)
             return
-        pkg_dir = os.path.dirname(os.path.abspath(__file__))
-        char_dir = os.path.join(pkg_dir, char_id)
+        # External character pack? Use its absolute sprite directory.
+        # Bundled cats live under the package directory keyed by char_id.
+        perso = CATSET_PERSONALITIES.get(char_id, {})
+        ext_dir = _character_packs.external_sprite_dir(perso)
+        if ext_dir:
+            char_dir = ext_dir
+        else:
+            pkg_dir = os.path.dirname(os.path.abspath(__file__))
+            char_dir = os.path.join(pkg_dir, char_id)
         if not os.path.isdir(char_dir):
             log.warning("Catset dir not found: %s — skipping", char_dir)
             return
