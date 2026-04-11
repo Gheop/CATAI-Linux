@@ -24,6 +24,7 @@ Port of [CATAI](https://github.com/wil-pe/CATAI) (macOS/Swift) to Linux.
 - **AI chat** -- Click a cat to open a pixel-art chat bubble, powered by [Claude](https://claude.ai) or [Ollama](https://ollama.ai)
 - **Voice chat** 🎤 (optional) -- Hold the mic button or simply hold **Space** to talk to your cats. 100% local transcription via [faster-whisper](https://github.com/SYSTRAN/faster-whisper), GPU-accelerated if you have CUDA
 - **Wake word** 👂 (optional) -- Each cat answers to its own renameable first name. Say "Mandarine" or "Tabby" out loud and the matching cat opens its chat bubble + starts listening. Powered by [Vosk](https://alphacephei.com/vosk/) (offline, ~41 MB FR model, Apache-2.0)
+- **Voice commands** 🗣️ -- Chain a verb after a cat's name to pilot it directly: *"Mandarine dors"* (sleep), *"Tabby viens"* (come to cursor), *"Ombre raconte"* (tell a story), *"Noisette danse"* (mini-disco), plus *saute* and *roule*. No chat bubble, just instant action.
 - **Rich animations** -- 23 animation states including running, dashing, sleeping, grooming, climbing, wall grab, ledge climbing, dying & resurrection, and more
 - **Animation sequences** -- Multi-step scripted behaviors: wall adventures, ledge climbing, dash crashes, dramatic deaths with resurrection
 - **Visual overlays** -- Floating ZzZ, hearts, speed lines, hurt stars, skulls, sparkles above cats during animations
@@ -189,6 +190,49 @@ MIT
 ---
 
 ## Changelog
+
+### v0.7.4 — Voice commands directes (2026-04-11)
+
+Extension du wake word : au lieu d'ouvrir un chat à chaque fois qu'on
+appelle un chat par son prénom, on peut maintenant lui chaîner un
+**verbe** pour le piloter directement, sans bulle de chat ni écoute
+push-to-talk. Six verbes français pour commencer.
+
+| Phrase | Action |
+|---|---|
+| *« Mandarine »* | Comportement précédent : ouvre le chat + démarre une PTT 6 s |
+| *« Mandarine dors »* | Le chat se met en SLEEPING_BALL immédiatement |
+| *« Mandarine viens »* | Le chat marche jusqu'au curseur de la souris |
+| *« Mandarine raconte »* | Ouvre le chat et injecte un prompt « raconte-moi une anecdote » à l'IA |
+| *« Mandarine danse »* | Mini-disco loop sur ce chat (LOVE/ROLLING/GROOMING alternance, 5 sec) |
+| *« Mandarine saute »* | Animation JUMPING |
+| *« Mandarine roule »* | Animation ROLLING |
+
+Détails techniques :
+
+- **Grammaire Vosk étendue** — les 6 verbes sont ajoutés à la grammaire
+  fermée du recognizer en plus des prénoms. Vosk compose librement, donc
+  *« Mandarine dors »* est transcrit en un seul résultat.
+- **Parser look-ahead 2 tokens** — après avoir matché un prénom, on
+  cherche un verbe dans les 2 tokens suivants. Permet à l'utilisateur de
+  hésiter (« euh Mandarine, dors ») mais évite les faux positifs sur des
+  verbes très éloignés.
+- **`viens` utilise XQueryPointer** — nouveau helper Xlib ctypes
+  `get_mouse_position()` qui lit la position absolue du curseur sans
+  fork. Fallback à un point random sur monitor 0 si la query échoue.
+- **`raconte` localisé** — le prompt envoyé au LLM est traduit en FR/EN/ES
+  selon `L10n.lang`, donc la langue de la réponse suit ta config.
+- **`danse` scopé à un seul chat** — réutilise la liste d'états
+  célébratoires de l'easter egg `eg_disco` mais ne met que le chat appelé
+  en mode danse, les autres continuent leur vie. Auto-cleanup après 5 s.
+- **Backward compat** — l'ancienne signature `on_wake(cat_id)` reste
+  supportée par un fallback `TypeError` dans `_fire`. Tous les
+  consumers existants continuent de marcher.
+- **23 nouveaux unit tests** : COMMAND_VERBS, parsing, look-ahead,
+  callback dispatch, legacy compat, get_mouse_position safety. Total
+  348 passed / 0 failed.
+
+Pas de nouvelle dépendance — Vosk était déjà dans `[voice]`.
 
 ### v0.7.3 — Cleanup subprocess X11 (2026-04-11)
 
