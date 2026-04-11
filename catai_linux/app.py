@@ -16,7 +16,6 @@ import json
 import logging
 import random
 import shutil
-import subprocess
 import time
 import sys
 import threading
@@ -665,6 +664,8 @@ from catai_linux.x11_helpers import (  # noqa: E402
     set_always_on_top, set_notification_type, unregister_window,
     apply_above_all as _apply_above_all,
     update_input_shape as _update_input_shape,
+    get_active_window_fullscreen as _x11_active_fullscreen,
+    get_window_y_offset as _x11_window_y_offset,
 )
 
 from catai_linux.reactions import ReactionPool  # noqa: E402
@@ -3013,8 +3014,8 @@ class CatAIApp(Gtk.Application):
             GLib.timeout_add(500, self._check_caps_lock),
             # Fullscreen poller — fires every 1500 ms, triggers eg_fullscreen
             # on the False → True transition of the active window's
-            # _NET_WM_STATE_FULLSCREEN atom. Uses xprop subprocess so
-            # polling is a bit more expensive — hence slower rate.
+            # _NET_WM_STATE_FULLSCREEN atom. Direct Xlib query (~50 µs)
+            # since v0.7.3 — used to be 2 xprop subprocesses.
             GLib.timeout_add(1500, self._check_fullscreen),
             # Mood save — persist all cats' mood state to disk every 60s
             # (plus on shutdown and on key mood events).
@@ -3899,17 +3900,16 @@ class CatAIApp(Gtk.Application):
         def _late_xid_check():
             if not self._canvas_xid:
                 _set_empty_input(win)
-            # Detect canvas Y offset (GNOME top bar)
+            # Detect canvas Y offset (GNOME top bar) via direct Xlib
+            # ctypes — no fork. The previous xdotool subprocess was the
+            # only reason CATAI runtime-depended on xdotool.
             xid = _get_xid(win)
             if xid:
                 try:
-                    r = subprocess.run(["xdotool", "getwindowgeometry", "--shell", str(xid)],
-                                       capture_output=True, text=True, timeout=1)
-                    for line in r.stdout.split("\n"):
-                        if line.startswith("Y="):
-                            self._canvas_y_offset = int(line.split("=")[1])
-                            log.debug("Canvas Y offset: %d", self._canvas_y_offset)
+                    self._canvas_y_offset = _x11_window_y_offset(xid)
+                    log.debug("Canvas Y offset: %d", self._canvas_y_offset)
                 except Exception:
+                    log.debug("Y offset query failed", exc_info=True)
                     self._canvas_y_offset = 0
             return False
         GLib.timeout_add(500, _late_xid_check)
@@ -4827,15 +4827,11 @@ class CatAIApp(Gtk.Application):
         Gtk.Application.do_shutdown(self)
 
     def _check_deps(self):
-        if shutil.which("apt"):
-            pkg_cmd = "sudo apt install"
-        elif shutil.which("dnf"):
-            pkg_cmd = "sudo dnf install"
-        else:
-            pkg_cmd = "install"
-        for tool in ["xdotool", "wmctrl"]:
-            if not shutil.which(tool):
-                log.debug("Optional tool not found: %s (%s %s)", tool, pkg_cmd, tool)
+        # Historical hook for runtime dep checks. As of v0.7.3 we no
+        # longer rely on any external X11 tools (xdotool, wmctrl,
+        # xprop, xprintidle) — everything goes through Xlib ctypes
+        # or D-Bus. Kept as a no-op for forward use.
+        pass
 
     def _create_instance(self, config, index):
         """Instantiate a catset character (all configs are catset-based since v0.3.0)."""
@@ -5935,25 +5931,12 @@ class CatAIApp(Gtk.Application):
 
     def _is_any_fullscreen(self) -> bool:
         """Check if the currently active X window has _NET_WM_STATE_FULLSCREEN.
-        Uses xprop subprocesses — 2 cheap calls totaling <20 ms. Falls back
-        to False on any failure (non-X11 sessions, xprop missing, etc.)."""
+        Direct Xlib query via ctypes — ~50 µs, no subprocess fork. Returns
+        False on any failure (libX11 missing, no display, parse error)."""
         try:
-            r = subprocess.run(
-                ["xprop", "-root", "_NET_ACTIVE_WINDOW"],
-                capture_output=True, text=True, timeout=1,
-            )
-            # Example stdout: '_NET_ACTIVE_WINDOW(WINDOW): window id # 0x3800003'
-            if "# " not in r.stdout:
-                return False
-            xid = r.stdout.strip().split("# ", 1)[1].split(",")[0].strip()
-            if not xid or xid == "0x0":
-                return False
-            r = subprocess.run(
-                ["xprop", "-id", xid, "_NET_WM_STATE"],
-                capture_output=True, text=True, timeout=1,
-            )
-            return "_NET_WM_STATE_FULLSCREEN" in r.stdout
+            return _x11_active_fullscreen()
         except Exception:
+            log.debug("fullscreen query failed", exc_info=True)
             return False
 
     # ── Auto-update (#24) ────────────────────────────────────────────────
