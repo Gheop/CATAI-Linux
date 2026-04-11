@@ -401,6 +401,60 @@ def get_window_y_offset(xid: int) -> int:
         return 0
 
 
+def get_mouse_position() -> tuple[int, int] | None:
+    """Return the absolute (x, y) of the mouse cursor on the root
+    window via ``XQueryPointer``. Used by the wake-word ``viens``
+    command to make a cat walk to the user's cursor.
+
+    Returns ``None`` if libX11 isn't loadable or the query failed."""
+    if not (_init_xlib() and _xdpy):
+        return None
+    try:
+        # XQueryPointer(display, window, root_return, child_return,
+        #               root_x_return, root_y_return,
+        #               win_x_return, win_y_return, mask_return)
+        _xlib.XQueryPointer.argtypes = [
+            ctypes.c_void_p,                # display
+            ctypes.c_ulong,                 # window
+            ctypes.POINTER(ctypes.c_ulong), # root_return
+            ctypes.POINTER(ctypes.c_ulong), # child_return
+            ctypes.POINTER(ctypes.c_int),   # root_x_return
+            ctypes.POINTER(ctypes.c_int),   # root_y_return
+            ctypes.POINTER(ctypes.c_int),   # win_x_return
+            ctypes.POINTER(ctypes.c_int),   # win_y_return
+            ctypes.POINTER(ctypes.c_uint),  # mask_return
+        ]
+        _xlib.XQueryPointer.restype = ctypes.c_int
+        _xlib.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+        _xlib.XDefaultRootWindow.restype = ctypes.c_ulong
+
+        dpy = ctypes.c_void_p(_xdpy)
+        root = _xlib.XDefaultRootWindow(dpy)
+        root_return = ctypes.c_ulong(0)
+        child_return = ctypes.c_ulong(0)
+        root_x = ctypes.c_int(0)
+        root_y = ctypes.c_int(0)
+        win_x = ctypes.c_int(0)
+        win_y = ctypes.c_int(0)
+        mask = ctypes.c_uint(0)
+        ok = _xlib.XQueryPointer(
+            dpy, root,
+            ctypes.byref(root_return),
+            ctypes.byref(child_return),
+            ctypes.byref(root_x),
+            ctypes.byref(root_y),
+            ctypes.byref(win_x),
+            ctypes.byref(win_y),
+            ctypes.byref(mask),
+        )
+        if not ok:
+            return None
+        return (int(root_x.value), int(root_y.value))
+    except Exception:
+        log.debug("Xlib get_mouse_position failed", exc_info=True)
+        return None
+
+
 # ── XShape input passthrough ──────────────────────────────────────────────────
 
 _xext = None
