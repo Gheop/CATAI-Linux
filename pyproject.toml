@@ -61,6 +61,7 @@ catai_linux = [
     "kitten04/**/*.png", "kitten04/**/*.json",
     "kitten05/**/*.png", "kitten05/**/*.json",
     "nyan_cat.png", "nyan_rainbow.png",
+    "sounds/*.mp3", "sounds/NOTICE.md",
 ]
 
 [tool.ruff]

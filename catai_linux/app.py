@@ -638,6 +638,7 @@ from catai_linux.activity import ActivityMonitor  # noqa: E402
 from catai_linux import personality as _personality  # noqa: E402
 from catai_linux import monitors as _monitors_mod  # noqa: E402
 from catai_linux import seasonal as _seasonal  # noqa: E402
+from catai_linux import tts as _tts  # noqa: E402
 
 
 from catai_linux.chat_backend import (  # noqa: E402
@@ -694,6 +695,12 @@ class CatInstance:
         self.chat_backend = None
         self.screen_w = 0
         self.screen_h = 0
+        # Per-cat voice output toggle. Controls whether this cat's chat
+        # responses go through the TTS hybrid pipeline. Default off so
+        # the feature is pure opt-in — toggled via the speaker icon in
+        # the chat bubble (see _on_canvas_click) and persisted in the
+        # cat's config dict so it survives restarts.
+        self.tts_enabled = bool(config.get("tts_enabled", False))
         self._app = None
         self._meta = None
         self._cat_dir = ""
@@ -1340,6 +1347,21 @@ class CatInstance:
                         create_chat_fn=create_chat,
                         model=app.selected_model,
                     )
+            # TTS voice output — hybrid pipeline splits the response into
+            # text + cat-sound chunks and plays them through GStreamer.
+            # Gated by BOTH the app-level _tts_enabled flag and the
+            # per-cat self.tts_enabled toggle (the speaker icon in the
+            # chat bubble). Both default to off so the feature is pure
+            # opt-in — no risk of a silent install suddenly starting to
+            # make noises at the user.
+            if (getattr(app, "_tts_enabled", False)
+                    and getattr(self, "tts_enabled", False)
+                    and self.chat_response):
+                try:
+                    chunks = _tts.split_cat_sounds(self.chat_response)
+                    _tts.get_default_player().play(chunks)
+                except Exception:
+                    log.exception("TTS playback failed")
             return False
 
         def on_error(msg):
@@ -1871,6 +1893,31 @@ class SettingsWindow:
             voice_model_hint.set_margin_start(24)
             box.append(voice_model_hint)
 
+        # Voice output (TTS) — global kill switch. Per-cat toggles live
+        # on the speaker icon in each chat bubble.
+        tts_check = Gtk.CheckButton(label="Voice output (cat sound effects)")
+        tts_check.set_active(getattr(self.app, "_tts_enabled", False))
+        tts_check.add_css_class("pixel-label-small")
+        tts_check.set_margin_top(8)
+
+        def _on_tts_toggled(btn):
+            self.app._tts_enabled = btn.get_active()
+            self.app._save_all()
+        tts_check.connect("toggled", _on_tts_toggled)
+        box.append(tts_check)
+
+        tts_hint = Gtk.Label()
+        tts_hint.set_markup(
+            '<span foreground="#888888" size="x-small">'
+            'Plays CC0 cat samples (~165 KB) on each chat response. '
+            'Click the 🔊 icon in a chat bubble to mute an individual cat.'
+            '</span>'
+        )
+        tts_hint.set_wrap(True)
+        tts_hint.set_xalign(0)
+        tts_hint.set_margin_start(24)
+        box.append(tts_hint)
+
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.set_child(box)
@@ -2387,6 +2434,11 @@ class CatAIApp(Gtk.Application):
         # config.json key `"personality_drift": false`. The drift engine
         # respects this flag in the chat on_done hook.
         self._personality_drift_enabled = cfg.get("personality_drift", True)
+        # TTS voice output — OFF by default. Opt-in via config.json key
+        # `"tts_enabled": true` OR via the per-cat speaker icon in the
+        # chat bubble. The per-cat toggle is the primary UI; the app
+        # flag is a global kill switch.
+        self._tts_enabled = cfg.get("tts_enabled", False)
 
         # Voice chat: enabled from --voice CLI flag OR config.json
         cli_voice = "--voice" in sys.argv
@@ -3353,9 +3405,19 @@ class CatAIApp(Gtk.Application):
             if cat.meow_visible and cat.meow_text:
                 _draw_meow_bubble(ctx, cat.meow_text, cat.x, cat.y, cat.display_w, cat.display_h, self.screen_h)
 
-            # Draw chat response bubble if visible
+            # Draw chat response bubble if visible — with a clickable
+            # speaker toggle in the top-right when TTS is configured
+            # for this cat. The returned rect is stashed on the cat
+            # so _on_canvas_click can hit-test it.
             if cat.chat_visible and cat.chat_response:
-                _draw_chat_bubble(ctx, cat.chat_response, cat.x, cat.y, cat.display_w, cat.display_h)
+                speaker_rect = _draw_chat_bubble(
+                    ctx, cat.chat_response, cat.x, cat.y,
+                    cat.display_w, cat.display_h,
+                    speaker_state=cat.tts_enabled,
+                )
+                cat._speaker_click_rect = speaker_rect
+            else:
+                cat._speaker_click_rect = None
 
             # Draw encounter bubble if visible
             if cat.encounter_visible and cat.encounter_text:
@@ -3729,6 +3791,26 @@ class CatAIApp(Gtk.Application):
             self.hide_easter_menu()
             return
 
+        # Chat bubble speaker icon (toggle TTS for that cat)
+        for c in self.cat_instances:
+            rect = getattr(c, "_speaker_click_rect", None)
+            if rect is None:
+                continue
+            ix, iy, iw, ih = rect
+            if ix <= start_x <= ix + iw and iy <= start_y <= iy + ih:
+                gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+                c.tts_enabled = not c.tts_enabled
+                # Persist the toggle in the cat's config dict so it
+                # survives restarts. _save_all_cat_configs writes the
+                # updated config.json on the next tick.
+                c.config["tts_enabled"] = c.tts_enabled
+                self._save_all()
+                if self._canvas_area:
+                    self._canvas_area.queue_draw()
+                log.debug("TTS toggled for %s -> %s",
+                          c.config.get("char_id"), c.tts_enabled)
+                return
+
         # Check context menu click
         if self._menu_visible:
             mx, my = self._menu_x, self._menu_y
@@ -3961,6 +4043,7 @@ class CatAIApp(Gtk.Application):
             "encounters": self.encounters_enabled,
             "voice_enabled": self._voice_enabled,
             "voice_model": getattr(self, "_voice_model", "base"),
+            "tts_enabled": getattr(self, "_tts_enabled", False),
         })
 
     def _render_tick(self):

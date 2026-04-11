@@ -308,8 +308,15 @@ def draw_encounter_bubble(ctx, text: str, cat_x: float, cat_y: float,
 
 
 def draw_chat_bubble(ctx, text: str, cat_x: float, cat_y: float,
-                     cat_w: float, cat_h: float) -> None:
-    """Draw a chat response bubble above a cat on the Cairo canvas."""
+                     cat_w: float, cat_h: float,
+                     speaker_state: bool | None = None) -> tuple[int, int, int, int] | None:
+    """Draw a chat response bubble above a cat on the Cairo canvas.
+
+    When ``speaker_state`` is not None, a small speaker icon is drawn
+    in the top-right corner of the bubble (🔊 when True, 🔇 when False)
+    and the function returns its click rect ``(x, y, w, h)`` so the
+    caller can route clicks. Returns None if ``speaker_state`` is None.
+    """
     pad = 12
     content_w = 256  # text area = bw - 2*pad
 
@@ -356,6 +363,31 @@ def draw_chat_bubble(ctx, text: str, cat_x: float, cat_y: float,
     ctx.line_to(tx, ty + 10)
     ctx.close_path()
     ctx.fill()
+
+    # Speaker toggle icon in the top-right corner of the bubble.
+    # Returns the click rect (x, y, w, h) so the canvas click handler
+    # can detect toggles. We draw it *after* the bubble so it sits on
+    # top of any text bleed, and we reserve a margin inside the border.
+    if speaker_state is not None:
+        icon_w, icon_h = 22, 20
+        icon_margin = 6
+        icon_x = int(bx + bw - icon_w - icon_margin - px)
+        icon_y = int(by + icon_margin + px)
+        # Background chip so the icon is visible even when it sits on
+        # top of the text area (semi-opaque rounded square).
+        ctx.set_source_rgba(*THEME["bubble_bg"])
+        ctx.rectangle(icon_x - 2, icon_y - 2, icon_w + 4, icon_h + 4)
+        ctx.fill()
+        ctx.set_source_rgba(*THEME["bubble_border"])
+        ctx.set_line_width(1.5)
+        ctx.rectangle(icon_x - 2, icon_y - 2, icon_w + 4, icon_h + 4)
+        ctx.stroke()
+        # Glyph — PangoCairo handles emoji fallback
+        glyph = "\U0001f50a" if speaker_state else "\U0001f507"  # 🔊 / 🔇
+        _draw_pango_symbol(ctx, glyph, icon_x, icon_y, 14,
+                           *THEME["bubble_text"])
+        return (icon_x - 2, icon_y - 2, icon_w + 4, icon_h + 4)
+    return None
 
 
 def draw_context_menu(ctx, mx: float, my: float,
