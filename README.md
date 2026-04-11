@@ -189,6 +189,46 @@ MIT
 
 ## Changelog
 
+### v0.6.1 — Les chats parlent (2026-04-11)
+
+Closes the loop with v0.4.0 voice input: **cats now speak their chat
+responses out loud**. Hybrid pipeline mixes real CC0 cat sound samples
+(meow, purr, mrrp, hiss) with Piper TTS for the text portions, so
+'*ronron* Bonjour mon ami!' plays a real purr sample then a French
+voice saying 'Bonjour mon ami', not a human pronouncing 'ronron'
+phonetically. (#23)
+
+- **TTS hybrid pipeline** — new `catai_linux/tts.py` splits each
+  AI response into alternating cat-sound + text chunks. Cat tokens
+  play CC0 WAV samples bundled in `catai_linux/sounds/` (165 KB).
+  Text chunks go through Piper TTS (`fr_FR-upmc-medium`, ~74 MB,
+  downloaded to `~/.cache/catai/piper/` on first use).
+- **6 distinct cat voices** — `fr_FR-upmc-medium` is multi-speaker
+  (jessica, pierre); each catset character gets its own
+  speaker_id × length_scale combo (Mandarine perky, Ombre slow grave,
+  Brume sage, etc).
+- **Speaker icon in chat bubble** — 🔊 / 🔇 toggle in the top-right
+  of every chat bubble. Click to mute that specific cat. Clicking
+  while a cat is mid-sentence kills playback immediately.
+- **Sound effects toggle** — Settings → 'Voice output' has a sub
+  checkbox to play TTS text only (no cat samples) for users who
+  find the interjections distracting.
+- **Pixel-art mic / speaker / sablier icons** — bundled hand-drawn
+  PNGs in `catai_linux/icons/` matching the cream/brown bubble palette.
+- **Seasonal overlay first-launch-only** — the 30 s season announce
+  (snow, petals, pumpkins, etc) now only fires on the first launch
+  per day, tracked via `~/.config/catai/seasonal_last_shown`. No
+  more falling petals every time you restart CATAI.
+- **Smarter prompt** — system prompt now requires AT LEAST one full
+  real sentence per response and forbids `*stage directions*` and
+  emoji, so the TTS never reads 's'étire' phonetically.
+- **Robustness fixes** — every TTS playback runs in an isolated
+  `gst-launch-1.0` subprocess to avoid in-process GStreamer state
+  contamination, and pressing the mic button stops any in-flight
+  TTS so the recording isn't echoed back. Chat bubble tail flips
+  to the top edge when the cat is near the screen top, and the
+  text wraps around the speaker icon instead of running under it.
+
 ### v0.6.0 — Les chats prennent vie (2026-04-11)
 
 Major interactivity + visual update. Five self-contained features landed
