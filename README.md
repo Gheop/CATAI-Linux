@@ -189,6 +189,29 @@ MIT
 
 ## Changelog
 
+### v0.6.2 — Set and forget (2026-04-11)
+
+CATAI now updates itself. Once installed via pip, every launch
+silently checks GitHub for a new release, runs `pip install --upgrade`
+in the background, and notifies you with a meow bubble that the new
+version is ready for the next launch. (#24, #25)
+
+- **Auto-update on launch** — new `catai_linux/updater.py` polls
+  `api.github.com/repos/Gheop/CATAI-Linux/releases/latest` (cached
+  1 h), compares to the installed version via `importlib.metadata`,
+  and runs `python -m pip install --user --upgrade catai-linux[voice]`
+  in a subprocess if a non-prerelease update is available. PEP 668
+  systems get an automatic `--break-system-packages` retry.
+- **3 modes** in Settings → Updates dropdown:
+    - `Auto-install on launch` (default) — check + install + notify
+    - `Notify only` — check + meow bubble, no install
+    - `Off` — no network call
+- **'Check now' button** in settings bypasses the 1 h cache.
+- **Privacy + safety** — one anonymous GET to api.github.com per
+  hour, no telemetry, `pip --user` scoped (never touches the system
+  Python), all failure modes silent so a network blip can't break
+  the running app. New code activates only on the NEXT launch.
+
 ### v0.6.1 — Les chats parlent (2026-04-11)
 
 Closes the loop with v0.4.0 voice input: **cats now speak their chat
