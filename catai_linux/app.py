@@ -3761,10 +3761,14 @@ class CatAIApp(Gtk.Application):
         if not self._voice_recorder or not self._voice_recorder._recording:
             return False
         if self._voice_btn:
-            # Transcribing state — switch to a Pango label so the
-            # braille spinner can render. The mic icon comes back via
-            # _refresh_mic_icon() in the on_result callback below.
-            self._voice_btn.set_label("\u23f3")  # ⏳
+            # Transcribing state — swap the mic image for a pixel-art
+            # hourglass that matches the bubble theme. The mic image
+            # comes back in on_result below.
+            from catai_linux.drawing import ICONS_DIR as _ICONS_DIR
+            sablier_path = os.path.join(_ICONS_DIR, "sablier.png")
+            sablier_img = Gtk.Image.new_from_file(sablier_path)
+            sablier_img.set_pixel_size(28)
+            self._voice_btn.set_child(sablier_img)
             self._voice_btn.set_sensitive(False)
             self._voice_btn.remove_css_class("pixel-mic-btn-recording")
 
