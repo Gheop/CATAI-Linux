@@ -326,6 +326,15 @@ class MockChat(ChatBackend):
     # pipeline actually ran end-to-end (not just the L10n fallback).
     MOCK_DRIFT_RESPONSE = '{"trait": "aime parler de tests CI"}'
 
+    # Canned long-term memory extraction response — returned whenever
+    # the system prompt carries [CATAI_MEMORY_EXTRACT]. A short JSON
+    # array of recognizable facts so the e2e suite can verify that
+    # extracted facts get persisted in the memory.db.
+    MOCK_MEMORY_RESPONSE = (
+        '["L\'utilisateur teste CATAI en CI", '
+        '"Aime débuguer les pipelines GStreamer"]'
+    )
+
     def _stream_chunks(self):
         sys_prompt = next(
             (m["content"] for m in self.messages if m.get("role") == "system"),
@@ -335,6 +344,10 @@ class MockChat(ChatBackend):
             # Personality drift uses a JSON object (not array) — a single
             # canned trait is enough to prove the pipeline works.
             yield self.MOCK_DRIFT_RESPONSE
+            return
+        if "[CATAI_MEMORY_EXTRACT]" in sys_prompt:
+            # Long-term memory extraction returns a JSON array of facts.
+            yield self.MOCK_MEMORY_RESPONSE
             return
         if "[CATAI_REACTION_POOL]" in sys_prompt:
             # Pick a canned pool matching the scenario if we can.

@@ -676,6 +676,7 @@ from catai_linux import tts as _tts  # noqa: E402
 from catai_linux import updater as _updater  # noqa: E402
 from catai_linux import metrics as _metrics  # noqa: E402
 from catai_linux import character_packs as _character_packs  # noqa: E402
+from catai_linux import memory as _memory  # noqa: E402
 
 
 from catai_linux.chat_backend import (  # noqa: E402
@@ -1386,6 +1387,25 @@ class CatInstance:
                         create_chat_fn=create_chat,
                         model=app.selected_model,
                     )
+                # Long-term memory extraction (#5) — fire less often
+                # than drift, every EXTRACT_EVERY_MESSAGES messages.
+                # Reuses the personality message_count so we don't add
+                # yet another counter on the cat instance.
+                if (getattr(app, "_long_term_memory_enabled", True)
+                        and self.personality.message_count > 0
+                        and self.personality.message_count % _memory.EXTRACT_EVERY_MESSAGES == 0):
+                    try:
+                        recent = self.chat_backend.messages[-12:]
+                        _memory.extract_facts_async(
+                            cat_id=self.config["id"],
+                            cat_name=self.config.get("name", "Cat"),
+                            recent_messages=recent,
+                            lang=L10n.lang,
+                            create_chat_fn=create_chat,
+                            model=app.selected_model,
+                        )
+                    except Exception:
+                        log.exception("memory extract dispatch failed")
             # TTS voice output — hybrid pipeline splits the response into
             # text + cat-sound chunks and plays them through GStreamer.
             # Gated by BOTH the app-level _tts_enabled flag and the
@@ -1448,6 +1468,26 @@ class CatInstance:
             status_state["timer"] = GLib.timeout_add(120, tick)
             return False
 
+        # Long-term memory injection (#5): rebuild the system message
+        # with retrieved facts that overlap with the user's input. This
+        # gives the cat the impression of "remembering" past conversations
+        # without needing embeddings — pure keyword matching against the
+        # sqlite memory.db.
+        try:
+            if self.chat_backend.messages:
+                base = self.chat_backend.messages[0].get("content", "")
+                # Strip any previous memory injection so we don't accumulate
+                if "\n\nCe dont tu te souviens" in base:
+                    base = base.split("\n\nCe dont tu te souviens")[0]
+                elif "\n\nThings you remember" in base:
+                    base = base.split("\n\nThings you remember")[0]
+                elif "\n\nLo que recuerdas" in base:
+                    base = base.split("\n\nLo que recuerdas")[0]
+                augmented = _memory.append_memories_to_prompt(
+                    base, self.config["id"], text, L10n.lang)
+                self.chat_backend.messages[0]["content"] = augmented
+        except Exception:
+            log.debug("memory injection failed", exc_info=True)
         self.chat_backend.send(text, on_token, on_done, on_error, on_status=on_status)
         # Mood: chatting with the user bumps happiness and clears boredom.
         try:
@@ -2750,6 +2790,13 @@ class CatAIApp(Gtk.Application):
         # of commands so shell scripts can make cats react to external
         # events without importing Python or running --test-socket.
         self._api_enabled = bool(cfg.get("api_enabled", False))
+        # Long-term memory (#5). On by default — periodic LLM extraction
+        # of memorable facts from chats, sqlite-backed in
+        # ~/.config/catai/memory.db. Retrieved on each new message via
+        # keyword overlap and injected into the system prompt as
+        # "things you remember about this user". Opt out with
+        # "long_term_memory": false in config.json.
+        self._long_term_memory_enabled = bool(cfg.get("long_term_memory", True))
 
         # Voice chat: enabled from --voice CLI flag OR config.json
         cli_voice = "--voice" in sys.argv
@@ -4600,6 +4647,7 @@ class CatAIApp(Gtk.Application):
             "auto_update": getattr(self, "_auto_update_mode", _updater.MODE_AUTO),
             "metrics_enabled": getattr(self, "_metrics_enabled", False),
             "api_enabled": getattr(self, "_api_enabled", False),
+            "long_term_memory": getattr(self, "_long_term_memory_enabled", True),
         })
 
     def _render_tick(self):
