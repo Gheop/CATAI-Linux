@@ -3975,6 +3975,15 @@ class CatAIApp(Gtk.Application):
                 # whatever the user set it to.
                 if c.tts_enabled and not self._tts_enabled:
                     self._tts_enabled = True
+                # Disabling cuts any in-flight playback synchronously
+                # so the user doesn't have to wait for the current
+                # response to finish speaking.
+                if not c.tts_enabled:
+                    try:
+                        _tts.get_default_player().stop()
+                    except Exception:
+                        log.debug("TTS stop on mute click failed",
+                                  exc_info=True)
                 self._save_all()
                 if self._canvas_area:
                     self._canvas_area.queue_draw()
