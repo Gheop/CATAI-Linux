@@ -2499,6 +2499,12 @@ class LoveEncounter:
         if not self.active:
             return False
         _metrics.track("love_encounter", kind=self._outcome)
+        # Inter-cat gossip (#5 Tier 2): regardless of outcome, the
+        # two cats trade one random fact each from their memory pile.
+        # The fact lands in the recipient's memory tagged as "<other> m'a
+        # dit que ..." so when it surfaces in retrieval, the cat speaks
+        # of it as second-hand knowledge.
+        self._exchange_gossip()
         if self._outcome == "love":
             # Both in love → birth!
             self._give_birth()
@@ -2510,6 +2516,41 @@ class LoveEncounter:
         else:
             self._end()
         return False
+
+    def _exchange_gossip(self) -> None:
+        """Have each cat give one of their memories to the other.
+
+        Skips silently when long-term memory is disabled or when one
+        of the cats has no memories yet. The gossip is wrapped in a
+        prefix indicating the source so the recipient cat speaks of
+        it as a story it heard, not as personal knowledge.
+        """
+        if not getattr(self.app, "_long_term_memory_enabled", True):
+            return
+        if not self.cat_a or not self.cat_b:
+            return
+        try:
+            a_facts = _memory.MemoryStore.all_facts(self.cat_a.config["id"])
+            b_facts = _memory.MemoryStore.all_facts(self.cat_b.config["id"])
+            if a_facts:
+                shared = random.choice(a_facts)
+                _memory.MemoryStore.add_fact(
+                    self.cat_b.config["id"],
+                    f"{self.cat_a.config.get('name', 'un autre chat')} "
+                    f"m'a raconté: {shared}"[:280]
+                )
+            if b_facts:
+                shared = random.choice(b_facts)
+                _memory.MemoryStore.add_fact(
+                    self.cat_a.config["id"],
+                    f"{self.cat_b.config.get('name', 'un autre chat')} "
+                    f"m'a raconté: {shared}"[:280]
+                )
+            log.info("Gossip exchange: %s ↔ %s",
+                     self.cat_a.config.get("name"),
+                     self.cat_b.config.get("name"))
+        except Exception:
+            log.debug("gossip exchange failed", exc_info=True)
 
     def _attack_cat_b(self):
         """Cat A attacks cat B. Cat B plays drama_queen, both exit encounter."""
