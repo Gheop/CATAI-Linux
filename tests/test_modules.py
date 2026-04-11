@@ -1105,6 +1105,7 @@ def test_import_smoke() -> None:
         "catai_linux.reactions",
         "catai_linux.mood",
         "catai_linux.activity",
+        "catai_linux.wake_word",
         "catai_linux.app",
     ]
     for m in modules:
@@ -1326,6 +1327,117 @@ def test_activity() -> None:
          str(snap.keys()))
 
 
+def test_wake_word() -> None:
+    print("\n[wake_word]", flush=True)
+    from catai_linux import wake_word
+
+    # ── Pure helpers (always available, no vosk needed) ─────────────────
+    test("_normalize_name lowercases",
+         wake_word._normalize_name("Mandarine") == "mandarine")
+    test("_normalize_name strips accents",
+         wake_word._normalize_name("Crème Brûlée") == "cremebrulee")
+    test("_normalize_name drops digits and punctuation",
+         wake_word._normalize_name("Cat-9!") == "cat")
+    test("_normalize_name on empty",
+         wake_word._normalize_name("") == "")
+
+    # ── Module flag ─────────────────────────────────────────────────────
+    test("WAKE_AVAILABLE is bool",
+         isinstance(wake_word.WAKE_AVAILABLE, bool))
+
+    # ── Listener instantiation (works even without vosk: it's just a
+    #    Python class — set_names is a no-op when no recognizer exists) ──
+    fired: list[str] = []
+    listener = wake_word.WakeWordListener(on_wake=lambda cid: fired.append(cid))
+    test("listener constructs", listener is not None)
+
+    # set_names dedup + length filter run regardless of vosk
+    listener.set_names({
+        "cat_orange": "Mandarine",
+        "cat01":      "Tabby",
+        "cat02":      "Mandarine",  # duplicate normalized — should be dropped
+        "cat03":      "X",          # too short — should be dropped
+    })
+    # We can't see _names from outside (private), but we know the dedup
+    # rules: 4 inputs → 2 retained.
+    test("set_names dedups and length-filters",
+         len(listener._names) == 2 and "mandarine" in listener._names and "tabby" in listener._names,
+         f"got {sorted(listener._names.keys())}")
+    test("set_names dedup keeps first",
+         listener._names["mandarine"] == "cat_orange")
+
+    # _handle_result fires the callback for matching tokens via idle_add
+    # — but we can call _fire directly which is what idle_add resolves to.
+    listener._fire("cat_orange")
+    test("_fire delivers cat_id to callback",
+         fired == ["cat_orange"], str(fired))
+
+    # Cooldown logic via _handle_result with a fake JSON payload
+    fired.clear()
+    listener._last_fire.clear()
+    # Drain the GLib queue would be needed normally; bypass by inspecting
+    # _last_fire entries — _handle_result schedules an idle but also
+    # records into _last_fire synchronously.
+    payload = '{"text": "ok mandarine"}'
+    listener._handle_result(payload)
+    test("_handle_result records first fire",
+         "cat_orange" in listener._last_fire)
+    # Second call within COOLDOWN_S should be swallowed (no new entry
+    # because the existing entry stays; we check it didn't get bumped
+    # twice which would change the timestamp identity)
+    first_ts = listener._last_fire["cat_orange"]
+    listener._handle_result(payload)
+    test("_handle_result respects cooldown",
+         listener._last_fire["cat_orange"] == first_ts)
+
+    # No-match payload is silently ignored
+    listener._handle_result('{"text": "completely unrelated phrase"}')
+    test("_handle_result ignores non-matches",
+         len(listener._last_fire) == 1)
+
+    # Empty / malformed JSON doesn't crash
+    listener._handle_result("")
+    listener._handle_result("not even json")
+    listener._handle_result('{"text": ""}')
+    test("_handle_result tolerates garbage", True)
+
+    # Renaming a cat: the old name disappears, the new one wins
+    listener.set_names({"cat_orange": "Caramel"})
+    test("rename drops old normalized name",
+         "mandarine" not in listener._names)
+    test("rename adds new normalized name",
+         listener._names.get("caramel") == "cat_orange")
+
+    # Refire after rename: cooldown is per-cat-id, but after a fresh
+    # set_names the listener should still recognize the new name fine.
+    listener._last_fire.clear()
+    listener._handle_result('{"text": "caramel"}')
+    test("post-rename _handle_result still fires",
+         "cat_orange" in listener._last_fire)
+
+    # ── Optional: real recognizer round-trip if vosk + model available ──
+    if wake_word.WAKE_AVAILABLE and wake_word._model_present():
+        try:
+            from vosk import KaldiRecognizer, Model  # type: ignore
+            import json as _json
+            # Build a model + recognizer in-process and inject silence —
+            # the goal isn't to assert detection (silence won't trigger
+            # anything) but to confirm KaldiRecognizer accepts our
+            # grammar JSON without crashing.
+            model = Model(wake_word.VOSK_MODEL_DIR)
+            grammar = _json.dumps(["mandarine", "tabby", "[unk]"])
+            rec = KaldiRecognizer(model, wake_word.SAMPLE_RATE, grammar)
+            silence = b"\x00\x00" * (wake_word.SAMPLE_RATE // 2)  # 0.5 s
+            rec.AcceptWaveform(silence)
+            _ = rec.FinalResult()
+            test("real Vosk recognizer accepts grammar", True)
+        except Exception as e:
+            test("real Vosk recognizer accepts grammar", False, repr(e))
+    else:
+        print("  - vosk recognizer test skipped (vosk or model missing)",
+              flush=True)
+
+
 def _run_section(name: str, fn) -> None:
     """Run a test section, catching import errors so one broken module
     doesn't kill the whole suite. Records a FAIL on exception."""
@@ -1358,6 +1470,7 @@ def main() -> int:
     _run_section("reactions", test_reactions)
     _run_section("mood", test_mood)
     _run_section("activity", test_activity)
+    _run_section("wake_word", test_wake_word)
     print(f"\n=== Results: {PASS} passed, {FAIL} failed ===\n", flush=True)
     return 0 if FAIL == 0 else 1
 

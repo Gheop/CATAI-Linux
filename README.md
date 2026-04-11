@@ -23,6 +23,7 @@ Port of [CATAI](https://github.com/wil-pe/CATAI) (macOS/Swift) to Linux.
 - **6 unique characters** -- Pre-colored 80×80 sprites from the catset collection, each with a distinct look and personality
 - **AI chat** -- Click a cat to open a pixel-art chat bubble, powered by [Claude](https://claude.ai) or [Ollama](https://ollama.ai)
 - **Voice chat** 🎤 (optional) -- Hold the mic button or simply hold **Space** to talk to your cats. 100% local transcription via [faster-whisper](https://github.com/SYSTRAN/faster-whisper), GPU-accelerated if you have CUDA
+- **Wake word** 👂 (optional) -- Each cat answers to its own renameable first name. Say "Mandarine" or "Tabby" out loud and the matching cat opens its chat bubble + starts listening. Powered by [Vosk](https://alphacephei.com/vosk/) (offline, ~41 MB FR model, Apache-2.0)
 - **Rich animations** -- 23 animation states including running, dashing, sleeping, grooming, climbing, wall grab, ledge climbing, dying & resurrection, and more
 - **Animation sequences** -- Multi-step scripted behaviors: wall adventures, ledge climbing, dash crashes, dramatic deaths with resurrection
 - **Visual overlays** -- Floating ZzZ, hearts, speed lines, hurt stars, skulls, sparkles above cats during animations
@@ -188,6 +189,30 @@ MIT
 ---
 
 ## Changelog
+
+### v0.7.1 — Wake word par prénom de chat (2026-04-11)
+
+Issue #4 Tier 2 : appeler un chat par son **prénom** ouvre son chat
+bubble et démarre une écoute push-to-talk automatique. Pas besoin de
+toucher le clavier ni la souris.
+
+- **Wake word renommable à la volée** — chaque chat répond à son
+  propre prénom (`Mandarine`, `Tabby`, `Ombre`, …). Renommer un chat
+  depuis Settings → la grammaire est rebâtie immédiatement, l'ancien
+  nom oublié, le nouveau actif. Aucun retraining.
+- **Backend Vosk** (Apache-2.0, 100 % offline). Modèle FR small
+  (~41 MB) téléchargé en arrière-plan au premier lancement, mis en
+  cache dans `~/.cache/catai/vosk/`. Idle ~3-8 % CPU.
+- **Coexistence avec le push-to-talk existant** — le pipeline wake
+  word libère `autoaudiosrc` automatiquement avant chaque
+  enregistrement Whisper, puis le récupère ensuite.
+- **Opt-in** — désactivé par défaut, case à cocher dans la section
+  Voice du panneau Settings. Une seconde case règle le miaou de
+  confirmation. Pas de vosk installé ? Pas de souci, le module
+  no-op silencieusement et le reste de la voix continue de marcher.
+- Nouvelle dépendance optionnelle dans l'extra `[voice]` :
+  `vosk>=0.3.45`. Métriques `wake_words_triggered` (par chat) si
+  les stats locales sont activées.
 
 ### v0.7.0 — Mémoire et écosystème (2026-04-11)
 
