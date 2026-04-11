@@ -471,20 +471,37 @@ class SoundPlayer:
             log.warning("TTS: playbin element unavailable")
             return
         pipeline.set_property("uri", uri)
-        # Force an explicit audio sink instead of letting playbin use
-        # autoaudiosink. Without this, after a voice recording cycle
-        # (which opened autoaudiosrc on the mic), GStreamer sometimes
-        # cached an audio sink selection that silently routed output
-        # to a null device, making TTS inaudible until the next audio
-        # backend state change. Explicit pipewiresink → pulsesink →
-        # autoaudiosink fallback guarantees a working output path on
-        # modern Linux (PipeWire) and legacy (PulseAudio).
+        # Force an explicit audio sink. PulseAudio (or PipeWire's pulse
+        # compat layer) is preferred because pipewiresink, when created
+        # in a process that already has a mic source open, inherits the
+        # "Communication" media role and gets auto-ducked to 0 volume
+        # by PipeWire's echo cancellation logic. pulsesink advertises
+        # itself as a regular app stream, so the duck never triggers.
         sink = None
-        for sink_name in ("pipewiresink", "pulsesink", "autoaudiosink"):
+        for sink_name in ("pulsesink", "pipewiresink", "autoaudiosink"):
             sink = Gst.ElementFactory.make(sink_name, None)
-            if sink is not None:
-                log.warning("TTS: using %s", sink_name)
-                break
+            if sink is None:
+                continue
+            log.warning("TTS: using %s", sink_name)
+            # For pipewiresink, tag the stream as Music so PipeWire
+            # doesn't treat it as a voice-call output. Non-fatal if
+            # set_property fails on older PipeWire versions.
+            if sink_name == "pipewiresink":
+                try:
+                    props = Gst.Structure.new_empty("stream-properties")
+                    props.set_value("media.role", "Music")
+                    props.set_value("media.category", "Playback")
+                    sink.set_property("stream-properties", props)
+                except Exception:
+                    log.debug("TTS: pipewiresink stream-properties set failed",
+                              exc_info=True)
+            # For pulsesink, set a friendly client name so the user's
+            # per-app volume controls (pavucontrol, wpctl) show CATAI.
+            try:
+                sink.set_property("client-name", "CATAI-Linux TTS")
+            except Exception:
+                pass
+            break
         if sink is not None:
             pipeline.set_property("audio-sink", sink)
         with self._lock:
@@ -495,12 +512,18 @@ class SoundPlayer:
             ret = pipeline.set_state(Gst.State.PLAYING)
             log.warning("TTS: set_state(PLAYING) = %s", ret)
             bus = pipeline.get_bus()
-            # Drain ALL bus messages to a console log so we see state
-            # changes, warnings, tag events, and not just EOS/ERROR.
             import time as _t
             deadline = _t.monotonic() + 10.0
             while _t.monotonic() < deadline:
-                msg = bus.timed_pop(500 * Gst.MSECOND)
+                # Bail out immediately when stop() set the cancel flag.
+                # Otherwise the 10 s deadline + 500 ms bus poll means
+                # the worker can stay inside this loop for seconds
+                # after the user pressed the mic, racing with the
+                # voice pipeline.
+                if self._cancel:
+                    log.warning("TTS: play loop cancelled")
+                    break
+                msg = bus.timed_pop(100 * Gst.MSECOND)
                 if msg is None:
                     continue
                 if msg.type == Gst.MessageType.EOS:
