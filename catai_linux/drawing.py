@@ -343,16 +343,30 @@ def draw_chat_bubble(ctx, text: str, cat_x: float, cat_y: float,
     pad = 12
     content_w = 256  # text area = bw - 2*pad
 
+    # Reserve text width on the right for the speaker icon so wrapped
+    # lines never run under it. Pango doesn't natively support shape
+    # exclusion regions, so we just narrow the whole layout — wastes
+    # a tiny strip below the icon but keeps the text clean.
+    icon_reserve = 0
+    if speaker_state is not None:
+        icon_name = "speaker_on" if speaker_state else "speaker_off"
+        icon_surface_preview = _load_icon(icon_name)
+        iw = icon_surface_preview.get_width() if icon_surface_preview else 22
+        icon_reserve = iw + 12  # icon + margin + outline padding
+    text_w = content_w - icon_reserve
+
     lay = PangoCairo.create_layout(ctx)
     lay.set_font_description(Pango.FontDescription(BUBBLE_FONT))
     lay.set_text(text, -1)
-    lay.set_width(content_w * Pango.SCALE)
+    lay.set_width(text_w * Pango.SCALE)
     lay.set_wrap(Pango.WrapMode.WORD_CHAR)
     lay.set_height(-8)  # max 8 lines
     lay.set_ellipsize(Pango.EllipsizeMode.END)
     _tw, th = lay.get_pixel_size()
 
-    bw = content_w + pad * 2  # 280
+    bw = content_w + pad * 2  # 280 — keep bubble width constant so the
+                              # icon sits in the right strip outside
+                              # the text area
     bh = pad * 2 + th + 42   # text + 30 entry + 12 pad
     bx = cat_x + cat_w / 2 - bw / 2
     by = cat_y - bh - 15
