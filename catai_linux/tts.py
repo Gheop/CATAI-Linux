@@ -471,6 +471,22 @@ class SoundPlayer:
             log.warning("TTS: playbin element unavailable")
             return
         pipeline.set_property("uri", uri)
+        # Force an explicit audio sink instead of letting playbin use
+        # autoaudiosink. Without this, after a voice recording cycle
+        # (which opened autoaudiosrc on the mic), GStreamer sometimes
+        # cached an audio sink selection that silently routed output
+        # to a null device, making TTS inaudible until the next audio
+        # backend state change. Explicit pipewiresink → pulsesink →
+        # autoaudiosink fallback guarantees a working output path on
+        # modern Linux (PipeWire) and legacy (PulseAudio).
+        sink = None
+        for sink_name in ("pipewiresink", "pulsesink", "autoaudiosink"):
+            sink = Gst.ElementFactory.make(sink_name, None)
+            if sink is not None:
+                log.warning("TTS: using %s", sink_name)
+                break
+        if sink is not None:
+            pipeline.set_property("audio-sink", sink)
         with self._lock:
             self._active_pipeline = pipeline
         try:
