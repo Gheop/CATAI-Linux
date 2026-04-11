@@ -397,6 +397,11 @@ CATSET_PERSONALITIES = {
         "skills": {"fr": "Tu adores faire des bêtises et tu es toujours en mouvement.",
                    "en": "You love getting into mischief and are always on the move.",
                    "es": "Te encanta hacer travesuras y siempre estás en movimiento."},
+        # fr_FR-upmc-medium has 2 speakers: jessica=0, pierre=1. We
+        # combine speaker_id with length_scale variations so each of
+        # the 6 catset characters has a distinct voice profile without
+        # needing a second voice model download.
+        "tts_voice": {"speaker_id": 0, "length_scale": 0.90},  # perky jessica
     },
     "cat01": {
         "name": {"fr": "Tabby", "en": "Tabby", "es": "Tabby"},
@@ -404,6 +409,7 @@ CATSET_PERSONALITIES = {
         "skills": {"fr": "Tu explores chaque recoin et poses beaucoup de questions.",
                    "en": "You explore every corner and ask lots of questions.",
                    "es": "Exploras cada rincón y haces muchas preguntas."},
+        "tts_voice": {"speaker_id": 1, "length_scale": 0.95},  # curious pierre
     },
     "cat02": {
         "name": {"fr": "Ombre", "en": "Shadow", "es": "Sombra"},
@@ -411,6 +417,7 @@ CATSET_PERSONALITIES = {
         "skills": {"fr": "Tu observes tout sans rien dire et parles peu, mais avec profondeur.",
                    "en": "You observe everything silently and speak rarely but deeply.",
                    "es": "Observas todo en silencio y hablas poco, pero con profundidad."},
+        "tts_voice": {"speaker_id": 1, "length_scale": 1.18},  # slow grave pierre
     },
     "cat03": {
         "name": {"fr": "Noisette", "en": "Hazel", "es": "Avellana"},
@@ -418,6 +425,7 @@ CATSET_PERSONALITIES = {
         "skills": {"fr": "Tu aimes câliner et remonter le moral de tout le monde.",
                    "en": "You love to cuddle and cheer everyone up.",
                    "es": "Te encanta mimar y animar a todos."},
+        "tts_voice": {"speaker_id": 0, "length_scale": 1.05},  # soft jessica
     },
     "cat04": {
         "name": {"fr": "Brume", "en": "Mist", "es": "Niebla"},
@@ -425,6 +433,7 @@ CATSET_PERSONALITIES = {
         "skills": {"fr": "Tu médites et partages des pensées profondes sur la vie.",
                    "en": "You meditate and share deep thoughts about life.",
                    "es": "Meditas y compartes pensamientos profundos sobre la vida."},
+        "tts_voice": {"speaker_id": 1, "length_scale": 1.25},  # slow wise pierre
     },
     "cat05": {
         "name": {"fr": "Minuit", "en": "Midnight", "es": "Medianoche"},
@@ -432,6 +441,7 @@ CATSET_PERSONALITIES = {
         "skills": {"fr": "Tu es à ton aise dans l'obscurité et racontes des histoires mystérieuses.",
                    "en": "You're at home in the dark and tell mysterious stories.",
                    "es": "Te sientes a gusto en la oscuridad y cuentas historias misteriosas."},
+        "tts_voice": {"speaker_id": 0, "length_scale": 1.10},  # elegant jessica
     },
 }
 
@@ -439,11 +449,35 @@ def _catset_prompt(char_id, name, lang):
     p = CATSET_PERSONALITIES.get(char_id, CATSET_PERSONALITIES["cat01"])
     t = p["traits"].get(lang, p["traits"]["fr"])
     sk = p["skills"].get(lang, p["skills"]["fr"])
+    # The TTS pipeline reads text chunks via Piper and plays cat
+    # onomatopoeia as real CC0 samples. If a response is ONLY cat
+    # sounds, Piper has nothing to say and the user hears meows
+    # with no words. The prompt explicitly asks for a real sentence
+    # on top of the cat sounds, and forbids stage directions which
+    # the splitter would drop anyway.
     if lang == "en":
-        return f"You are a little {t} cat named {name}. {sk} Respond briefly with cat sounds (meow, purr, mrrp). Max 2-3 sentences."
+        return (
+            f"You are a little {t} cat named {name}. {sk} "
+            f"Always answer with AT LEAST one full real English sentence "
+            f"the user can understand, and you may sprinkle short cat "
+            f"sounds like 'meow', 'purr', 'mrrp'. Max 2 sentences. "
+            f"Never use emoji or *stage directions*."
+        )
     elif lang == "es":
-        return f"Eres un gatito {t} llamado {name}. {sk} Responde brevemente con sonidos de gato (miau, purr, mrrp). Máximo 2-3 frases."
-    return f"Tu es un petit chat {t} nommé {name}. {sk} Réponds brièvement avec des sons de chat (miaou, purr, mrrp). Max 2-3 phrases."
+        return (
+            f"Eres un gatito {t} llamado {name}. {sk} "
+            f"Siempre responde con AL MENOS una frase real completa en "
+            f"español que el usuario pueda entender, y puedes añadir "
+            f"sonidos cortos de gato como 'miau', 'purr', 'mrrp'. "
+            f"Máximo 2 frases. Nunca uses emoji ni *acciones*."
+        )
+    return (
+        f"Tu es un petit chat {t} nommé {name}. {sk} "
+        f"Réponds TOUJOURS avec AU MOINS une vraie phrase complète en "
+        f"français compréhensible, et tu peux ajouter quelques sons de "
+        f"chat courts comme 'miaou', 'prrrt', 'mrrp'. Max 2 phrases. "
+        f"N'utilise jamais d'emoji ni de *didascalies*."
+    )
 
 # ── Persistence ────────────────────────────────────────────────────────────────
 
@@ -638,6 +672,7 @@ from catai_linux.activity import ActivityMonitor  # noqa: E402
 from catai_linux import personality as _personality  # noqa: E402
 from catai_linux import monitors as _monitors_mod  # noqa: E402
 from catai_linux import seasonal as _seasonal  # noqa: E402
+from catai_linux import tts as _tts  # noqa: E402
 
 
 from catai_linux.chat_backend import (  # noqa: E402
@@ -694,6 +729,12 @@ class CatInstance:
         self.chat_backend = None
         self.screen_w = 0
         self.screen_h = 0
+        # Per-cat voice output toggle. Controls whether this cat's chat
+        # responses go through the TTS hybrid pipeline. Default off so
+        # the feature is pure opt-in — toggled via the speaker icon in
+        # the chat bubble (see _on_canvas_click) and persisted in the
+        # cat's config dict so it survives restarts.
+        self.tts_enabled = bool(config.get("tts_enabled", False))
         self._app = None
         self._meta = None
         self._cat_dir = ""
@@ -1340,6 +1381,41 @@ class CatInstance:
                         create_chat_fn=create_chat,
                         model=app.selected_model,
                     )
+            # TTS voice output — hybrid pipeline splits the response into
+            # text + cat-sound chunks and plays them through GStreamer.
+            # Gated by BOTH the app-level _tts_enabled flag and the
+            # per-cat self.tts_enabled toggle (the speaker icon in the
+            # chat bubble). Both default to off so the feature is pure
+            # opt-in — no risk of a silent install suddenly starting to
+            # make noises at the user. Per-cat voice profile (speaker_id
+            # + length_scale) comes from CATSET_PERSONALITIES so each
+            # character has a distinct voice on a single Piper model.
+            if (getattr(app, "_tts_enabled", False)
+                    and getattr(self, "tts_enabled", False)
+                    and self.chat_response):
+                try:
+                    chunks = _tts.split_cat_sounds(self.chat_response)
+                    cat_sounds_on = getattr(app, "_tts_cat_sounds_enabled", True)
+                    log.warning(
+                        "TTS: on_done cat=%s resp=%r → %d chunks, cat_sfx=%s",
+                        self.config.get("char_id"),
+                        self.chat_response[:60], len(chunks), cat_sounds_on,
+                    )
+                    # Optional filter: drop cat-sound chunks when the
+                    # user prefers text-only TTS. Keeps per-cat voice
+                    # intact, just removes the audio interjections.
+                    if not cat_sounds_on:
+                        chunks = [c for c in chunks if c.kind != "cat"]
+                    for i, c in enumerate(chunks):
+                        log.warning("TTS: chunk[%d] kind=%s content=%r",
+                                    i, c.kind, c.content[:40])
+                    char_id = self.config.get("char_id", "cat01")
+                    p = CATSET_PERSONALITIES.get(
+                        char_id, CATSET_PERSONALITIES["cat01"])
+                    voice_params = p.get("tts_voice")
+                    _tts.get_default_player().play(chunks, voice_params)
+                except Exception:
+                    log.exception("TTS playback failed")
             return False
 
         def on_error(msg):
@@ -1871,6 +1947,45 @@ class SettingsWindow:
             voice_model_hint.set_margin_start(24)
             box.append(voice_model_hint)
 
+        # Voice output (TTS) — global kill switch. Per-cat toggles live
+        # on the speaker icon in each chat bubble.
+        tts_check = Gtk.CheckButton(label="Voice output (cat sound effects)")
+        tts_check.set_active(getattr(self.app, "_tts_enabled", False))
+        tts_check.add_css_class("pixel-label-small")
+        tts_check.set_margin_top(8)
+
+        def _on_tts_toggled(btn):
+            self.app._tts_enabled = btn.get_active()
+            self.app._save_all()
+        tts_check.connect("toggled", _on_tts_toggled)
+        box.append(tts_check)
+
+        tts_hint = Gtk.Label()
+        tts_hint.set_markup(
+            '<span foreground="#888888" size="x-small">'
+            'Plays CC0 cat samples (~165 KB) on each chat response. '
+            'Click the 🔊 icon in a chat bubble to mute an individual cat.'
+            '</span>'
+        )
+        tts_hint.set_wrap(True)
+        tts_hint.set_xalign(0)
+        tts_hint.set_margin_start(24)
+        box.append(tts_hint)
+
+        # Sub-toggle: cat sound effects (on top of the Piper text voice)
+        cat_sounds_check = Gtk.CheckButton(
+            label="  ↳ Play cat sound effects (meow/purr/hiss)")
+        cat_sounds_check.set_active(
+            getattr(self.app, "_tts_cat_sounds_enabled", True))
+        cat_sounds_check.add_css_class("pixel-label-small")
+        cat_sounds_check.set_margin_start(16)
+
+        def _on_cat_sounds_toggled(btn):
+            self.app._tts_cat_sounds_enabled = btn.get_active()
+            self.app._save_all()
+        cat_sounds_check.connect("toggled", _on_cat_sounds_toggled)
+        box.append(cat_sounds_check)
+
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.set_child(box)
@@ -2380,13 +2495,48 @@ class CatAIApp(Gtk.Application):
         # `seasonal_duration_sec` (default 30 s). Set the duration to 0
         # in config.json to keep the overlay on permanently (the classic
         # desktop-pet behavior).
+        # Additionally, the announce only fires on the FIRST launch of
+        # the day — relaunching CATAI several times in the same day
+        # would otherwise replay the falling petals/snow over and over,
+        # which gets old fast. We persist the last-shown date in
+        # ~/.config/catai/seasonal_last_shown and skip the overlay if
+        # today's date matches.
         self._seasonal_enabled = cfg.get("seasonal", True)
         self._seasonal_duration_sec = int(cfg.get("seasonal_duration_sec", 30))
+        if self._seasonal_enabled and self._seasonal_duration_sec > 0:
+            try:
+                import datetime
+                today_iso = datetime.date.today().isoformat()
+                stamp_path = os.path.join(CONFIG_DIR, "seasonal_last_shown")
+                last = None
+                if os.path.isfile(stamp_path):
+                    with open(stamp_path) as f:
+                        last = f.read().strip()
+                if last == today_iso:
+                    log.info("Seasonal overlay already shown today, skipping")
+                    self._seasonal_enabled = False
+                else:
+                    os.makedirs(CONFIG_DIR, exist_ok=True)
+                    with open(stamp_path, "w") as f:
+                        f.write(today_iso)
+            except OSError:
+                log.debug("seasonal stamp read/write failed", exc_info=True)
         self.cat_configs = cfg.get("cats", [])
         # Personality drift — on by default. Users can opt out via
         # config.json key `"personality_drift": false`. The drift engine
         # respects this flag in the chat on_done hook.
         self._personality_drift_enabled = cfg.get("personality_drift", True)
+        # TTS voice output — OFF by default. Opt-in via config.json key
+        # `"tts_enabled": true` OR via the per-cat speaker icon in the
+        # chat bubble. The per-cat toggle is the primary UI; the app
+        # flag is a global kill switch.
+        self._tts_enabled = cfg.get("tts_enabled", False)
+        # Cat sound effects in TTS output. When True (default) the
+        # splitter's cat chunks are played via the CC0 WAV samples.
+        # When False only Piper text chunks play — some users find the
+        # text-only flow more intelligible since the cat samples add
+        # latency between phrases.
+        self._tts_cat_sounds_enabled = cfg.get("tts_cat_sounds_enabled", True)
 
         # Voice chat: enabled from --voice CLI flag OR config.json
         cli_voice = "--voice" in sys.argv
@@ -2913,6 +3063,21 @@ class CatAIApp(Gtk.Application):
             self._canvas_area.queue_draw()
         return "OK redraw queued"
 
+    def _cmd_tts_debug(self, parts):
+        """Dump per-cat TTS state: tts_enabled, chat_visible, speaker_click_rect.
+        Used to diagnose why a speaker icon isn't clickable on a given chat."""
+        out = [f"global={self._tts_enabled}"]
+        for i, c in enumerate(self.cat_instances):
+            name = c.config.get("char_id", "?")
+            rect = getattr(c, "_speaker_click_rect", None)
+            out.append(
+                f"[{i}] {name} tts={c.tts_enabled} "
+                f"chat_visible={c.chat_visible} "
+                f"response_len={len(c.chat_response) if c.chat_response else 0} "
+                f"rect={rect}"
+            )
+        return "OK " + " | ".join(out)
+
     def _cmd_monitors(self, parts):
         """Return the list of detected monitor rects. Usage:
             monitors              → list all rects
@@ -3076,6 +3241,7 @@ class CatAIApp(Gtk.Application):
                 "notify": self._cmd_notify,
                 "get_chat_response": self._cmd_get_chat_response,
                 "screenshot": self._cmd_screenshot,
+                "tts_debug": self._cmd_tts_debug,
                 "monitors": self._cmd_monitors,
                 "theme": self._cmd_theme,
                 "personality": self._cmd_personality,
@@ -3129,9 +3295,16 @@ class CatAIApp(Gtk.Application):
             self._chat_entry.add_controller(key_ctrl)
 
         if self._voice_enabled:
-            self._voice_btn = Gtk.Button(label="\U0001f3a4")  # 🎤
+            self._voice_btn = Gtk.Button()
+            # Bundled pixel-art mic icon (matches the chat bubble's
+            # speaker icon style and the cream/brown bubble palette).
+            from catai_linux.drawing import ICONS_DIR as _ICONS_DIR
+            self._mic_icon_path = os.path.join(_ICONS_DIR, "mic.png")
+            self._mic_image = Gtk.Image.new_from_file(self._mic_icon_path)
+            self._mic_image.set_pixel_size(28)
+            self._voice_btn.set_child(self._mic_image)
             self._voice_btn.add_css_class("pixel-mic-btn")
-            self._voice_btn.set_size_request(30, -1)
+            self._voice_btn.set_size_request(36, -1)
             self._voice_btn.set_tooltip_text("Hold to talk (or hold Space in the entry)")
             press_gesture = Gtk.GestureClick()
             press_gesture.set_button(1)
@@ -3353,9 +3526,19 @@ class CatAIApp(Gtk.Application):
             if cat.meow_visible and cat.meow_text:
                 _draw_meow_bubble(ctx, cat.meow_text, cat.x, cat.y, cat.display_w, cat.display_h, self.screen_h)
 
-            # Draw chat response bubble if visible
+            # Draw chat response bubble if visible — with a clickable
+            # speaker toggle in the top-right when TTS is configured
+            # for this cat. The returned rect is stashed on the cat
+            # so _on_canvas_click can hit-test it.
             if cat.chat_visible and cat.chat_response:
-                _draw_chat_bubble(ctx, cat.chat_response, cat.x, cat.y, cat.display_w, cat.display_h)
+                speaker_rect = _draw_chat_bubble(
+                    ctx, cat.chat_response, cat.x, cat.y,
+                    cat.display_w, cat.display_h,
+                    speaker_state=cat.tts_enabled,
+                )
+                cat._speaker_click_rect = speaker_rect
+            else:
+                cat._speaker_click_rect = None
 
             # Draw encounter bubble if visible
             if cat.encounter_visible and cat.encounter_text:
@@ -3405,15 +3588,28 @@ class CatAIApp(Gtk.Application):
                 bx = cat.x + cat.display_w / 2 - text_w / 2
                 by = cat.y - 40
                 rects.append((bx, by, text_w, 24))
-            # Include chat bubble area if visible
+            # Include chat bubble area if visible. The bubble's actual
+            # height is computed from the Pango layout and grows with
+            # the response length — for long multi-line responses it
+            # easily exceeds 200 px. We use a generous 320 px so the
+            # entire bubble (including the speaker icon at the top)
+            # always falls inside the input region.
             if cat.chat_visible and cat.chat_response:
                 bw = 280
-                bh = 150  # approximate
+                bh = 320  # generous — actual is pad*2 + th + 42
                 bx = cat.x + cat.display_w / 2 - bw / 2
                 by = cat.y - bh - 15
                 if by < 0:
                     by = cat.y + cat.display_h + 10
                 rects.append((bx, by, bw, bh))
+                # Also explicitly include the speaker icon click rect
+                # (computed by drawing.draw_chat_bubble at the actual
+                # bubble position) so even if the generous bh ever
+                # under-counts, the icon never falls outside the input
+                # region.
+                speaker_rect = getattr(cat, "_speaker_click_rect", None)
+                if speaker_rect is not None:
+                    rects.append(speaker_rect)
             # Include encounter bubble area if visible
             if cat.encounter_visible and cat.encounter_text:
                 enc_bw = max(90, len(cat.encounter_text) * 7 + 20)
@@ -3501,6 +3697,13 @@ class CatAIApp(Gtk.Application):
         text = cat.chat_response or ""
         pad = 12
         content_w = 256
+        # Match draw_chat_bubble's reservation for the speaker icon so
+        # the entry's bh estimate matches the actual bubble height.
+        # The chat bubble always shows the speaker icon (per-cat
+        # tts_enabled state, but presence is constant), so we always
+        # subtract the icon column.
+        ICON_RESERVE = 24 + 12  # speaker_on width + margin/outline pad
+        text_w = content_w - ICON_RESERVE
 
         # Lazy-create + cache the Pango layout (once per CatAIApp lifetime)
         lay = self._bubble_layout_cache
@@ -3509,12 +3712,14 @@ class CatAIApp(Gtk.Application):
             tctx = cairo.Context(tmp)
             lay = PangoCairo.create_layout(tctx)
             lay.set_font_description(Pango.FontDescription(_BUBBLE_FONT))
-            lay.set_width(content_w * Pango.SCALE)
             lay.set_wrap(Pango.WrapMode.WORD_CHAR)
             lay.set_height(-8)
             lay.set_ellipsize(Pango.EllipsizeMode.END)
             self._bubble_layout_cache = lay
             self._bubble_layout_cached_text = None
+        # Width may change frame-to-frame if the layout ever gets
+        # narrowed dynamically; set it every call for safety.
+        lay.set_width(text_w * Pango.SCALE)
 
         if text != self._bubble_layout_cached_text:
             lay.set_text(text, -1)
@@ -3550,6 +3755,16 @@ class CatAIApp(Gtk.Application):
         Returns True if recording started, False otherwise."""
         if not self._voice_recorder or self._voice_recorder._recording:
             return False
+        # Stop any in-flight TTS playback synchronously. Without this,
+        # the TTS GStreamer pipeline can still hold the audio device
+        # in a transient state that makes the next autoaudiosrc capture
+        # return silence — user reported "first record per cat works,
+        # next ones empty" which was exactly this. stop() clears the
+        # queue and drops the active playbin pipeline.
+        try:
+            _tts.get_default_player().stop()
+        except Exception:
+            log.debug("TTS stop during voice start failed", exc_info=True)
         # Cancel any pending delayed submit from a previous recording
         if getattr(self, "_voice_submit_timer", None):
             try:
@@ -3559,7 +3774,8 @@ class CatAIApp(Gtk.Application):
             self._voice_submit_timer = None
         self._chat_entry.set_text("")
         if self._voice_btn:
-            self._voice_btn.set_label("\U0001f534")  # 🔴
+            # Recording state — keep the pixel-art mic image but apply
+            # the red CSS class to flag the active capture.
             self._voice_btn.add_css_class("pixel-mic-btn-recording")
         self._chat_entry.set_placeholder_text("Recording... (release to send)")
         try:
@@ -3568,7 +3784,6 @@ class CatAIApp(Gtk.Application):
         except Exception:
             log.exception("Failed to start voice recording")
             if self._voice_btn:
-                self._voice_btn.set_label("\U0001f3a4")
                 self._voice_btn.remove_css_class("pixel-mic-btn-recording")
             self._chat_entry.set_placeholder_text(L10n.s("talk"))
             return False
@@ -3579,7 +3794,14 @@ class CatAIApp(Gtk.Application):
         if not self._voice_recorder or not self._voice_recorder._recording:
             return False
         if self._voice_btn:
-            self._voice_btn.set_label("\u23f3")  # ⏳
+            # Transcribing state — swap the mic image for a pixel-art
+            # hourglass that matches the bubble theme. The mic image
+            # comes back in on_result below.
+            from catai_linux.drawing import ICONS_DIR as _ICONS_DIR
+            sablier_path = os.path.join(_ICONS_DIR, "sablier.png")
+            sablier_img = Gtk.Image.new_from_file(sablier_path)
+            sablier_img.set_pixel_size(28)
+            self._voice_btn.set_child(sablier_img)
             self._voice_btn.set_sensitive(False)
             self._voice_btn.remove_css_class("pixel-mic-btn-recording")
 
@@ -3619,7 +3841,11 @@ class CatAIApp(Gtk.Application):
             except Exception:
                 pass
             if self._voice_btn:
-                self._voice_btn.set_label("\U0001f3a4")  # 🎤
+                # Re-attach the pixel-art mic image (set_label removed
+                # the child Image during the transcribing spinner).
+                self._mic_image = Gtk.Image.new_from_file(self._mic_icon_path)
+                self._mic_image.set_pixel_size(28)
+                self._voice_btn.set_child(self._mic_image)
                 self._voice_btn.set_sensitive(True)
             self._chat_entry.set_placeholder_text(L10n.s("talk"))
             if text and self._active_chat_cat:
@@ -3728,6 +3954,43 @@ class CatAIApp(Gtk.Application):
             # Click outside items → close menu
             self.hide_easter_menu()
             return
+
+        # Chat bubble speaker icon (toggle TTS for that cat). Clicking
+        # this is the ONE-STOP way to enable voice output — if the
+        # global kill switch happens to be off we flip it on too,
+        # because requiring the user to also dig into Settings for a
+        # feature they just clicked the icon for is bad UX.
+        for c in self.cat_instances:
+            rect = getattr(c, "_speaker_click_rect", None)
+            if rect is None:
+                continue
+            ix, iy, iw, ih = rect
+            if ix <= start_x <= ix + iw and iy <= start_y <= iy + ih:
+                gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+                c.tts_enabled = not c.tts_enabled
+                c.config["tts_enabled"] = c.tts_enabled
+                # Enabling a cat implicitly enables the global flag so
+                # the play() hook in send_chat's on_done actually fires.
+                # Disabling just flips the per-cat — the global stays
+                # whatever the user set it to.
+                if c.tts_enabled and not self._tts_enabled:
+                    self._tts_enabled = True
+                # Disabling cuts any in-flight playback synchronously
+                # so the user doesn't have to wait for the current
+                # response to finish speaking.
+                if not c.tts_enabled:
+                    try:
+                        _tts.get_default_player().stop()
+                    except Exception:
+                        log.debug("TTS stop on mute click failed",
+                                  exc_info=True)
+                self._save_all()
+                if self._canvas_area:
+                    self._canvas_area.queue_draw()
+                log.debug("TTS toggled for %s -> %s (global=%s)",
+                          c.config.get("char_id"), c.tts_enabled,
+                          self._tts_enabled)
+                return
 
         # Check context menu click
         if self._menu_visible:
@@ -3961,6 +4224,8 @@ class CatAIApp(Gtk.Application):
             "encounters": self.encounters_enabled,
             "voice_enabled": self._voice_enabled,
             "voice_model": getattr(self, "_voice_model", "base"),
+            "tts_enabled": getattr(self, "_tts_enabled", False),
+            "tts_cat_sounds_enabled": getattr(self, "_tts_cat_sounds_enabled", True),
         })
 
     def _render_tick(self):

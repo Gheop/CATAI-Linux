@@ -33,7 +33,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["ruff", "build"]
-voice = ["faster-whisper>=1.0"]
+voice = ["faster-whisper>=1.0", "piper-tts>=1.4"]
 
 [project.urls]
 Homepage = "https://github.com/Gheop/CATAI-Linux"
@@ -61,6 +61,8 @@ catai_linux = [
     "kitten04/**/*.png", "kitten04/**/*.json",
     "kitten05/**/*.png", "kitten05/**/*.json",
     "nyan_cat.png", "nyan_rainbow.png",
+    "sounds/*.mp3", "sounds/NOTICE.md",
+    "icons/*.png",
 ]
 
 [tool.ruff]

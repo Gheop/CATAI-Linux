@@ -562,6 +562,147 @@ def test_seasonal() -> None:
         test("draw_overlay(unknown) silent no-op", False, str(e))
 
 
+def test_tts() -> None:
+    print("\n[tts]", flush=True)
+    import os
+
+    from catai_linux import tts
+
+    # ── Splitter: basic cases
+    chunks = tts.split_cat_sounds("Miaou mon ami!")
+    test("split: text+meow produces 2 chunks",
+         len(chunks) == 2, str(chunks))
+    test("split: first chunk is cat meow",
+         chunks[0].kind == "cat" and chunks[0].content == "meow",
+         str(chunks))
+    test("split: second chunk is trailing text",
+         chunks[1].kind == "text" and "mon ami" in chunks[1].content,
+         str(chunks))
+
+    # Multiple adjacent meows collapse into a single cat chunk so we
+    # don't play three separate samples back-to-back.
+    chunks = tts.split_cat_sounds("Miaou miaou miaou")
+    test("split: 3 adjacent meows → 1 cat chunk (dedup)",
+         len(chunks) == 1 and chunks[0].kind == "cat"
+         and chunks[0].content == "meow",
+         str(chunks))
+    # ... but different pools still emit distinct chunks
+    chunks = tts.split_cat_sounds("Miaou prrrrr mrrp")
+    cat_kinds = [c.content for c in chunks if c.kind == "cat"]
+    test("split: heterogeneous sounds stay distinct",
+         cat_kinds == ["meow", "purr", "mrrp"], str(chunks))
+
+    # Purr with *ronron* markdown
+    chunks = tts.split_cat_sounds("*ronron* ça va.")
+    test("split: *ronron* recognized as purr",
+         any(c.kind == "cat" and c.content == "purr" for c in chunks),
+         str(chunks))
+
+    # Mrrp / chirp — short questioning sounds map to the mrrp pool
+    chunks = tts.split_cat_sounds("Mrrp! Prrt?")
+    cat_kinds = [c.content for c in chunks if c.kind == "cat"]
+    test("split: mrrp recognized", "mrrp" in cat_kinds, str(chunks))
+    test("split: prrt (short chirp) → mrrp pool",
+         cat_kinds.count("mrrp") == 2, str(chunks))
+    # Longer purrs (prrrr with >=2 r's after the first rr) → purr pool
+    chunks = tts.split_cat_sounds("Prrrrrr~ content")
+    cat_kinds = [c.content for c in chunks if c.kind == "cat"]
+    test("split: long prrrr → purr pool",
+         "purr" in cat_kinds, str(chunks))
+
+    # Hiss
+    chunks = tts.split_cat_sounds("*hiss* go away!")
+    test("split: *hiss* recognized",
+         any(c.kind == "cat" and c.content == "hiss" for c in chunks),
+         str(chunks))
+
+    # Pure text passes through unchanged
+    chunks = tts.split_cat_sounds("Just some plain text")
+    test("split: pure text → single text chunk",
+         len(chunks) == 1 and chunks[0].kind == "text",
+         str(chunks))
+
+    # Empty / whitespace input
+    test("split: empty string → []", tts.split_cat_sounds("") == [])
+    test("split: whitespace → []", tts.split_cat_sounds("   \n\t ") == [])
+
+    # Case insensitive
+    chunks = tts.split_cat_sounds("MIAOU and MEOW and Purr")
+    cat_count = sum(1 for c in chunks if c.kind == "cat")
+    test("split: case-insensitive matching",
+         cat_count == 3, f"{cat_count} cat chunks in {chunks}")
+
+    # ── Sound pool / sample resolution
+    # Each pool should have at least one sample on disk after install.
+    for pool_key in ("meow", "purr", "mrrp", "hiss"):
+        path = tts._resolve_sample(pool_key)
+        test(f"resolve_sample({pool_key!r}) returns a real file",
+             path is not None and os.path.isfile(path),
+             str(path))
+
+    # Unknown pool returns None
+    test("resolve_sample(unknown) = None",
+         tts._resolve_sample("not_a_pool") is None)
+
+    # Each sample filename in the pool config matches a real file
+    missing = []
+    for pool_key, files in tts.CAT_SOUND_POOLS.items():
+        for f in files:
+            full = os.path.join(tts.SOUNDS_DIR, f)
+            if not os.path.isfile(full):
+                missing.append(full)
+    test("all CAT_SOUND_POOLS files exist on disk",
+         not missing, f"missing: {missing}")
+
+    # SoundPlayer can be instantiated without raising (even if piper is
+    # missing — it logs and moves on).
+    player = tts.SoundPlayer()
+    test("SoundPlayer() instantiates cleanly", player is not None)
+
+    # play([]) is a no-op
+    player.play([])
+    test("SoundPlayer.play([]) is a no-op", True)
+
+    # Default player is a singleton
+    p1 = tts.get_default_player()
+    p2 = tts.get_default_player()
+    test("get_default_player is a singleton", p1 is p2)
+
+    # ── Text cleaning: stage directions + emoji stripped
+    test("clean: drops *...* stage directions entirely",
+         tts._clean_text_for_tts("*s'étire* bonjour") == "bonjour")
+    test("clean: keeps dialogue before and after stage direction",
+         tts._clean_text_for_tts("salut *regarde* toi") == "salut toi")
+    test("clean: removes emoji",
+         tts._clean_text_for_tts("salut 😸 toi") == "salut toi")
+    test("clean: keeps french accents",
+         tts._clean_text_for_tts("Ça va très bien") == "Ça va très bien")
+    test("clean: collapses whitespace",
+         tts._clean_text_for_tts("hello   world\n\ttest") == "hello world test")
+    test("clean: keeps guillemets + punctuation",
+         tts._clean_text_for_tts("«Bonjour!» dit-il.") == "«Bonjour!» dit-il.")
+    test("clean: all-emoji input → empty",
+         tts._clean_text_for_tts("😸🌫✨") == "")
+    test("clean: pure stage direction → empty",
+         tts._clean_text_for_tts("*bâille longuement*") == "")
+
+    # split_cat_sounds: cat tokens INSIDE *...* are extracted first,
+    # so *ronron* becomes a purr chunk, not dropped.
+    chunks = tts.split_cat_sounds("*ronron*")
+    test("split: *ronron* → purr chunk (cat token wins over stage direction)",
+         len(chunks) == 1 and chunks[0].kind == "cat"
+         and chunks[0].content == "purr",
+         str(chunks))
+
+    # split_cat_sounds drops stage-direction-only content via cleaner
+    chunks = tts.split_cat_sounds("Salut *s'étire* toi")
+    text_contents = [c.content for c in chunks if c.kind == "text"]
+    test("split: stage direction dropped from text chunks",
+         any("s'étire" not in t for t in text_contents)
+         and not any("s'étire" in t for t in text_contents),
+         str(chunks))
+
+
 # ── catai_linux (package smoke test) ─────────────────────────────────────────
 
 def test_import_smoke() -> None:
@@ -576,6 +717,7 @@ def test_import_smoke() -> None:
         "catai_linux.personality",
         "catai_linux.monitors",
         "catai_linux.seasonal",
+        "catai_linux.tts",
         "catai_linux.reactions",
         "catai_linux.mood",
         "catai_linux.activity",
@@ -824,6 +966,7 @@ def main() -> int:
     _run_section("personality", test_personality)
     _run_section("monitors", test_monitors)
     _run_section("seasonal", test_seasonal)
+    _run_section("tts", test_tts)
     _run_section("reactions", test_reactions)
     _run_section("mood", test_mood)
     _run_section("activity", test_activity)

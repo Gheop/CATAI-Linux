@@ -8,6 +8,7 @@ tempfile-backed surface.
 from __future__ import annotations
 
 import math
+import os
 import time
 
 import cairo
@@ -16,6 +17,28 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Pango", "1.0")
 gi.require_version("PangoCairo", "1.0")
 from gi.repository import Gdk, Gtk, Pango, PangoCairo  # noqa: E402
+
+# Bundled pixel-art icons (mic + speaker on/off) live here. Cached as
+# cairo.ImageSurface on first load — they're tiny so memory is fine.
+ICONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons")
+_icon_cache: dict[str, cairo.ImageSurface] = {}
+
+
+def _load_icon(name: str) -> cairo.ImageSurface | None:
+    """Return a cached cairo.ImageSurface for ``name``, or None if the
+    PNG isn't bundled (graceful degradation: callers fall back to a
+    Pango emoji glyph)."""
+    if name in _icon_cache:
+        return _icon_cache[name]
+    path = os.path.join(ICONS_DIR, f"{name}.png")
+    if not os.path.isfile(path):
+        return None
+    try:
+        surface = cairo.ImageSurface.create_from_png(path)
+    except Exception:
+        return None
+    _icon_cache[name] = surface
+    return surface
 
 
 # ── CSS Theme ─────────────────────────────────────────────────────────────────
@@ -308,26 +331,51 @@ def draw_encounter_bubble(ctx, text: str, cat_x: float, cat_y: float,
 
 
 def draw_chat_bubble(ctx, text: str, cat_x: float, cat_y: float,
-                     cat_w: float, cat_h: float) -> None:
-    """Draw a chat response bubble above a cat on the Cairo canvas."""
+                     cat_w: float, cat_h: float,
+                     speaker_state: bool | None = None) -> tuple[int, int, int, int] | None:
+    """Draw a chat response bubble above a cat on the Cairo canvas.
+
+    When ``speaker_state`` is not None, a small speaker icon is drawn
+    in the top-right corner of the bubble (🔊 when True, 🔇 when False)
+    and the function returns its click rect ``(x, y, w, h)`` so the
+    caller can route clicks. Returns None if ``speaker_state`` is None.
+    """
     pad = 12
     content_w = 256  # text area = bw - 2*pad
+
+    # Reserve text width on the right for the speaker icon so wrapped
+    # lines never run under it. Pango doesn't natively support shape
+    # exclusion regions, so we just narrow the whole layout — wastes
+    # a tiny strip below the icon but keeps the text clean.
+    icon_reserve = 0
+    if speaker_state is not None:
+        icon_name = "speaker_on" if speaker_state else "speaker_off"
+        icon_surface_preview = _load_icon(icon_name)
+        iw = icon_surface_preview.get_width() if icon_surface_preview else 22
+        icon_reserve = iw + 12  # icon + margin + outline padding
+    text_w = content_w - icon_reserve
 
     lay = PangoCairo.create_layout(ctx)
     lay.set_font_description(Pango.FontDescription(BUBBLE_FONT))
     lay.set_text(text, -1)
-    lay.set_width(content_w * Pango.SCALE)
+    lay.set_width(text_w * Pango.SCALE)
     lay.set_wrap(Pango.WrapMode.WORD_CHAR)
     lay.set_height(-8)  # max 8 lines
     lay.set_ellipsize(Pango.EllipsizeMode.END)
     _tw, th = lay.get_pixel_size()
 
-    bw = content_w + pad * 2  # 280
+    bw = content_w + pad * 2  # 280 — keep bubble width constant so the
+                              # icon sits in the right strip outside
+                              # the text area
     bh = pad * 2 + th + 42   # text + 30 entry + 12 pad
     bx = cat_x + cat_w / 2 - bw / 2
     by = cat_y - bh - 15
+    # Track which side of the cat the bubble lands on so the tail
+    # points the right way (towards the cat).
+    bubble_above_cat = True
     if by < 0:
         by = cat_y + cat_h + 10
+        bubble_above_cat = False
 
     # Background
     ctx.set_source_rgba(*THEME["bubble_bg_translucent"])
@@ -347,15 +395,63 @@ def draw_chat_bubble(ctx, text: str, cat_x: float, cat_y: float,
     ctx.set_source_rgba(*THEME["bubble_text"])
     PangoCairo.show_layout(ctx, lay)
 
-    # Tail (small triangle pointing down)
+    # Tail — small triangle pointing toward the cat. If the bubble
+    # had to flip below the cat (cat near the top of the screen),
+    # the tail goes on the TOP edge pointing UP instead of the
+    # bottom edge pointing DOWN.
     tx = bx + bw / 2
-    ty = by + bh
     ctx.set_source_rgba(*THEME["bubble_border"])
-    ctx.move_to(tx - 8, ty)
-    ctx.line_to(tx + 8, ty)
-    ctx.line_to(tx, ty + 10)
+    if bubble_above_cat:
+        ty = by + bh
+        ctx.move_to(tx - 8, ty)
+        ctx.line_to(tx + 8, ty)
+        ctx.line_to(tx, ty + 10)
+    else:
+        ty = by
+        ctx.move_to(tx - 8, ty)
+        ctx.line_to(tx + 8, ty)
+        ctx.line_to(tx, ty - 10)
     ctx.close_path()
     ctx.fill()
+
+    # Speaker toggle icon in the top-right corner of the bubble.
+    # Returns the click rect (x, y, w, h) so the canvas click handler
+    # can detect toggles. Renders the bundled pixel-art PNG via cairo
+    # ImageSurface — falls back to a Pango emoji glyph if the icon
+    # files are missing.
+    if speaker_state is not None:
+        icon_name = "speaker_on" if speaker_state else "speaker_off"
+        surface = _load_icon(icon_name)
+        if surface is not None:
+            icon_w = surface.get_width()
+            icon_h = surface.get_height()
+        else:
+            icon_w, icon_h = 22, 20
+        icon_margin = 6
+        icon_x = int(bx + bw - icon_w - icon_margin - px)
+        icon_y = int(by + icon_margin + px)
+        # Background chip so the icon stays visible on top of any
+        # text bleed (semi-opaque rounded square outlined in the
+        # bubble border color).
+        ctx.set_source_rgba(*THEME["bubble_bg"])
+        ctx.rectangle(icon_x - 2, icon_y - 2, icon_w + 4, icon_h + 4)
+        ctx.fill()
+        ctx.set_source_rgba(*THEME["bubble_border"])
+        ctx.set_line_width(1.5)
+        ctx.rectangle(icon_x - 2, icon_y - 2, icon_w + 4, icon_h + 4)
+        ctx.stroke()
+        if surface is not None:
+            ctx.save()
+            ctx.set_source_surface(surface, icon_x, icon_y)
+            ctx.paint()
+            ctx.restore()
+        else:
+            # Fallback emoji rendering if PNGs are missing for some reason
+            glyph = "\U0001f4e2" if speaker_state else "\U0001f507"
+            _draw_pango_symbol(ctx, glyph, icon_x, icon_y, 14,
+                               *THEME["bubble_text"])
+        return (icon_x - 2, icon_y - 2, icon_w + 4, icon_h + 4)
+    return None
 
 
 def draw_context_menu(ctx, mx: float, my: float,
