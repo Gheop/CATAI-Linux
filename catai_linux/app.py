@@ -666,6 +666,7 @@ from catai_linux.x11_helpers import (  # noqa: E402
     update_input_shape as _update_input_shape,
     get_active_window_fullscreen as _x11_active_fullscreen,
     get_window_y_offset as _x11_window_y_offset,
+    get_mouse_position as _x11_mouse_position,
 )
 
 from catai_linux.reactions import ReactionPool  # noqa: E402
@@ -4432,17 +4433,17 @@ class CatAIApp(Gtk.Application):
 
     # ── Wake word ────────────────────────────────────────────────────────────
 
-    def _on_wake_word_heard(self, char_id: str) -> bool:
-        """GTK-main callback fired by WakeWordListener when one of the
-        registered cat names is recognized in live audio.
+    def _on_wake_word_heard(self, char_id: str, verb: str | None = None) -> bool:
+        """GTK-main callback fired by ``WakeWordListener`` when one of
+        the registered cat names is recognized in live audio.
 
-        Behavior:
-            1. Look up the matching CatInstance.
-            2. Open its chat bubble (same path as a manual click).
-            3. Auto-trigger a push-to-talk recording if voice + a recorder
-               are wired up — saves the user pressing Space afterwards.
+        ``verb`` is None for plain wake calls (just the cat's name) and
+        triggers the legacy "open chat + auto-PTT" flow. When the user
+        chained a command verb (e.g. "Mandarine dors") we dispatch to
+        a dedicated handler instead.
 
-        Returns False so callers can pass this directly to GLib.idle_add."""
+        Returns False so callers can pass this directly to GLib.idle_add.
+        """
         target = next(
             (c for c in self.cat_instances if c.config.get("char_id") == char_id),
             None,
@@ -4450,10 +4451,50 @@ class CatAIApp(Gtk.Application):
         if target is None:
             log.debug("WAKE: no instance for %s", char_id)
             return False
-        log.warning("WAKE: opening chat for %s on user wake call", char_id)
         _metrics.track("wake_word_triggered", cat_id=target.config.get("id"))
+
+        if verb is None:
+            self._wake_open_chat_and_listen(target)
+            return False
+
+        # Verb dispatch — each handler is short and isolated so adding
+        # a new verb is one entry in COMMAND_VERBS + one branch here.
+        log.warning("WAKE: dispatching verb %r on %s", verb, char_id)
+        try:
+            if verb == "dors":
+                self._wake_action_sleep(target)
+            elif verb == "viens":
+                self._wake_action_come(target)
+            elif verb == "raconte":
+                self._wake_action_tell_story(target)
+            elif verb == "danse":
+                self._wake_action_dance(target)
+            elif verb == "saute":
+                self._wake_action_jump(target)
+            elif verb == "roule":
+                self._wake_action_roll(target)
+            else:
+                log.debug("WAKE: unknown verb %r — falling back to chat", verb)
+                self._wake_open_chat_and_listen(target)
+        except Exception:
+            log.exception("WAKE: verb handler %r crashed", verb)
+        return False
+
+    # ── Wake-word verb handlers ──────────────────────────────────────────────
+
+    def _wake_open_chat_and_listen(self, target) -> None:
+        """Default wake action (no verb): open the cat's chat bubble
+        and auto-start a 6-second push-to-talk window so the user can
+        speak right after their wake word without touching the keyboard.
+
+        Critical: the normal PTT design is press-and-hold (mic button
+        or Space). When triggered programmatically nobody is holding
+        anything down — we MUST schedule an auto-stop, otherwise the
+        recording runs forever, on_result never fires, the wake
+        listener stays paused, and subsequent wake calls go nowhere."""
+        log.warning("WAKE: opening chat for %s", target.config.get("char_id"))
         # Make sure the bubble is open & focused. _toggle_chat_for would
-        # close it if already open, so set state directly.
+        # close it if already open, so we set state directly.
         for c in self.cat_instances:
             c.chat_visible = False
         target.chat_visible = True
@@ -4465,15 +4506,6 @@ class CatAIApp(Gtk.Application):
             self._chat_box.set_visible(True)
         if self._chat_entry is not None:
             self._chat_entry.grab_focus()
-        # Auto-start a push-to-talk capture so the user can speak right
-        # after their wake word without an extra key press. Falls back
-        # to "just opened the chat" if voice isn't enabled.
-        #
-        # Critical: the normal PTT design is press-and-hold (mic button
-        # or Space). When triggered programmatically, nobody is holding
-        # anything down — so we MUST schedule an auto-stop, otherwise
-        # the recording runs forever, on_result never fires, the wake
-        # listener stays paused, and subsequent wake calls go nowhere.
         if self._voice_enabled and self._voice_recorder is not None:
             try:
                 started = self._start_voice_recording()
@@ -4481,8 +4513,6 @@ class CatAIApp(Gtk.Application):
                 log.exception("WAKE: auto-start PTT crashed")
                 started = False
             if started:
-                # Cancel any leftover wake-PTT timer (shouldn't happen
-                # since pause/resume serializes things, but defensive).
                 if getattr(self, "_wake_ptt_stop_timer", None):
                     try:
                         GLib.source_remove(self._wake_ptt_stop_timer)
@@ -4496,14 +4526,114 @@ class CatAIApp(Gtk.Application):
                         self._stop_voice_recording()
                     except Exception:
                         log.exception("WAKE: auto-stop PTT crashed")
-                    return False  # one-shot
+                    return False
 
                 # 6 s gives the user time to formulate a sentence after
                 # the wake word, which is what every voice assistant
                 # gives roughly. Adjust here if it feels too short.
                 self._wake_ptt_stop_timer = GLib.timeout_add(
                     6000, _wake_ptt_auto_stop)
-        return False
+
+    def _wake_action_sleep(self, target) -> None:
+        """Verb 'dors' — curl the cat into a sleeping ball."""
+        target.state = CatState.SLEEPING_BALL
+        target.frame_index = 0
+        target.direction = "south"
+        # Reset the breathing tick so the animation starts fresh
+        if hasattr(target, "_sleep_tick"):
+            target._sleep_tick = 0
+
+    def _wake_action_come(self, target) -> None:
+        """Verb 'viens' — make the cat walk to the user's mouse cursor.
+        Uses XQueryPointer via ctypes (no subprocess). Falls back to a
+        random screen point if the mouse query fails (e.g. pure
+        Wayland session)."""
+        pos = _x11_mouse_position()
+        if pos is None:
+            # Fallback: random point in monitor 0 — cat at least moves
+            # so the user gets feedback that the command was heard.
+            log.debug("WAKE: mouse query failed, fallback to random target")
+            tx = random.randint(target.display_w, max(target.display_w + 1,
+                                                      self.screen_w - target.display_w))
+            ty = target.y
+        else:
+            tx, ty = pos
+            # Clamp to canvas safe area so the cat doesn't try to walk
+            # into a screen corner where it would clip.
+            tx = max(target.display_w // 2,
+                     min(self.screen_w - target.display_w // 2, tx))
+            ty = max(target.display_h // 2,
+                     min(self.screen_h - target.display_h // 2, ty))
+        target.dest_x = float(tx)
+        target.dest_y = float(ty)
+        target.state = CatState.WALKING
+        target.frame_index = 0
+
+    def _wake_action_tell_story(self, target) -> None:
+        """Verb 'raconte' — open the chat and inject a 'tell me a
+        story' prompt so the AI generates an anecdote on the fly."""
+        # Open the chat bubble first (same path as the default wake)
+        for c in self.cat_instances:
+            c.chat_visible = False
+        target.chat_visible = True
+        self._active_chat_cat = target
+        self._position_chat_entry(target)
+        if self._chat_box is not None:
+            self._chat_box.set_visible(True)
+        if self._chat_entry is not None:
+            self._chat_entry.grab_focus()
+        # Pick a localized prompt — the AI's response language is set
+        # by L10n.lang at backend creation, so a French prompt yields
+        # a French story.
+        prompts = {
+            "fr": "Raconte-moi une petite anecdote rigolote en quelques phrases.",
+            "en": "Tell me a short funny story in a few sentences.",
+            "es": "Cuéntame una pequeña anécdota divertida en unas frases.",
+        }
+        prompt = prompts.get(L10n.lang, prompts["fr"])
+        target.send_chat(prompt)
+
+    def _wake_action_dance(self, target) -> None:
+        """Verb 'danse' — mini disco loop on this single cat. Cycles
+        through the celebratory states (LOVE / ROLLING / GROOMING /
+        FLAT) every 500 ms for 5 seconds, then returns to IDLE.
+
+        Reuses the same state list as the global ``eg_disco`` easter
+        egg but scoped to one cat so the others keep doing their own
+        thing."""
+        dance_states = [CatState.LOVE, CatState.ROLLING,
+                        CatState.GROOMING, CatState.FLAT]
+        target.in_encounter = True
+        target.state = random.choice(dance_states)
+        target.frame_index = 0
+        target.direction = "south"
+        ticks = [10]  # 5 s at 500 ms per tick
+
+        def _dance_tick():
+            if ticks[0] <= 0:
+                target.in_encounter = False
+                target.state = CatState.IDLE
+                target.frame_index = 0
+                return False
+            target.state = random.choice(dance_states)
+            target.frame_index = 0
+            ticks[0] -= 1
+            return True
+
+        GLib.timeout_add(500, _dance_tick)
+
+    def _wake_action_jump(self, target) -> None:
+        """Verb 'saute' — JUMPING animation, then return to IDLE
+        automatically via the existing animation tick logic."""
+        target.state = CatState.JUMPING
+        target.frame_index = 0
+        target.direction = "south"
+
+    def _wake_action_roll(self, target) -> None:
+        """Verb 'roule' — ROLLING animation, same lifetime as jump."""
+        target.state = CatState.ROLLING
+        target.frame_index = 0
+        target.direction = "south"
 
     def _on_voice_press(self, gesture, n_press, x, y):
         """Mic button pressed down → start recording."""
