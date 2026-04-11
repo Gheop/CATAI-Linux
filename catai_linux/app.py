@@ -5007,8 +5007,10 @@ class CatAIApp(Gtk.Application):
 
     def eg_konami(self):
         """Konami code unlocked — all cats briefly flash through SURPRISED →
-        LOVE → ROLLING, like a "GOD MODE" celebration. Also restores every
-        cat's mood to full happiness (if the mood module is loaded).
+        LOVE → ROLLING, like a "GOD MODE" celebration. Also bumps every
+        cat's mood toward content without pinning it to the extreme values
+        that would lock ``_roll_mood_adjusted`` into a single narrow IDLE
+        branch for the rest of the session.
 
         Magic phrases: 'konami', 'up up down down', 'cheat code'."""
         if not self.cat_instances:
@@ -5025,12 +5027,15 @@ class CatAIApp(Gtk.Application):
             cat.direction = "south"
             cat.frame_index = 0
             cat.in_encounter = True
-            # Restore full happiness/energy on the mood track
+            # Mood bump toward happy/rested WITHOUT pinning to extremes.
+            # is_affectionate triggers at happiness > 75 and is_bored at
+            # bored > 70 — we stay safely below both so the behavior
+            # tick's IDLE branch doesn't get locked into a single band.
             if hasattr(cat, "mood") and cat.mood is not None:
-                cat.mood.happiness = 100.0
-                cat.mood.energy = 100.0
-                cat.mood.bored = 0.0
-                cat.mood.hunger = 0.0
+                cat.mood.happiness = min(75.0, cat.mood.happiness + 30)
+                cat.mood.energy = min(99.0, cat.mood.energy + 30)
+                cat.mood.bored = max(0.0, cat.mood.bored - 40)
+                cat.mood.hunger = max(0.0, cat.mood.hunger - 20)
 
         def phase_love():
             for cat in self.cat_instances:
@@ -5061,11 +5066,14 @@ class CatAIApp(Gtk.Application):
             return
         self._coffee_active = True
 
-        # Burst of energy on the mood stats
+        # Burst of energy on the mood stats. Cap happiness at 75 so we
+        # don't trigger is_affectionate() which would lock the IDLE
+        # branch into a narrow LOVE/sparkle band for the rest of the
+        # session — same pitfall as eg_konami without the cap.
         for cat in self.cat_instances:
             if hasattr(cat, "mood") and cat.mood is not None:
-                cat.mood.energy = min(100.0, cat.mood.energy + 40)
-                cat.mood.happiness = min(100.0, cat.mood.happiness + 20)
+                cat.mood.energy = min(99.0, cat.mood.energy + 25)
+                cat.mood.happiness = min(75.0, cat.mood.happiness + 10)
 
         # Swap the behavior tick for a 2× faster variant for 15 s. Keep
         # render tick untouched so the cats look hyperactive rather than
@@ -5121,7 +5129,10 @@ class CatAIApp(Gtk.Application):
             cat.in_encounter = True
             if hasattr(cat, "mood") and cat.mood is not None:
                 cat.mood.bored = max(0.0, cat.mood.bored - 30)
-                cat.mood.happiness = min(100.0, cat.mood.happiness + 10)
+                # Cap below is_affectionate threshold (>75) for the same
+                # reason as eg_konami / eg_coffee — avoid locking the
+                # IDLE roll into a single narrow band.
+                cat.mood.happiness = min(75.0, cat.mood.happiness + 10)
 
         def release():
             for cat in self.cat_instances:
