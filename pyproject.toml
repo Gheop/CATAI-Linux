@@ -33,7 +33,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["ruff", "build"]
-voice = ["faster-whisper>=1.0"]
+voice = ["faster-whisper>=1.0", "piper-tts>=1.4"]
 
 [project.urls]
 Homepage = "https://github.com/Gheop/CATAI-Linux"

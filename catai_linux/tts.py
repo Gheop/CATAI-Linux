@@ -34,6 +34,7 @@ import os
 import random
 import re
 import threading
+import urllib.request
 from dataclasses import dataclass
 
 log = logging.getLogger("catai")
@@ -42,6 +43,20 @@ log = logging.getLogger("catai")
 # Directory containing the CC0 .mp3 samples. Resolved at import time so
 # every caller shares the same path.
 SOUNDS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sounds")
+
+# Cache directory for downloaded Piper voice models. Voices are ~20-80 MB
+# each, so we don't ship them in the wheel — they're fetched on first use
+# and reused forever. Mirrors the whisper cache pattern in voice.py.
+PIPER_CACHE_DIR = os.path.expanduser("~/.cache/catai/piper")
+
+# Default voice model. French, good quality, ~74 MB. Users can override
+# via ``CATAI_PIPER_VOICE`` env var (absolute path to a custom .onnx).
+DEFAULT_VOICE_NAME = "fr_FR-upmc-medium"
+DEFAULT_VOICE_URL = (
+    "https://huggingface.co/rhasspy/piper-voices/resolve/main/"
+    "fr/fr_FR/upmc/medium/fr_FR-upmc-medium.onnx"
+)
+DEFAULT_VOICE_CONFIG_URL = DEFAULT_VOICE_URL + ".json"
 
 
 # ── Chunk type ───────────────────────────────────────────────────────────────
@@ -212,26 +227,72 @@ class SoundPlayer:
         self._lock = threading.Lock()
         self._worker: threading.Thread | None = None
         self._queue: list[list[Chunk]] = []
-        self._piper = None
-        self._piper_checked = False
+        # Piper voice loaded lazily on first text chunk. Shared across
+        # every cat (per-cat voices are deferred to a later PR). None
+        # means "not loaded yet", False means "load failed permanently".
+        self._voice = None
+        self._voice_download_started = False
 
-    # ── Piper lazy init ──────────────────────────────────────────────────
+    # ── Piper lazy load + download ───────────────────────────────────────
 
-    def _get_piper(self):
-        """Lazily load the Piper backend. Returns None if unavailable."""
-        if self._piper_checked:
-            return self._piper
-        self._piper_checked = True
+    def _voice_paths(self) -> tuple[str, str]:
+        """Return (onnx_path, json_path) for the configured voice."""
+        override = os.environ.get("CATAI_PIPER_VOICE")
+        if override and os.path.isfile(override):
+            return override, override + ".json"
+        onnx = os.path.join(PIPER_CACHE_DIR, f"{DEFAULT_VOICE_NAME}.onnx")
+        return onnx, onnx + ".json"
+
+    def _ensure_voice_files(self) -> bool:
+        """Make sure the default Piper voice files are on disk.
+        Downloads ~74 MB on first use. Returns True if files are present
+        after the call, False on any network failure."""
+        onnx, cfg = self._voice_paths()
+        if os.path.isfile(onnx) and os.path.isfile(cfg):
+            return True
+        os.makedirs(PIPER_CACHE_DIR, exist_ok=True)
+        log.info("TTS: downloading Piper voice %s (one-time, ~74 MB)...",
+                 DEFAULT_VOICE_NAME)
         try:
-            import piper  # type: ignore  # noqa: F401
-            # The actual voice loading happens in speak_text() — here
-            # we just verify the package imports.
-            self._piper = True
-            log.debug("TTS: piper available")
+            urllib.request.urlretrieve(DEFAULT_VOICE_URL, onnx)
+            urllib.request.urlretrieve(DEFAULT_VOICE_CONFIG_URL, cfg)
+            log.info("TTS: voice model ready at %s", onnx)
+            return True
+        except Exception:
+            log.exception("TTS: failed to download Piper voice")
+            # Clean up partial downloads so a retry doesn't see stale files
+            for p in (onnx, cfg):
+                try:
+                    if os.path.exists(p):
+                        os.remove(p)
+                except OSError:
+                    pass
+            return False
+
+    def _get_voice(self):
+        """Lazily load the Piper voice. Returns a PiperVoice instance
+        or None if unavailable (missing dep, download failed, load
+        failed). Cached after the first successful load."""
+        if self._voice is not None:
+            return self._voice if self._voice is not False else None
+        try:
+            from piper import PiperVoice  # type: ignore
         except ImportError:
-            log.debug("TTS: piper not installed, text chunks will be silent")
-            self._piper = None
-        return self._piper
+            log.debug("TTS: piper-tts not installed — text chunks silent")
+            self._voice = False
+            return None
+        if not self._ensure_voice_files():
+            self._voice = False
+            return None
+        onnx, _cfg = self._voice_paths()
+        try:
+            self._voice = PiperVoice.load(onnx)
+            log.info("TTS: Piper voice loaded from %s", onnx)
+            return self._voice
+        except Exception:
+            log.exception("TTS: Piper voice load failed")
+            self._voice = False
+            return None
 
     # ── Public API ───────────────────────────────────────────────────────
 
@@ -305,43 +366,44 @@ class SoundPlayer:
         pipeline.set_state(Gst.State.NULL)
         _ = GLib  # keep import alive
 
-    # ── Text playback (Piper, if available) ──────────────────────────────
+    # ── Text playback (Piper) ────────────────────────────────────────────
 
     def _play_text(self, text: str) -> None:
-        if not self._get_piper():
+        """Synthesize ``text`` via Piper and play the resulting WAV.
+
+        On first use this will block for ~2-5 s to download the 74 MB
+        voice model and another ~1 s to load it. Subsequent calls
+        synthesize in ~100-500 ms depending on sentence length. Every
+        call writes to a temp WAV file in /tmp and deletes it after
+        playback to keep the surface area minimal — we don't try to
+        stream chunks directly into a GStreamer appsrc because the
+        reliability gain isn't worth the pipeline complexity.
+        """
+        voice = self._get_voice()
+        if voice is None:
+            # Already logged in _get_voice on the first failure; later
+            # calls just silently skip text chunks.
             return
-        # The actual Piper API: synthesize to a WAV file, then play it.
-        # Kept minimal here — a full implementation would cache a voice
-        # model per character. This stub writes to /tmp and lets the
-        # same GStreamer pipeline play it back, so wiring the per-voice
-        # config from CATSET_PERSONALITIES is a later iteration.
+        import tempfile
+        import wave
         try:
-            import tempfile
-            import piper  # type: ignore
-            # Piper's Python API varies by version. The most stable entry
-            # point is `piper.PiperVoice.load(<model_path>)` + `.synthesize(...)`.
-            # Without a bundled voice model we can't actually speak here
-            # — just log and skip, so tests exercise the dispatch path
-            # without requiring network model downloads.
-            voice_path = os.environ.get("CATAI_PIPER_VOICE")
-            if not voice_path or not os.path.isfile(voice_path):
-                log.debug("TTS: no Piper voice configured, skipping text %r",
-                          text[:40])
-                return
-            voice = piper.PiperVoice.load(voice_path)
             with tempfile.NamedTemporaryFile(
                     suffix=".wav", delete=False) as tmp:
                 wav_path = tmp.name
-            import wave
             with wave.open(wav_path, "wb") as wav:
-                voice.synthesize(text, wav)
+                wav.setnchannels(1)
+                wav.setsampwidth(2)  # int16 → 2 bytes/sample
+                wav.setframerate(voice.config.sample_rate)
+                for chunk in voice.synthesize(text):
+                    wav.writeframes(chunk.audio_int16_bytes)
             self._play_file_blocking(wav_path)
-            try:
-                os.unlink(wav_path)
-            except OSError:
-                pass
         except Exception:
             log.debug("TTS: Piper synthesis failed", exc_info=True)
+        finally:
+            try:
+                os.unlink(wav_path)
+            except (OSError, NameError):
+                pass
 
 
 # ── Module-level convenience ─────────────────────────────────────────────────

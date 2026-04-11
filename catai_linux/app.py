@@ -3791,7 +3791,11 @@ class CatAIApp(Gtk.Application):
             self.hide_easter_menu()
             return
 
-        # Chat bubble speaker icon (toggle TTS for that cat)
+        # Chat bubble speaker icon (toggle TTS for that cat). Clicking
+        # this is the ONE-STOP way to enable voice output — if the
+        # global kill switch happens to be off we flip it on too,
+        # because requiring the user to also dig into Settings for a
+        # feature they just clicked the icon for is bad UX.
         for c in self.cat_instances:
             rect = getattr(c, "_speaker_click_rect", None)
             if rect is None:
@@ -3800,15 +3804,19 @@ class CatAIApp(Gtk.Application):
             if ix <= start_x <= ix + iw and iy <= start_y <= iy + ih:
                 gesture.set_state(Gtk.EventSequenceState.CLAIMED)
                 c.tts_enabled = not c.tts_enabled
-                # Persist the toggle in the cat's config dict so it
-                # survives restarts. _save_all_cat_configs writes the
-                # updated config.json on the next tick.
                 c.config["tts_enabled"] = c.tts_enabled
+                # Enabling a cat implicitly enables the global flag so
+                # the play() hook in send_chat's on_done actually fires.
+                # Disabling just flips the per-cat — the global stays
+                # whatever the user set it to.
+                if c.tts_enabled and not self._tts_enabled:
+                    self._tts_enabled = True
                 self._save_all()
                 if self._canvas_area:
                     self._canvas_area.queue_draw()
-                log.debug("TTS toggled for %s -> %s",
-                          c.config.get("char_id"), c.tts_enabled)
+                log.debug("TTS toggled for %s -> %s (global=%s)",
+                          c.config.get("char_id"), c.tts_enabled,
+                          self._tts_enabled)
                 return
 
         # Check context menu click
