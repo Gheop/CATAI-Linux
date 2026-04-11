@@ -3271,9 +3271,16 @@ class CatAIApp(Gtk.Application):
             self._chat_entry.add_controller(key_ctrl)
 
         if self._voice_enabled:
-            self._voice_btn = Gtk.Button(label="\U0001f3a4")  # 🎤
+            self._voice_btn = Gtk.Button()
+            # Bundled pixel-art mic icon (matches the chat bubble's
+            # speaker icon style and the cream/brown bubble palette).
+            from catai_linux.drawing import ICONS_DIR as _ICONS_DIR
+            self._mic_icon_path = os.path.join(_ICONS_DIR, "mic.png")
+            self._mic_image = Gtk.Image.new_from_file(self._mic_icon_path)
+            self._mic_image.set_pixel_size(28)
+            self._voice_btn.set_child(self._mic_image)
             self._voice_btn.add_css_class("pixel-mic-btn")
-            self._voice_btn.set_size_request(30, -1)
+            self._voice_btn.set_size_request(36, -1)
             self._voice_btn.set_tooltip_text("Hold to talk (or hold Space in the entry)")
             press_gesture = Gtk.GestureClick()
             press_gesture.set_button(1)
@@ -3734,7 +3741,8 @@ class CatAIApp(Gtk.Application):
             self._voice_submit_timer = None
         self._chat_entry.set_text("")
         if self._voice_btn:
-            self._voice_btn.set_label("\U0001f534")  # 🔴
+            # Recording state — keep the pixel-art mic image but apply
+            # the red CSS class to flag the active capture.
             self._voice_btn.add_css_class("pixel-mic-btn-recording")
         self._chat_entry.set_placeholder_text("Recording... (release to send)")
         try:
@@ -3743,7 +3751,6 @@ class CatAIApp(Gtk.Application):
         except Exception:
             log.exception("Failed to start voice recording")
             if self._voice_btn:
-                self._voice_btn.set_label("\U0001f3a4")  # 🎤
                 self._voice_btn.remove_css_class("pixel-mic-btn-recording")
             self._chat_entry.set_placeholder_text(L10n.s("talk"))
             return False
@@ -3797,7 +3804,11 @@ class CatAIApp(Gtk.Application):
             except Exception:
                 pass
             if self._voice_btn:
-                self._voice_btn.set_label("\U0001f3a4")  # 🎤
+                # Re-attach the pixel-art mic image (set_label removed
+                # the child Image during the transcribing spinner).
+                self._mic_image = Gtk.Image.new_from_file(self._mic_icon_path)
+                self._mic_image.set_pixel_size(28)
+                self._voice_btn.set_child(self._mic_image)
                 self._voice_btn.set_sensitive(True)
             self._chat_entry.set_placeholder_text(L10n.s("talk"))
             if text and self._active_chat_cat:
