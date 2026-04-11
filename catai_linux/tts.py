@@ -338,7 +338,7 @@ class SoundPlayer:
         try:
             from piper import PiperVoice  # type: ignore
         except ImportError:
-            log.debug("TTS: piper-tts not installed — text chunks silent")
+            log.warning("TTS: piper-tts not installed — text chunks silent")
             self._voice = False
             return None
         if not self._ensure_voice_files():
@@ -370,7 +370,7 @@ class SoundPlayer:
             self._cancel = False
             self._queue.append((chunks, voice_params))
             need_worker = self._worker is None or not self._worker.is_alive()
-        log.debug("TTS: queued %d chunks, need_worker=%s, queue_len=%d",
+        log.warning("TTS: queued %d chunks, need_worker=%s, queue_len=%d",
                   len(chunks), need_worker, len(self._queue))
         if need_worker:
             self._worker = threading.Thread(
@@ -392,17 +392,17 @@ class SoundPlayer:
                 from gi.repository import Gst
                 pipeline.set_state(Gst.State.NULL)
             except Exception:
-                log.debug("TTS: stop() pipeline NULL failed", exc_info=True)
-        log.debug("TTS: stop() — queue cleared, pipeline yanked")
+                log.warning("TTS: stop() pipeline NULL failed", exc_info=True)
+        log.warning("TTS: stop() — queue cleared, pipeline yanked")
 
     # ── Worker loop ──────────────────────────────────────────────────────
 
     def _drain_queue(self) -> None:
-        log.debug("TTS: worker thread start")
+        log.warning("TTS: worker thread start")
         while True:
             with self._lock:
                 if not self._queue or self._cancel:
-                    log.debug("TTS: worker exit (empty=%s, cancel=%s)",
+                    log.warning("TTS: worker exit (empty=%s, cancel=%s)",
                               not self._queue, self._cancel)
                     return
                 chunks, voice_params = self._queue.pop(0)
@@ -422,7 +422,7 @@ class SoundPlayer:
     def _play_cat(self, pool_key: str) -> None:
         path = _resolve_sample(pool_key)
         if path is None:
-            log.debug("TTS: no sample for pool %r", pool_key)
+            log.warning("TTS: no sample for pool %r", pool_key)
             return
         self._play_file_blocking(path)
 
@@ -440,20 +440,20 @@ class SoundPlayer:
             gi.require_version("Gst", "1.0")
             from gi.repository import Gst
         except (ImportError, ValueError):
-            log.debug("TTS: GStreamer unavailable, can't play %s", path)
+            log.warning("TTS: GStreamer unavailable, can't play %s", path)
             return
         if not Gst.is_initialized():
             Gst.init(None)
         uri = "file://" + os.path.abspath(path)
         pipeline = Gst.ElementFactory.make("playbin", None)
         if pipeline is None:
-            log.debug("TTS: playbin element unavailable")
+            log.warning("TTS: playbin element unavailable")
             return
         pipeline.set_property("uri", uri)
         with self._lock:
             self._active_pipeline = pipeline
         try:
-            log.debug("TTS: play %s", os.path.basename(path))
+            log.warning("TTS: play %s", os.path.basename(path))
             pipeline.set_state(Gst.State.PLAYING)
             bus = pipeline.get_bus()
             msg = bus.timed_pop_filtered(
@@ -462,7 +462,7 @@ class SoundPlayer:
             )
             if msg and msg.type == Gst.MessageType.ERROR:
                 err, debug = msg.parse_error()
-                log.debug("TTS: GStreamer error %s (%s)", err, debug)
+                log.warning("TTS: GStreamer error %s (%s)", err, debug)
         finally:
             try:
                 pipeline.set_state(Gst.State.NULL)
@@ -472,7 +472,7 @@ class SoundPlayer:
                 # enough on a healthy system.
                 pipeline.get_state(500 * Gst.MSECOND)
             except Exception:
-                log.debug("TTS: pipeline cleanup failed", exc_info=True)
+                log.warning("TTS: pipeline cleanup failed", exc_info=True)
             with self._lock:
                 if self._active_pipeline is pipeline:
                     self._active_pipeline = None
@@ -513,7 +513,7 @@ class SoundPlayer:
                     noise_w_scale=voice_params.get("noise_w_scale"),
                 )
             except Exception:
-                log.debug("TTS: couldn't build SynthesisConfig", exc_info=True)
+                log.warning("TTS: couldn't build SynthesisConfig", exc_info=True)
                 syn_config = None
         import tempfile
         import wave
@@ -534,7 +534,7 @@ class SoundPlayer:
                     wav.writeframes(chunk.audio_int16_bytes)
             self._play_file_blocking(wav_path)
         except Exception:
-            log.debug("TTS: Piper synthesis failed", exc_info=True)
+            log.warning("TTS: Piper synthesis failed", exc_info=True)
         finally:
             if wav_path:
                 try:
