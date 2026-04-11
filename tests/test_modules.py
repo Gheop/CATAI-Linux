@@ -316,6 +316,105 @@ def test_theme() -> None:
         os.environ["PATH"] = orig_path
 
 
+def test_personality() -> None:
+    print("\n[personality]", flush=True)
+    import tempfile
+
+    from catai_linux import personality
+
+    # Sandbox the CONFIG dir so we don't touch the user's real state
+    with tempfile.TemporaryDirectory() as td:
+        orig = personality._CONFIG_SUBDIR
+        personality._CONFIG_SUBDIR = td
+        try:
+            # Fresh state (file doesn't exist)
+            st = personality.PersonalityState.load("cat_unit")
+            test("fresh state has no quirks", st.drifted_traits == [])
+            test("fresh state message_count=0", st.message_count == 0)
+
+            # Apply drift + dedup
+            st.apply_drift("aime les chaussettes")
+            test("apply_drift adds a quirk", len(st.drifted_traits) == 1)
+            st.apply_drift("aime les chaussettes")
+            test("apply_drift is dedup (case-insensitive)",
+                 len(st.drifted_traits) == 1)
+            st.apply_drift("AIME LES CHAUSSETTES")
+            test("apply_drift dedup uppercase too",
+                 len(st.drifted_traits) == 1)
+            st.apply_drift("aime le jardinage")
+            test("apply_drift adds distinct quirk",
+                 len(st.drifted_traits) == 2)
+
+            # Overflow trims oldest
+            for q in ["a", "bb", "cc", "dd", "ee", "ff", "gg"]:
+                st.apply_drift(q)
+            test("apply_drift caps at MAX_TRAITS",
+                 len(st.drifted_traits) == personality.MAX_TRAITS)
+            # Empty/too-long are rejected
+            before = list(st.drifted_traits)
+            st.apply_drift("")
+            st.apply_drift(" ")
+            st.apply_drift("x" * 200)
+            test("apply_drift rejects empty/too-long",
+                 st.drifted_traits == before)
+
+            # Persist round-trip
+            st.drifted_traits = ["première quirk", "deuxième quirk"]
+            st.message_count = 42
+            st.last_drift_at = 12345.0
+            st.save()
+            loaded = personality.PersonalityState.load("cat_unit")
+            test("persist round-trip: quirks",
+                 loaded.drifted_traits == ["première quirk", "deuxième quirk"])
+            test("persist round-trip: message_count",
+                 loaded.message_count == 42)
+
+            # should_drift scheduling
+            st2 = personality.PersonalityState(cat_id="cat_sched")
+            test("fresh state should_drift=False", not st2.should_drift())
+            for _ in range(personality.DRIFT_EVERY_MESSAGES):
+                st2.on_message_added()
+            test("should_drift=True after N messages", st2.should_drift())
+            st2.on_message_added()
+            test("should_drift=False mid-cycle", not st2.should_drift())
+
+            # append_to_prompt languages
+            st3 = personality.PersonalityState(
+                cat_id="cat_prompt",
+                drifted_traits=["quirky", "loves socks"],
+            )
+            base = "You are a cat."
+            out_en = st3.append_to_prompt(base, "en")
+            test("append_to_prompt en contains quirks",
+                 "quirky" in out_en and "loves socks" in out_en)
+            out_fr = st3.append_to_prompt(base, "fr")
+            test("append_to_prompt fr contains quirks",
+                 "quirky" in out_fr)
+            # No quirks → unchanged
+            st4 = personality.PersonalityState(cat_id="cat_empty")
+            test("append_to_prompt with no quirks is identity",
+                 st4.append_to_prompt(base, "fr") == base)
+
+            # parse_drift_response
+            test("parse plain JSON",
+                 personality.parse_drift_response(
+                     '{"trait": "aime le thé"}') == "aime le thé")
+            test("parse fenced JSON",
+                 personality.parse_drift_response(
+                     '```json\n{"trait": "shy"}\n```') == "shy")
+            test("parse embedded JSON",
+                 personality.parse_drift_response(
+                     'Sure! {"trait": "wise"} there you go')
+                 == "wise")
+            test("parse empty → None",
+                 personality.parse_drift_response("") is None)
+            test("parse garbage → None",
+                 personality.parse_drift_response("this is not JSON at all\n"
+                                                  "and spans multiple lines") is None)
+        finally:
+            personality._CONFIG_SUBDIR = orig
+
+
 def test_monitors() -> None:
     print("\n[monitors]", flush=True)
     import random as _random
@@ -474,6 +573,7 @@ def test_import_smoke() -> None:
         "catai_linux.chat_backend",
         "catai_linux.voice",
         "catai_linux.drawing",
+        "catai_linux.personality",
         "catai_linux.monitors",
         "catai_linux.seasonal",
         "catai_linux.reactions",
@@ -721,6 +821,7 @@ def main() -> int:
     _run_section("x11_helpers", test_x11_helpers)
     _run_section("drawing", test_drawing)
     _run_section("theme", test_theme)
+    _run_section("personality", test_personality)
     _run_section("monitors", test_monitors)
     _run_section("seasonal", test_seasonal)
     _run_section("reactions", test_reactions)

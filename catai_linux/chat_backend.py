@@ -320,11 +320,22 @@ class MockChat(ChatBackend):
     )
     MOCK_POOL_GENERIC = '["Miaou ?", "Prrrt ?", "Hmm ?", "Quoi ?", "Oui ?", "Mrrp ?"]'
 
+    # Canned personality drift response — returned whenever the system
+    # prompt carries the [CATAI_PERSONALITY_DRIFT] marker. The trait is
+    # intentionally recognizable so e2e tests can assert that the drift
+    # pipeline actually ran end-to-end (not just the L10n fallback).
+    MOCK_DRIFT_RESPONSE = '{"trait": "aime parler de tests CI"}'
+
     def _stream_chunks(self):
         sys_prompt = next(
             (m["content"] for m in self.messages if m.get("role") == "system"),
             "",
         )
+        if "[CATAI_PERSONALITY_DRIFT]" in sys_prompt:
+            # Personality drift uses a JSON object (not array) — a single
+            # canned trait is enough to prove the pipeline works.
+            yield self.MOCK_DRIFT_RESPONSE
+            return
         if "[CATAI_REACTION_POOL]" in sys_prompt:
             # Pick a canned pool matching the scenario if we can.
             low = sys_prompt.lower()
