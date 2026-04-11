@@ -453,16 +453,33 @@ class SoundPlayer:
         with self._lock:
             self._active_pipeline = pipeline
         try:
-            log.warning("TTS: play %s", os.path.basename(path))
-            pipeline.set_state(Gst.State.PLAYING)
+            size = os.path.getsize(path) if os.path.exists(path) else -1
+            log.warning("TTS: play %s (%d bytes)", os.path.basename(path), size)
+            ret = pipeline.set_state(Gst.State.PLAYING)
+            log.warning("TTS: set_state(PLAYING) = %s", ret)
             bus = pipeline.get_bus()
-            msg = bus.timed_pop_filtered(
-                10 * Gst.SECOND,
-                Gst.MessageType.EOS | Gst.MessageType.ERROR,
-            )
-            if msg and msg.type == Gst.MessageType.ERROR:
-                err, debug = msg.parse_error()
-                log.warning("TTS: GStreamer error %s (%s)", err, debug)
+            # Drain ALL bus messages to a console log so we see state
+            # changes, warnings, tag events, and not just EOS/ERROR.
+            import time as _t
+            deadline = _t.monotonic() + 10.0
+            while _t.monotonic() < deadline:
+                msg = bus.timed_pop(500 * Gst.MSECOND)
+                if msg is None:
+                    continue
+                if msg.type == Gst.MessageType.EOS:
+                    log.warning("TTS: EOS")
+                    break
+                if msg.type == Gst.MessageType.ERROR:
+                    err, debug = msg.parse_error()
+                    log.warning("TTS: GStreamer error %s (%s)", err, debug)
+                    break
+                if msg.type == Gst.MessageType.WARNING:
+                    w, d = msg.parse_warning()
+                    log.warning("TTS: GStreamer warning %s (%s)", w, d)
+                elif msg.type == Gst.MessageType.STATE_CHANGED:
+                    if msg.src == pipeline:
+                        old, new, pending = msg.parse_state_changed()
+                        log.warning("TTS: state %s → %s", old, new)
         finally:
             try:
                 pipeline.set_state(Gst.State.NULL)
@@ -522,6 +539,7 @@ class SoundPlayer:
             with tempfile.NamedTemporaryFile(
                     suffix=".wav", delete=False) as tmp:
                 wav_path = tmp.name
+            byte_count = 0
             with wave.open(wav_path, "wb") as wav:
                 wav.setnchannels(1)
                 wav.setsampwidth(2)  # int16 → 2 bytes/sample
@@ -532,6 +550,9 @@ class SoundPlayer:
                     gen = voice.synthesize(text)
                 for chunk in gen:
                     wav.writeframes(chunk.audio_int16_bytes)
+                    byte_count += len(chunk.audio_int16_bytes)
+            log.warning("TTS: synth %r → %d bytes at %s",
+                        text[:40], byte_count, wav_path)
             self._play_file_blocking(wav_path)
         except Exception:
             log.warning("TTS: Piper synthesis failed", exc_info=True)

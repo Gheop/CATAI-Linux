@@ -1371,11 +1371,20 @@ class CatInstance:
                     and self.chat_response):
                 try:
                     chunks = _tts.split_cat_sounds(self.chat_response)
+                    cat_sounds_on = getattr(app, "_tts_cat_sounds_enabled", True)
+                    log.warning(
+                        "TTS: on_done cat=%s resp=%r → %d chunks, cat_sfx=%s",
+                        self.config.get("char_id"),
+                        self.chat_response[:60], len(chunks), cat_sounds_on,
+                    )
                     # Optional filter: drop cat-sound chunks when the
                     # user prefers text-only TTS. Keeps per-cat voice
                     # intact, just removes the audio interjections.
-                    if not getattr(app, "_tts_cat_sounds_enabled", True):
+                    if not cat_sounds_on:
                         chunks = [c for c in chunks if c.kind != "cat"]
+                    for i, c in enumerate(chunks):
+                        log.warning("TTS: chunk[%d] kind=%s content=%r",
+                                    i, c.kind, c.content[:40])
                     char_id = self.config.get("char_id", "cat01")
                     p = CATSET_PERSONALITIES.get(
                         char_id, CATSET_PERSONALITIES["cat01"])
