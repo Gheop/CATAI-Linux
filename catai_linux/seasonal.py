@@ -98,22 +98,26 @@ _SPARK = "\u2728"        # ✨
 
 def _draw_symbol(ctx, sym: str, x: float, y: float, size: int,
                  r: float, g: float, b: float, a: float) -> None:
-    """Minimal PangoCairo-free symbol draw — uses cairo.toy_font so the
-    seasonal module doesn't require Pango at import time. Emoji COLRv1
-    won't show here but the monochrome glyphs still render, which is
-    fine for particle effects."""
+    """Render a single symbol at (x, y) via PangoCairo. We need Pango
+    (not cairo's toy_font API) because every seasonal glyph — snowflake,
+    pumpkin, heart, leaf, petal, tree, sparkle — is outside the standard
+    monospace font and requires Noto Color Emoji fallback, which only
+    PangoCairo performs. Without it cairo silently omits the glyph and
+    the overlay renders nothing at all."""
     try:
-        import cairo
-    except ImportError:
+        import gi
+        gi.require_version("Pango", "1.0")
+        gi.require_version("PangoCairo", "1.0")
+        from gi.repository import Pango, PangoCairo
+    except (ImportError, ValueError):
         return
     ctx.save()
-    ctx.set_source_rgba(r, g, b, a)
-    ctx.select_font_face("monospace",
-                         cairo.FONT_SLANT_NORMAL,
-                         cairo.FONT_WEIGHT_NORMAL)
-    ctx.set_font_size(size)
     ctx.move_to(x, y)
-    ctx.show_text(sym)
+    ctx.set_source_rgba(r, g, b, a)
+    layout = PangoCairo.create_layout(ctx)
+    layout.set_font_description(Pango.FontDescription(f"sans {size}"))
+    layout.set_text(sym, -1)
+    PangoCairo.show_layout(ctx, layout)
     ctx.restore()
 
 
