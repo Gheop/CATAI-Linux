@@ -189,6 +189,53 @@ MIT
 
 ## Changelog
 
+### v0.7.0 — Mémoire et écosystème (2026-04-11)
+
+Two big themes: **cats now remember you across sessions** and the
+**ecosystem opens up** for community character packs + shell-script
+integration. Five PRs landed (#26-#30) closing issues #5 and #9.
+
+#### AI personality depth (#5)
+
+- **Long-term memory** (#29) — each cat keeps a per-cat sqlite store
+  of "memorable facts" at `~/.config/catai/memory.db`. Every 20 chat
+  exchanges, the AI extracts 0-3 facts about you from the recent
+  conversation. On every new message, the keyword-overlap retriever
+  finds the top 3 facts that share words with your input and injects
+  them into the system prompt as "things you remember about this
+  user". **No embeddings, no heavy ML deps** — pure stdlib + sqlite.
+- **Inter-cat gossip** (#30) — when two cats encounter each other on
+  the canvas (the existing love encounter trigger), they each pick
+  one random fact from their memory pile and add it to the other
+  cat's memory, prefixed with `<cat name> m'a raconté: `. Recipients
+  later surface that fact as second-hand knowledge. Effect: chat
+  with Mandarine for an hour → she remembers your name → she meets
+  Ombre → Ombre also knows.
+
+#### Dev & ecosystem (#9)
+
+- **Plugin API for character packs** (#28) — drop a folder under
+  `~/.local/share/catai/characters/<char_id>/` with `metadata.json`,
+  `personality.json`, and sprite directories, and CATAI auto-loads
+  it as a new playable cat at startup. Strict validation, silent
+  skip on errors. Lets contributors ship custom catset characters
+  without forking. New module `catai_linux/character_packs.py`.
+- **Scriptable hooks via Unix socket** (#27) — opt-in via
+  `api_enabled` in config.json. Opens
+  `$XDG_RUNTIME_DIR/catai.sock` (mode 0600, same-user only) with
+  curated commands: `status`, `list_cats`, `list_eggs`,
+  `meow <idx> [text]`, `egg <key>`, `notify`, `help`. Lets shell
+  scripts make cats react to external events:
+  ```bash
+  make test && echo 'egg meow_party' | nc -U $XDG_RUNTIME_DIR/catai.sock
+  ```
+- **Local metrics dashboard** (#26) — opt-in privacy-first stats
+  tracker at `~/.config/catai/stats.json`. Tracks chats sent, voice
+  recordings, eggs triggered, love encounters, kittens born, pet
+  sessions, per-cat counters. Settings panel shows live summary
+  with top petted cats and top eggs, plus a 'Reset stats' button.
+  **Zero telemetry**, never transmitted anywhere.
+
 ### v0.6.2 — Set and forget (2026-04-11)
 
 CATAI now updates itself. Once installed via pip, every launch
