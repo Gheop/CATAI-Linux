@@ -703,6 +703,98 @@ def test_tts() -> None:
          str(chunks))
 
 
+def test_metrics() -> None:
+    print("\n[metrics]", flush=True)
+    import tempfile
+    from catai_linux import metrics
+
+    # Sandbox: redirect STATS_FILE so we don't touch ~/.config
+    with tempfile.TemporaryDirectory() as td:
+        orig = metrics.STATS_FILE
+        metrics.STATS_FILE = os.path.join(td, "stats.json")
+        try:
+            # Disabled state: track is a no-op
+            metrics.set_enabled(False)
+            metrics.track("chat_sent", cat_id="cat01")
+            test("track is no-op when disabled",
+                 not os.path.exists(metrics.STATS_FILE))
+
+            # Enable + track
+            metrics.set_enabled(True)
+            metrics.track("chat_sent", cat_id="cat01")
+            metrics.track("chat_sent", cat_id="cat02")
+            metrics.track("chat_sent", cat_id="cat01")
+            data = metrics.load()
+            test("chats_sent counts to 3", data["chats_sent"] == 3)
+            test("per_cat[cat01].chats == 2",
+                 data["per_cat"].get("cat01", {}).get("chats") == 2)
+            test("per_cat[cat02].chats == 1",
+                 data["per_cat"].get("cat02", {}).get("chats") == 1)
+
+            # Easter eggs
+            metrics.track("egg_triggered", key="nyan")
+            metrics.track("egg_triggered", key="nyan")
+            metrics.track("egg_triggered", key="apocalypse")
+            data = metrics.load()
+            test("eggs nyan=2 apocalypse=1",
+                 data["easter_eggs_triggered"]
+                 == {"nyan": 2, "apocalypse": 1})
+
+            # Love encounters
+            metrics.track("love_encounter", kind="love")
+            metrics.track("love_encounter", kind="love")
+            metrics.track("love_encounter", kind="surprised")
+            metrics.track("love_encounter", kind="angry")
+            data = metrics.load()
+            test("love_encounters love=2 surprised=1 angry=1",
+                 data["love_encounters"]
+                 == {"love": 2, "surprised": 1, "angry": 1})
+
+            # Kitten + petting
+            metrics.track("kitten_born")
+            metrics.track("pet_session", cat_id="cat01")
+            metrics.track("pet_session", cat_id="cat01")
+            metrics.track("pet_session", cat_id="cat02")
+            data = metrics.load()
+            test("kittens_born == 1", data["kittens_born"] == 1)
+            test("pet_sessions == 3", data["pet_sessions"] == 3)
+            test("per_cat[cat01].petted == 2",
+                 data["per_cat"]["cat01"].get("petted") == 2)
+
+            # Top helpers
+            top_pet = metrics.top_cats(data, "petted", 3)
+            test("top_cats(petted) ranks cat01 first",
+                 top_pet[0][0] == "cat01")
+            top_eggs = metrics.top_eggs(data, 3)
+            test("top_eggs ranks nyan first",
+                 top_eggs[0] == ("nyan", 2))
+
+            # Unknown event is silently ignored
+            before = metrics.load()
+            metrics.track("unknown_event")
+            test("unknown event doesn't crash or change state",
+                 metrics.load()["chats_sent"] == before["chats_sent"])
+
+            # Corrupted stats file → reset to defaults on load
+            with open(metrics.STATS_FILE, "w") as f:
+                f.write("not json {")
+            recovered = metrics.load()
+            test("corrupted file → fresh defaults",
+                 isinstance(recovered, dict)
+                 and recovered.get("chats_sent") == 0)
+
+            # Reset wipes everything
+            metrics.reset()
+            data = metrics.load()
+            test("reset → chats_sent back to 0",
+                 data["chats_sent"] == 0)
+
+            metrics.set_enabled(False)
+        finally:
+            metrics.STATS_FILE = orig
+            metrics.set_enabled(False)
+
+
 def test_updater() -> None:
     print("\n[updater]", flush=True)
     from catai_linux import updater
@@ -788,6 +880,7 @@ def test_import_smoke() -> None:
         "catai_linux.seasonal",
         "catai_linux.tts",
         "catai_linux.updater",
+        "catai_linux.metrics",
         "catai_linux.reactions",
         "catai_linux.mood",
         "catai_linux.activity",
@@ -1038,6 +1131,7 @@ def main() -> int:
     _run_section("seasonal", test_seasonal)
     _run_section("tts", test_tts)
     _run_section("updater", test_updater)
+    _run_section("metrics", test_metrics)
     _run_section("reactions", test_reactions)
     _run_section("mood", test_mood)
     _run_section("activity", test_activity)

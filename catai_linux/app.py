@@ -674,6 +674,7 @@ from catai_linux import monitors as _monitors_mod  # noqa: E402
 from catai_linux import seasonal as _seasonal  # noqa: E402
 from catai_linux import tts as _tts  # noqa: E402
 from catai_linux import updater as _updater  # noqa: E402
+from catai_linux import metrics as _metrics  # noqa: E402
 
 
 from catai_linux.chat_backend import (  # noqa: E402
@@ -1292,6 +1293,8 @@ class CatInstance:
             return
         if self.chat_backend.is_streaming:
             return
+        # Local metrics: count this chat, no-op if user hasn't opted in
+        _metrics.track("chat_sent", cat_id=self.config.get("char_id"))
         # Lorem ipsum easter egg: a very long input (>500 chars) is not a real
         # message, the user is probably pasting / testing. Short-circuit to
         # the reading animation BEFORE hitting the backend (saves an API call
@@ -2057,6 +2060,78 @@ class SettingsWindow:
         check_btn.connect("clicked", _on_check_now)
         box.append(check_btn)
 
+        # ── Local metrics section (#9) ────────────────────────────────────
+        stats_label = Gtk.Label(label="YOUR STATS")
+        stats_label.add_css_class("pixel-label")
+        stats_label.set_margin_top(12)
+        stats_label.set_xalign(0)
+        box.append(stats_label)
+
+        stats_check = Gtk.CheckButton(
+            label="Track local stats (chats, eggs, pets, kittens)")
+        stats_check.set_active(getattr(self.app, "_metrics_enabled", False))
+        stats_check.add_css_class("pixel-label-small")
+
+        # Live summary label updated whenever the panel rebuilds
+        stats_summary = Gtk.Label()
+        stats_summary.set_xalign(0)
+        stats_summary.set_margin_start(8)
+        stats_summary.set_margin_top(2)
+        stats_summary.set_wrap(True)
+
+        def _refresh_summary():
+            if not getattr(self.app, "_metrics_enabled", False):
+                stats_summary.set_markup(
+                    '<span foreground="#888888" size="x-small">'
+                    '(enable above to start tracking)</span>'
+                )
+                return
+            data = _metrics.load()
+            top_pet = _metrics.top_cats(data, "petted", 3)
+            top_eggs = _metrics.top_eggs(data, 3)
+            lines = [
+                f"<b>Sessions:</b> {data['total_sessions']}  "
+                f"<b>Chats:</b> {data['chats_sent']}  "
+                f"<b>Voice:</b> {data['voice_recordings']}",
+                f"<b>Pets:</b> {data['pet_sessions']}  "
+                f"<b>Kittens born:</b> {data['kittens_born']}",
+            ]
+            le = data["love_encounters"]
+            lines.append(
+                f"<b>Loves:</b> 💕 {le['love']}  "
+                f"😲 {le['surprised']}  😾 {le['angry']}"
+            )
+            if top_pet:
+                lines.append("<b>Most petted:</b> " + ", ".join(
+                    f"{c} ({n})" for c, n in top_pet))
+            if top_eggs:
+                lines.append("<b>Top eggs:</b> " + ", ".join(
+                    f"{k} ({n})" for k, n in top_eggs))
+            stats_summary.set_markup(
+                '<span size="x-small">' + "\n".join(lines) + '</span>'
+            )
+
+        def _on_stats_toggled(btn):
+            self.app._metrics_enabled = btn.get_active()
+            _metrics.set_enabled(btn.get_active())
+            self.app._save_all()
+            _refresh_summary()
+
+        stats_check.connect("toggled", _on_stats_toggled)
+        box.append(stats_check)
+        box.append(stats_summary)
+        _refresh_summary()
+
+        reset_btn = Gtk.Button(label="Reset stats")
+        reset_btn.set_margin_top(2)
+        reset_btn.add_css_class("pixel-mic-btn")
+
+        def _on_reset_stats(btn):
+            _metrics.reset()
+            _refresh_summary()
+        reset_btn.connect("clicked", _on_reset_stats)
+        box.append(reset_btn)
+
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.set_child(box)
@@ -2351,6 +2426,7 @@ class LoveEncounter:
     def _decide_outcome(self):
         if not self.active:
             return False
+        _metrics.track("love_encounter", kind=self._outcome)
         if self._outcome == "love":
             # Both in love → birth!
             self._give_birth()
@@ -2410,6 +2486,7 @@ class LoveEncounter:
         kitten = self.app.cat_instances[-1]
         kitten.is_kitten = True
         kitten._birth_progress = 0.0
+        _metrics.track("kitten_born")
         # Place at midpoint between parents, slightly below
         kitten.x = (self.cat_a.x + self.cat_b.x) / 2 + (self.cat_a.display_w - kitten.display_w) / 2
         kitten.y = (self.cat_a.y + self.cat_b.y) / 2 + 20
@@ -2615,6 +2692,13 @@ class CatAIApp(Gtk.Application):
         self._auto_update_mode = cfg.get("auto_update", _updater.MODE_AUTO)
         if self._auto_update_mode not in _updater.ALL_MODES:
             self._auto_update_mode = _updater.MODE_AUTO
+        # Local metrics (#9). Off by default — privacy-first, opt-in
+        # via the settings checkbox. When enabled, the metrics module
+        # tracks chats sent, eggs triggered, love encounters, kittens
+        # born, and pet sessions in ~/.config/catai/stats.json. Never
+        # transmitted anywhere; pure self-curiosity feature.
+        self._metrics_enabled = bool(cfg.get("metrics_enabled", False))
+        _metrics.set_enabled(self._metrics_enabled)
 
         # Voice chat: enabled from --voice CLI flag OR config.json
         cli_voice = "--voice" in sys.argv
@@ -3936,6 +4020,7 @@ class CatAIApp(Gtk.Application):
                 self._voice_btn.set_sensitive(True)
             self._chat_entry.set_placeholder_text(L10n.s("talk"))
             if text and self._active_chat_cat:
+                _metrics.track("voice_recording")
                 # Show the transcribed text briefly AND submit immediately in
                 # parallel — the chat generation starts right away, the text
                 # stays visible ~1.5s as confirmation then clears.
@@ -4205,6 +4290,7 @@ class CatAIApp(Gtk.Application):
         clear the purr bubble."""
         if not getattr(cat, "_petting_active", False):
             return
+        _metrics.track("pet_session", cat_id=cat.config.get("char_id"))
         cat._petting_active = False
         # Stop the refresh timer
         if cat._meow_timer_id:
@@ -4242,6 +4328,11 @@ class CatAIApp(Gtk.Application):
         # Final mood save so we don't lose 0-60 s of stat drift
         try:
             self._save_all_moods()
+        except Exception:
+            pass
+        # Flush metrics session minutes — no-op if metrics disabled
+        try:
+            _metrics.shutdown()
         except Exception:
             pass
         for tid in self._timers:
@@ -4314,6 +4405,7 @@ class CatAIApp(Gtk.Application):
             "tts_enabled": getattr(self, "_tts_enabled", False),
             "tts_cat_sounds_enabled": getattr(self, "_tts_cat_sounds_enabled", True),
             "auto_update": getattr(self, "_auto_update_mode", _updater.MODE_AUTO),
+            "metrics_enabled": getattr(self, "_metrics_enabled", False),
         })
 
     def _render_tick(self):
@@ -4599,6 +4691,7 @@ class CatAIApp(Gtk.Application):
             try:
                 getattr(self, method_name)()
                 log.info("Easter egg triggered: %s", key)
+                _metrics.track("egg_triggered", key=key)
             except Exception:
                 log.exception("Easter egg %s failed", key)
         return False
