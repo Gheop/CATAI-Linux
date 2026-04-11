@@ -461,15 +461,17 @@ class SoundPlayer:
         ``stop()`` can send SIGTERM and move on synchronously.
         """
         import subprocess
+        import time as _t
         size = os.path.getsize(path) if os.path.exists(path) else -1
         uri = "file://" + os.path.abspath(path)
         log.warning("TTS: play %s (%d bytes)", os.path.basename(path), size)
+        t0 = _t.monotonic()
         try:
             proc = subprocess.Popen(
-                ["gst-launch-1.0", "-q", "playbin", f"uri={uri}"],
+                ["gst-launch-1.0", "playbin", f"uri={uri}"],
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
         except FileNotFoundError:
             log.warning("TTS: gst-launch-1.0 not found, can't play audio")
@@ -480,10 +482,6 @@ class SoundPlayer:
         with self._lock:
             self._active_proc = proc
         try:
-            # Poll the process with a cancel check every 100 ms so
-            # stop() can terminate mid-playback without waiting for
-            # the full duration of the chunk.
-            import time as _t
             while proc.poll() is None:
                 if self._cancel:
                     log.warning("TTS: playback cancelled")
@@ -496,7 +494,20 @@ class SoundPlayer:
                         pass
                     return
                 _t.sleep(0.1)
-            log.warning("TTS: play finished (exit %d)", proc.returncode)
+            elapsed = (_t.monotonic() - t0) * 1000
+            try:
+                stdout = proc.stdout.read() if proc.stdout else b""
+                stderr = proc.stderr.read() if proc.stderr else b""
+            except Exception:
+                stdout = stderr = b""
+            log.warning("TTS: play finished exit=%d elapsed=%.0fms",
+                        proc.returncode, elapsed)
+            if stderr:
+                log.warning("TTS: gst-launch stderr: %s",
+                            stderr.decode("utf-8", errors="replace")[:500])
+            if stdout and b"ERROR" in stdout.upper():
+                log.warning("TTS: gst-launch stdout: %s",
+                            stdout.decode("utf-8", errors="replace")[:500])
         finally:
             with self._lock:
                 if self._active_proc is proc:
