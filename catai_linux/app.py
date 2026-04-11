@@ -1371,6 +1371,11 @@ class CatInstance:
                     and self.chat_response):
                 try:
                     chunks = _tts.split_cat_sounds(self.chat_response)
+                    # Optional filter: drop cat-sound chunks when the
+                    # user prefers text-only TTS. Keeps per-cat voice
+                    # intact, just removes the audio interjections.
+                    if not getattr(app, "_tts_cat_sounds_enabled", True):
+                        chunks = [c for c in chunks if c.kind != "cat"]
                     char_id = self.config.get("char_id", "cat01")
                     p = CATSET_PERSONALITIES.get(
                         char_id, CATSET_PERSONALITIES["cat01"])
@@ -1934,6 +1939,20 @@ class SettingsWindow:
         tts_hint.set_margin_start(24)
         box.append(tts_hint)
 
+        # Sub-toggle: cat sound effects (on top of the Piper text voice)
+        cat_sounds_check = Gtk.CheckButton(
+            label="  ↳ Play cat sound effects (meow/purr/hiss)")
+        cat_sounds_check.set_active(
+            getattr(self.app, "_tts_cat_sounds_enabled", True))
+        cat_sounds_check.add_css_class("pixel-label-small")
+        cat_sounds_check.set_margin_start(16)
+
+        def _on_cat_sounds_toggled(btn):
+            self.app._tts_cat_sounds_enabled = btn.get_active()
+            self.app._save_all()
+        cat_sounds_check.connect("toggled", _on_cat_sounds_toggled)
+        box.append(cat_sounds_check)
+
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.set_child(box)
@@ -2455,6 +2474,12 @@ class CatAIApp(Gtk.Application):
         # chat bubble. The per-cat toggle is the primary UI; the app
         # flag is a global kill switch.
         self._tts_enabled = cfg.get("tts_enabled", False)
+        # Cat sound effects in TTS output. When True (default) the
+        # splitter's cat chunks are played via the CC0 WAV samples.
+        # When False only Piper text chunks play — some users find the
+        # text-only flow more intelligible since the cat samples add
+        # latency between phrases.
+        self._tts_cat_sounds_enabled = cfg.get("tts_cat_sounds_enabled", True)
 
         # Voice chat: enabled from --voice CLI flag OR config.json
         cli_voice = "--voice" in sys.argv
@@ -4094,6 +4119,7 @@ class CatAIApp(Gtk.Application):
             "voice_enabled": self._voice_enabled,
             "voice_model": getattr(self, "_voice_model", "base"),
             "tts_enabled": getattr(self, "_tts_enabled", False),
+            "tts_cat_sounds_enabled": getattr(self, "_tts_cat_sounds_enabled", True),
         })
 
     def _render_tick(self):
