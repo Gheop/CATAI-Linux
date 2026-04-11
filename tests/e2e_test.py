@@ -605,8 +605,25 @@ def run_tests():
     test("afk_sleep=False after force_afk off",
          "afk_sleep=False" in resp, resp)
 
-    # ── T15d: Multi-monitor awareness ─────────────────────
-    print("\n[T15d] Multi-monitor awareness", flush=True)
+    # ── T15d: Theme sync (dark/light) ─────────────────────
+    print("\n[T15d] Theme sync", flush=True)
+    resp = send_cmd("theme")
+    test("theme state query", resp.startswith("OK dark="), resp)
+    resp = send_cmd("theme dark")
+    test("theme dark accepted", resp.startswith("OK dark=True"), resp)
+    time.sleep(0.2)
+    resp = send_cmd("theme")
+    test("theme reports dark after flip", "dark=True" in resp, resp)
+    resp = send_cmd("theme light")
+    test("theme light accepted", resp.startswith("OK dark=False"), resp)
+    time.sleep(0.2)
+    resp = send_cmd("theme")
+    test("theme reports light after flip", "dark=False" in resp, resp)
+    resp = send_cmd("theme bogus")
+    test("theme rejects bogus value", resp.startswith("ERR"), resp)
+
+    # ── T15e: Multi-monitor awareness ─────────────────────
+    print("\n[T15e] Multi-monitor awareness", flush=True)
     resp = send_cmd("monitors")
     test("monitors query returns OK",
          resp.startswith("OK count=") and "rects=" in resp, resp)

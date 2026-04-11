@@ -265,6 +265,56 @@ def test_drawing() -> None:
     except Exception as e:
         test("draw_birth_sparkles runs (progress 0, 0.5, 1)", False, str(e))
 
+    # THEME palette + set_theme() swaps in place so existing references
+    # remain valid (i.e. the dict is the *same* dict, just with new values).
+    theme_ref = drawing.THEME
+    drawing.set_theme(dark=False)
+    light_bg = drawing.THEME["bubble_bg"]
+    drawing.set_theme(dark=True)
+    dark_bg = drawing.THEME["bubble_bg"]
+    test("set_theme mutates in place (same dict object)",
+         drawing.THEME is theme_ref)
+    test("set_theme(dark=True) changes bubble_bg",
+         light_bg != dark_bg,
+         f"light={light_bg} dark={dark_bg}")
+    test("dark theme bubble_bg is darker than light",
+         sum(dark_bg[:3]) < sum(light_bg[:3]))
+    test("dark theme bubble_text is brighter than light",
+         sum(drawing.DARK_THEME["bubble_text"][:3])
+         > sum(drawing.LIGHT_THEME["bubble_text"][:3]))
+    # Draw after switching to dark to confirm nothing crashes with the new palette
+    try:
+        drawing.draw_meow_bubble(ctx, "Dark~", 100, 100, 80, 80)
+        drawing.draw_chat_bubble(ctx, "Dark bubble", 100, 100, 80, 80)
+        drawing.draw_context_menu(ctx, 10, 10, "Settings", "Quit")
+        test("drawing under dark theme doesn't crash", True)
+    except Exception as e:
+        test("drawing under dark theme doesn't crash", False, str(e))
+    # Reset for the rest of the suite
+    drawing.set_theme(dark=False)
+
+
+def test_theme() -> None:
+    print("\n[theme]", flush=True)
+    from catai_linux import theme
+
+    # is_dark_mode returns a bool regardless of environment
+    result = theme.is_dark_mode()
+    test("is_dark_mode returns bool", isinstance(result, bool), f"{result!r}")
+
+    # With a fake gsettings PATH that can't find it, we should safely get False
+    import os
+    orig_path = os.environ.get("PATH", "")
+    try:
+        os.environ["PATH"] = "/nonexistent"
+        # shutil.which is called inside — clear cache
+        import shutil
+        shutil.which.cache_clear() if hasattr(shutil.which, "cache_clear") else None
+        test("is_dark_mode = False when gsettings missing",
+             theme.is_dark_mode() is False)
+    finally:
+        os.environ["PATH"] = orig_path
+
 
 def test_monitors() -> None:
     print("\n[monitors]", flush=True)
@@ -598,6 +648,7 @@ def main() -> int:
     _run_section("chat_backend", test_chat_backend)
     _run_section("x11_helpers", test_x11_helpers)
     _run_section("drawing", test_drawing)
+    _run_section("theme", test_theme)
     _run_section("monitors", test_monitors)
     _run_section("reactions", test_reactions)
     _run_section("mood", test_mood)
