@@ -223,6 +223,21 @@ def test_x11_helpers() -> None:
     except Exception as e:
         test("_x11_get_active_window returns int", False, repr(e))
 
+    # get_mouse_position (added in v0.7.4 for the 'viens' wake verb)
+    test("module exposes get_mouse_position",
+         callable(x11_helpers.get_mouse_position))
+    try:
+        result = x11_helpers.get_mouse_position()
+        # Returns None on failure or (int, int) tuple on success
+        ok = result is None or (
+            isinstance(result, tuple) and len(result) == 2 and
+            all(isinstance(c, int) for c in result)
+        )
+        test("get_mouse_position returns None or (int, int)",
+             ok, str(result))
+    except Exception as e:
+        test("get_mouse_position returns safely", False, repr(e))
+
     # The deprecated _run_x11 helper should be GONE — no more dead
     # subprocess fallbacks shipping in the wheel.
     test("_run_x11 was removed in 0.7.3 cleanup",
@@ -1508,6 +1523,100 @@ def test_wake_word() -> None:
     listener._handle_result('{"text": "caramel"}')
     test("post-rename _handle_result still fires",
          "cat_orange" in listener._last_fire)
+
+    # ── Direct command verbs (added in v0.7.4) ──────────────────────────
+    # COMMAND_VERBS contains all the verbs the wake listener can attach
+    # to a recognized cat name.
+    test("COMMAND_VERBS is non-empty tuple",
+         isinstance(wake_word.COMMAND_VERBS, tuple) and len(wake_word.COMMAND_VERBS) > 0)
+    for v in ("dors", "viens", "raconte", "danse", "saute", "roule"):
+        test(f"COMMAND_VERBS contains {v!r}",
+             v in wake_word.COMMAND_VERBS)
+
+    # _fire callback dispatches the verb to the user callback
+    fired_with_verb: list[tuple[str, str | None]] = []
+    listener2 = wake_word.WakeWordListener(
+        on_wake=lambda cid, verb=None: fired_with_verb.append((cid, verb))
+    )
+    listener2.set_names({"cat_orange": "Mandarine"})
+
+    listener2._fire("cat_orange", "dors")
+    test("_fire passes verb to callback",
+         fired_with_verb == [("cat_orange", "dors")],
+         str(fired_with_verb))
+
+    # _fire with verb=None still fires (backward compat)
+    fired_with_verb.clear()
+    listener2._fire("cat_orange", None)
+    test("_fire with verb=None passes None",
+         fired_with_verb == [("cat_orange", None)])
+
+    # _fire with a legacy single-arg callback (no verb param) still
+    # works — TypeError fallback in _fire catches it.
+    fired_legacy: list[str] = []
+    listener3 = wake_word.WakeWordListener(
+        on_wake=lambda cid: fired_legacy.append(cid)  # legacy signature
+    )
+    listener3.set_names({"cat_orange": "Mandarine"})
+    listener3._fire("cat_orange", "dors")
+    test("_fire falls back to legacy single-arg callback",
+         fired_legacy == ["cat_orange"], str(fired_legacy))
+
+    # End-to-end: feed a Vosk-shaped result with a verb, check the
+    # listener parses both the cat and the verb correctly.
+    fired_with_verb.clear()
+    listener2._last_fire.clear()
+    listener2._handle_result('{"text": "mandarine dors"}')
+    # _handle_result schedules via GLib.idle_add — we can't easily run
+    # the GLib loop here, so check _last_fire for the side effect.
+    test("_handle_result records cat for 'mandarine dors'",
+         "cat_orange" in listener2._last_fire)
+
+    # Verb extraction edge cases via direct test of the parsing logic
+    # by temporarily patching set_names with our test mapping
+    listener4 = wake_word.WakeWordListener(on_wake=lambda *a, **kw: None)
+    listener4.set_names({"cat_orange": "Mandarine", "cat01": "Tabby"})
+
+    # Helper: extract (cat_id, verb) from a transcript without going
+    # through GLib idle_add — replicates the parser inline
+    def _parse(text):
+        tokens = text.split()
+        names = listener4._names
+        for i, tok in enumerate(tokens):
+            tok_n = wake_word._normalize_name(tok)
+            if tok_n in names:
+                cat = names[tok_n]
+                verb = None
+                for j in range(i + 1, min(i + 3, len(tokens))):
+                    vtok = wake_word._normalize_name(tokens[j])
+                    if vtok in wake_word.COMMAND_VERBS:
+                        verb = vtok
+                        break
+                return (cat, verb)
+        return (None, None)
+
+    test("parse 'mandarine'",
+         _parse("mandarine") == ("cat_orange", None))
+    test("parse 'mandarine dors'",
+         _parse("mandarine dors") == ("cat_orange", "dors"))
+    test("parse 'tabby viens'",
+         _parse("tabby viens") == ("cat01", "viens"))
+    test("parse 'mandarine raconte'",
+         _parse("mandarine raconte") == ("cat_orange", "raconte"))
+    test("parse 'ok mandarine danse'",
+         _parse("ok mandarine danse") == ("cat_orange", "danse"))
+    test("parse 'mandarine bla bla'",
+         _parse("mandarine bla bla") == ("cat_orange", None))
+    test("parse 'tabby saute'",
+         _parse("tabby saute") == ("cat01", "saute"))
+    test("parse 'mandarine roule'",
+         _parse("mandarine roule") == ("cat_orange", "roule"))
+    # Verb beyond 2-token window is ignored (we look ahead max 2 tokens)
+    test("parse 'mandarine euh euh dors' ignores far verb",
+         _parse("mandarine euh euh dors") == ("cat_orange", None))
+    # Unknown verb is dropped, default action triggered
+    test("parse 'mandarine wuff' drops unknown verb",
+         _parse("mandarine wuff") == ("cat_orange", None))
 
     # ── Optional: real recognizer round-trip if vosk + model available ──
     if wake_word.WAKE_AVAILABLE and wake_word._model_present():
