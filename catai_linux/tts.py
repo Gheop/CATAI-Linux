@@ -340,7 +340,7 @@ class SoundPlayer:
         try:
             from piper import PiperVoice  # type: ignore
         except ImportError:
-            log.warning("TTS: piper-tts not installed — text chunks silent")
+            log.debug("TTS: piper-tts not installed — text chunks silent")
             self._voice = False
             return None
         if not self._ensure_voice_files():
@@ -372,7 +372,7 @@ class SoundPlayer:
             self._cancel = False
             self._queue.append((chunks, voice_params))
             need_worker = self._worker is None or not self._worker.is_alive()
-        log.warning("TTS: queued %d chunks, need_worker=%s, queue_len=%d",
+        log.debug("TTS: queued %d chunks, need_worker=%s, queue_len=%d",
                   len(chunks), need_worker, len(self._queue))
         if need_worker:
             self._worker = threading.Thread(
@@ -406,17 +406,17 @@ class SoundPlayer:
         if worker is not None and worker.is_alive():
             worker.join(timeout=2.0)
             if worker.is_alive():
-                log.warning("TTS: stop() worker still alive after 2 s")
-        log.warning("TTS: stop() — queue cleared, subprocess killed, worker joined")
+                log.debug("TTS: stop() worker still alive after 2 s")
+        log.debug("TTS: stop() — queue cleared, subprocess killed, worker joined")
 
     # ── Worker loop ──────────────────────────────────────────────────────
 
     def _drain_queue(self) -> None:
-        log.warning("TTS: worker thread start")
+        log.debug("TTS: worker thread start")
         while True:
             with self._lock:
                 if not self._queue or self._cancel:
-                    log.warning("TTS: worker exit (empty=%s, cancel=%s)",
+                    log.debug("TTS: worker exit (empty=%s, cancel=%s)",
                               not self._queue, self._cancel)
                     return
                 chunks, voice_params = self._queue.pop(0)
@@ -436,7 +436,7 @@ class SoundPlayer:
     def _play_cat(self, pool_key: str) -> None:
         path = _resolve_sample(pool_key)
         if path is None:
-            log.warning("TTS: no sample for pool %r", pool_key)
+            log.debug("TTS: no sample for pool %r", pool_key)
             return
         self._play_file_blocking(path)
 
@@ -464,7 +464,7 @@ class SoundPlayer:
         import time as _t
         size = os.path.getsize(path) if os.path.exists(path) else -1
         uri = "file://" + os.path.abspath(path)
-        log.warning("TTS: play %s (%d bytes)", os.path.basename(path), size)
+        log.debug("TTS: play %s (%d bytes)", os.path.basename(path), size)
         t0 = _t.monotonic()
         try:
             proc = subprocess.Popen(
@@ -474,7 +474,7 @@ class SoundPlayer:
                 stderr=subprocess.PIPE,
             )
         except FileNotFoundError:
-            log.warning("TTS: gst-launch-1.0 not found, can't play audio")
+            log.debug("TTS: gst-launch-1.0 not found, can't play audio")
             return
         except Exception:
             log.exception("TTS: subprocess spawn failed")
@@ -484,7 +484,7 @@ class SoundPlayer:
         try:
             while proc.poll() is None:
                 if self._cancel:
-                    log.warning("TTS: playback cancelled")
+                    log.debug("TTS: playback cancelled")
                     try:
                         proc.terminate()
                         proc.wait(timeout=1.0)
@@ -500,13 +500,13 @@ class SoundPlayer:
                 stderr = proc.stderr.read() if proc.stderr else b""
             except Exception:
                 stdout = stderr = b""
-            log.warning("TTS: play finished exit=%d elapsed=%.0fms",
+            log.debug("TTS: play finished exit=%d elapsed=%.0fms",
                         proc.returncode, elapsed)
             if stderr:
-                log.warning("TTS: gst-launch stderr: %s",
+                log.debug("TTS: gst-launch stderr: %s",
                             stderr.decode("utf-8", errors="replace")[:500])
             if stdout and b"ERROR" in stdout.upper():
-                log.warning("TTS: gst-launch stdout: %s",
+                log.debug("TTS: gst-launch stdout: %s",
                             stdout.decode("utf-8", errors="replace")[:500])
         finally:
             with self._lock:
@@ -537,7 +537,7 @@ class SoundPlayer:
         # audio. Skip those chunks to avoid playing empty WAV files
         # through GStreamer for no benefit.
         if not any(c.isalpha() for c in text):
-            log.warning("TTS: skip punctuation-only chunk %r", text)
+            log.debug("TTS: skip punctuation-only chunk %r", text)
             return
         voice = self._get_voice()
         if voice is None:
@@ -556,7 +556,7 @@ class SoundPlayer:
                     noise_w_scale=voice_params.get("noise_w_scale"),
                 )
             except Exception:
-                log.warning("TTS: couldn't build SynthesisConfig", exc_info=True)
+                log.debug("TTS: couldn't build SynthesisConfig", exc_info=True)
                 syn_config = None
         import tempfile
         import wave
@@ -577,11 +577,11 @@ class SoundPlayer:
                 for chunk in gen:
                     wav.writeframes(chunk.audio_int16_bytes)
                     byte_count += len(chunk.audio_int16_bytes)
-            log.warning("TTS: synth %r → %d bytes at %s",
+            log.debug("TTS: synth %r → %d bytes at %s",
                         text[:40], byte_count, wav_path)
             self._play_file_blocking(wav_path)
         except Exception:
-            log.warning("TTS: Piper synthesis failed", exc_info=True)
+            log.debug("TTS: Piper synthesis failed", exc_info=True)
         finally:
             if wav_path:
                 try:
