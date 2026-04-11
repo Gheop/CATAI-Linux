@@ -52,15 +52,41 @@ def _find_claude_cli() -> str | None:
 
 
 def _refresh_claude_token() -> bool:
-    """Force Claude Code to refresh the OAuth token by calling it."""
+    """Force Claude Code to refresh the OAuth token by calling it.
+
+    **CRITICAL** : we run ``claude -p ok`` in a *headless-only* env
+    (DISPLAY / WAYLAND_DISPLAY / BROWSER stripped, BROWSER=/bin/false
+    set) so that if the **refresh token is also expired** (not just
+    the access token), the CLI **cannot pop a browser window** to
+    ask the user to re-authenticate.
+
+    Without this guard, every background chat attempt — encounters,
+    reactions, drift, memory extraction — could spontaneously open a
+    Claude.ai marketing/login page out of nowhere, miles from any
+    user action. Extremely surprising and slightly creepy.
+
+    When refresh genuinely fails the chat path raises ``err_auth``
+    and the user gets a polite bubble. They can re-auth manually
+    by running ``claude -p ok`` from a real terminal whenever they
+    want."""
     cli = _find_claude_cli()
     if not cli:
         log.debug("Claude CLI not found, cannot refresh token")
         return False
     try:
         log.debug("Refreshing Claude token via %s...", cli)
-        subprocess.run([cli, "-p", "ok", "--output-format", "text"],
-                       capture_output=True, timeout=30)
+        # Strip GUI env so the CLI can't fork a browser even if its
+        # internal refresh fails. Belt + suspenders: BROWSER=/bin/false
+        # so xdg-open / sensible-browser fall through to a no-op.
+        env = {
+            k: v for k, v in os.environ.items()
+            if k not in ("DISPLAY", "WAYLAND_DISPLAY", "BROWSER")
+        }
+        env["BROWSER"] = "/bin/false"
+        subprocess.run(
+            [cli, "-p", "ok", "--output-format", "text"],
+            capture_output=True, timeout=30, env=env,
+        )
         return True
     except Exception as e:
         log.debug("Token refresh failed: %s", e)

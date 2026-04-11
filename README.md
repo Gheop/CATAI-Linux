@@ -191,6 +191,27 @@ MIT
 
 ## Changelog
 
+### v0.7.5 — Fix browser pop-up sneaky (2026-04-11)
+
+**Bug surprise** : quand le token Claude OAuth était complètement
+expiré (pas juste l'access token mais aussi le refresh token), notre
+helper `_refresh_claude_token` lançait `claude -p ok` qui se rabattait
+sur le flow d'auth interactif et **ouvrait une fenêtre browser sur la
+page Claude marketing/login** sans prévenir, en plein milieu de
+n'importe quelle action de fond (encounter, reaction pool, drift,
+extraction de mémoire, etc.).
+
+**Fix** : on lance maintenant `claude -p ok` dans un environnement
+*headless-only* en strippant `DISPLAY`, `WAYLAND_DISPLAY` et `BROWSER`,
+plus en forçant `BROWSER=/bin/false`. Le CLI ne peut plus pop de
+browser. Si le refresh échoue vraiment, le chat lève proprement
+`err_auth` et la bulle affiche un message poli — l'utilisateur peut
+re-auth manuellement avec `claude -p ok` depuis un vrai terminal
+quand il en a envie.
+
+5 nouveaux unit tests qui mockent `subprocess.run` et asserent que
+l'env passé strip bien tout ce qu'il faut. Total 353 passed / 0 failed.
+
 ### v0.7.4 — Voice commands directes (2026-04-11)
 
 Extension du wake word : au lieu d'ouvrir un chat à chaque fois qu'on

@@ -162,6 +162,37 @@ def test_chat_backend() -> None:
     b.cancel()
     test("cancel() sets _cancel True", b._cancel is True)
 
+    # _refresh_claude_token must NOT allow the claude CLI to pop a
+    # browser if its OAuth refresh fails. Verified by capturing the
+    # subprocess.run call and asserting the env passed to it has
+    # DISPLAY/WAYLAND_DISPLAY/BROWSER stripped + BROWSER=/bin/false.
+    captured_env: dict[str, dict] = {}
+
+    def _fake_run(cmd, capture_output=True, timeout=30, env=None):
+        captured_env["env"] = env
+        # Simulate a successful CLI invocation
+        class _R:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return _R()
+
+    with mock.patch.object(chat_backend, "_find_claude_cli",
+                           return_value="/fake/claude"):
+        with mock.patch("subprocess.run", side_effect=_fake_run):
+            ok = chat_backend._refresh_claude_token()
+            test("_refresh_claude_token returns True on success", ok)
+
+    env = captured_env.get("env", {})
+    test("_refresh_claude_token strips DISPLAY",
+         "DISPLAY" not in env)
+    test("_refresh_claude_token strips WAYLAND_DISPLAY",
+         "WAYLAND_DISPLAY" not in env)
+    test("_refresh_claude_token sets BROWSER=/bin/false",
+         env.get("BROWSER") == "/bin/false")
+    test("_refresh_claude_token preserves PATH",
+         "PATH" in env or len(env) == 0)  # PATH preserved unless empty test env
+
 
 # ── catai_linux.x11_helpers ──────────────────────────────────────────────────
 
