@@ -703,6 +703,75 @@ def test_tts() -> None:
          str(chunks))
 
 
+def test_updater() -> None:
+    print("\n[updater]", flush=True)
+    from catai_linux import updater
+
+    # ── parse_version
+    test("parse '0.6.1'",
+         updater.parse_version("0.6.1") == (0, 6, 1, ""))
+    test("parse 'v0.6.1' (with v prefix)",
+         updater.parse_version("v0.6.1") == (0, 6, 1, ""))
+    test("parse '0.6.1-beta' suffix",
+         updater.parse_version("0.6.1-beta") == (0, 6, 1, "beta"))
+    test("parse 'v1.2.3+dev' build metadata",
+         updater.parse_version("v1.2.3+dev") == (1, 2, 3, "dev"))
+    test("parse 'foo' returns None",
+         updater.parse_version("foo") is None)
+    test("parse '' returns None",
+         updater.parse_version("") is None)
+
+    # ── compare_versions
+    cmp = updater.compare_versions
+    test("0.6.1 > 0.6.0", cmp("0.6.1", "0.6.0") == 1)
+    test("0.6.0 > 0.5.9", cmp("0.6.0", "0.5.9") == 1)
+    test("0.6.1 == 0.6.1", cmp("0.6.1", "0.6.1") == 0)
+    test("v0.6.1 == 0.6.1 (v prefix ignored)",
+         cmp("v0.6.1", "0.6.1") == 0)
+    test("0.6.0 < v0.6.1",
+         cmp("0.6.0", "v0.6.1") == -1)
+    test("1.0.0 > 0.99.99",
+         cmp("1.0.0", "0.99.99") == 1)
+    test("0.6.0-beta < 0.6.0 (pre-release lower)",
+         cmp("0.6.0-beta", "0.6.0") == -1)
+    test("0.6.0-alpha < 0.6.0-beta",
+         cmp("0.6.0-alpha", "0.6.0-beta") == -1)
+    test("invalid → 0 (treat as equal, no phantom upgrade)",
+         cmp("foo", "bar") == 0)
+
+    # ── modes
+    test("MODE_AUTO is 'auto'", updater.MODE_AUTO == "auto")
+    test("MODE_NOTIFY is 'notify'", updater.MODE_NOTIFY == "notify")
+    test("MODE_OFF is 'off'", updater.MODE_OFF == "off")
+    test("ALL_MODES has all 3 modes", len(updater.ALL_MODES) == 3)
+
+    # ── cache I/O round-trip in a tempdir so we don't touch ~/.config
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        orig_cache = updater.CACHE_FILE
+        updater.CACHE_FILE = os.path.join(td, "update_cache.json")
+        try:
+            test("read missing cache returns None",
+                 updater._read_cache() is None)
+            updater._write_cache({"ts": 12345, "tag": "v0.6.1"})
+            cached = updater._read_cache()
+            test("write + read cache round-trip",
+                 cached == {"ts": 12345, "tag": "v0.6.1"})
+        finally:
+            updater.CACHE_FILE = orig_cache
+
+    # ── get_installed_version
+    # Returns None or a string — never raises
+    iv = updater.get_installed_version()
+    test("get_installed_version returns str or None",
+         iv is None or isinstance(iv, str))
+
+    # ── _has_voice_extra
+    # Returns a bool, never raises
+    test("_has_voice_extra returns bool",
+         isinstance(updater._has_voice_extra(), bool))
+
+
 # ── catai_linux (package smoke test) ─────────────────────────────────────────
 
 def test_import_smoke() -> None:
@@ -718,6 +787,7 @@ def test_import_smoke() -> None:
         "catai_linux.monitors",
         "catai_linux.seasonal",
         "catai_linux.tts",
+        "catai_linux.updater",
         "catai_linux.reactions",
         "catai_linux.mood",
         "catai_linux.activity",
@@ -967,6 +1037,7 @@ def main() -> int:
     _run_section("monitors", test_monitors)
     _run_section("seasonal", test_seasonal)
     _run_section("tts", test_tts)
+    _run_section("updater", test_updater)
     _run_section("reactions", test_reactions)
     _run_section("mood", test_mood)
     _run_section("activity", test_activity)

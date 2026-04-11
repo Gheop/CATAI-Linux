@@ -673,6 +673,7 @@ from catai_linux import personality as _personality  # noqa: E402
 from catai_linux import monitors as _monitors_mod  # noqa: E402
 from catai_linux import seasonal as _seasonal  # noqa: E402
 from catai_linux import tts as _tts  # noqa: E402
+from catai_linux import updater as _updater  # noqa: E402
 
 
 from catai_linux.chat_backend import (  # noqa: E402
@@ -1986,6 +1987,76 @@ class SettingsWindow:
         cat_sounds_check.connect("toggled", _on_cat_sounds_toggled)
         box.append(cat_sounds_check)
 
+        # ── Auto-update section (#24) ─────────────────────────────────────
+        update_label = Gtk.Label(label="UPDATES")
+        update_label.add_css_class("pixel-label")
+        update_label.set_margin_top(12)
+        update_label.set_xalign(0)
+        box.append(update_label)
+
+        installed_ver = _updater.get_installed_version() or "dev"
+        ver_label = Gtk.Label()
+        ver_label.set_markup(
+            f'<span foreground="#888888" size="x-small">'
+            f'Installed: v{installed_ver}</span>'
+        )
+        ver_label.set_xalign(0)
+        ver_label.set_margin_start(8)
+        box.append(ver_label)
+
+        update_drop = Gtk.DropDown()
+        update_drop.set_model(Gtk.StringList.new([
+            "Auto-install on launch (recommended)",
+            "Notify only",
+            "Off",
+        ]))
+        update_drop.set_margin_top(4)
+        mode_to_idx = {
+            _updater.MODE_AUTO: 0,
+            _updater.MODE_NOTIFY: 1,
+            _updater.MODE_OFF: 2,
+        }
+        idx_to_mode = [_updater.MODE_AUTO, _updater.MODE_NOTIFY, _updater.MODE_OFF]
+        cur_mode = getattr(self.app, "_auto_update_mode", _updater.MODE_AUTO)
+        update_drop.set_selected(mode_to_idx.get(cur_mode, 0))
+
+        def _on_update_mode_changed(drop, _param):
+            idx = drop.get_selected()
+            if 0 <= idx < len(idx_to_mode):
+                self.app._auto_update_mode = idx_to_mode[idx]
+                self.app._save_all()
+        update_drop.connect("notify::selected", _on_update_mode_changed)
+        box.append(update_drop)
+
+        check_btn = Gtk.Button(label="Check now")
+        check_btn.set_margin_top(4)
+        check_btn.add_css_class("pixel-mic-btn")
+
+        def _on_check_now(btn):
+            # Force a fresh GitHub fetch (bypass the 1 h cache) and run
+            # the same worker logic in a daemon thread so the UI stays
+            # responsive while pip downloads run.
+            def _runner():
+                result = _updater.check_for_update(force=True)
+                if result is None:
+                    GLib.idle_add(
+                        self.app._meow_first_cat,
+                        f"À jour! v{installed_ver}")
+                    return
+                old, new = result
+                if self.app._auto_update_mode == _updater.MODE_AUTO:
+                    ok = _updater.install_update_blocking()
+                    if ok:
+                        GLib.idle_add(self.app._on_update_installed, old, new)
+                    else:
+                        GLib.idle_add(self.app._on_update_failed, new)
+                else:
+                    GLib.idle_add(self.app._on_update_available, old, new)
+            threading.Thread(target=_runner, daemon=True).start()
+
+        check_btn.connect("clicked", _on_check_now)
+        box.append(check_btn)
+
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.set_child(box)
@@ -2537,6 +2608,13 @@ class CatAIApp(Gtk.Application):
         # text-only flow more intelligible since the cat samples add
         # latency between phrases.
         self._tts_cat_sounds_enabled = cfg.get("tts_cat_sounds_enabled", True)
+        # Auto-update mode (issue #24). Default 'auto' so once installed
+        # CATAI keeps itself current without manual intervention. Set to
+        # 'notify' to just show a meow bubble when an update lands, or
+        # 'off' to skip the GitHub check entirely.
+        self._auto_update_mode = cfg.get("auto_update", _updater.MODE_AUTO)
+        if self._auto_update_mode not in _updater.ALL_MODES:
+            self._auto_update_mode = _updater.MODE_AUTO
 
         # Voice chat: enabled from --voice CLI flag OR config.json
         cli_voice = "--voice" in sys.argv
@@ -2640,6 +2718,15 @@ class CatAIApp(Gtk.Application):
         if self._seasonal_enabled and self._seasonal_duration_sec > 0:
             GLib.timeout_add(self._seasonal_duration_sec * 1000,
                              self._seasonal_auto_dismiss)
+
+        # Auto-update background check (issue #24). Spawn a daemon
+        # thread that checks GitHub for a new release ~5 s after
+        # startup so it doesn't compete with sprite loading. The
+        # thread either silently installs (auto mode) and shows a
+        # meow bubble, or just shows the bubble (notify mode).
+        if self._auto_update_mode != _updater.MODE_OFF:
+            threading.Thread(
+                target=self._auto_update_worker, daemon=True).start()
 
         # Test socket for E2E tests (--test-socket flag)
         if "--test-socket" in sys.argv:
@@ -4226,6 +4313,7 @@ class CatAIApp(Gtk.Application):
             "voice_model": getattr(self, "_voice_model", "base"),
             "tts_enabled": getattr(self, "_tts_enabled", False),
             "tts_cat_sounds_enabled": getattr(self, "_tts_cat_sounds_enabled", True),
+            "auto_update": getattr(self, "_auto_update_mode", _updater.MODE_AUTO),
         })
 
     def _render_tick(self):
@@ -5286,6 +5374,72 @@ class CatAIApp(Gtk.Application):
             return "_NET_WM_STATE_FULLSCREEN" in r.stdout
         except Exception:
             return False
+
+    # ── Auto-update (#24) ────────────────────────────────────────────────
+
+    def _auto_update_worker(self):
+        """Background thread: poll GitHub releases, optionally install,
+        then bubble-notify the user from the GTK main thread."""
+        try:
+            time.sleep(5)  # let the app finish booting before any net call
+            result = _updater.check_for_update()
+            if result is None:
+                log.debug("updater: no update available")
+                return
+            installed, latest = result
+            log.info("updater: %s available (installed=%s, mode=%s)",
+                     latest, installed, self._auto_update_mode)
+            if self._auto_update_mode == _updater.MODE_AUTO:
+                ok = _updater.install_update_blocking()
+                if ok:
+                    GLib.idle_add(self._on_update_installed, installed, latest)
+                else:
+                    GLib.idle_add(self._on_update_failed, latest)
+            else:  # notify
+                GLib.idle_add(self._on_update_available, installed, latest)
+        except Exception:
+            log.exception("auto update worker crashed")
+
+    def _meow_first_cat(self, text: str) -> None:
+        """Helper: show a transient meow bubble on the first available
+        cat. Used for update notifications."""
+        if not self.cat_instances:
+            return
+        cat = self.cat_instances[0]
+        cat.meow_text = text
+        cat.meow_visible = True
+        # Cancel any existing meow timer for this cat then schedule a
+        # 12 s auto-hide so the bubble doesn't linger forever.
+        tid = getattr(cat, "_meow_timer_id", None)
+        if tid:
+            try:
+                GLib.source_remove(tid)
+            except Exception:
+                pass
+        def _hide():
+            cat.meow_visible = False
+            cat._meow_timer_id = None
+            return False
+        cat._meow_timer_id = GLib.timeout_add(12000, _hide)
+
+    def _on_update_installed(self, old: str, new: str) -> bool:
+        """Auto mode: pip already finished, the user just needs to
+        relaunch CATAI to pick up the new code."""
+        self._meow_first_cat(f"Mise à jour {new} prête!")
+        log.info("updater: installed %s -> %s, restart on next launch", old, new)
+        return False
+
+    def _on_update_available(self, old: str, new: str) -> bool:
+        """Notify mode: a meow bubble lets the user know."""
+        self._meow_first_cat(f"Mise à jour dispo: {new}")
+        log.info("updater: notified user about %s", new)
+        return False
+
+    def _on_update_failed(self, new: str) -> bool:
+        """Auto mode: install failed, fall back to a notify bubble."""
+        self._meow_first_cat(f"Mise à jour {new} : échec install")
+        log.warning("updater: install of %s failed", new)
+        return False
 
     def _check_theme(self) -> bool:
         """Poll GNOME dark-mode preference; on flip, swap the bubble palette
