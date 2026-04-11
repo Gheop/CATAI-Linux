@@ -4250,7 +4250,10 @@ class CatAIApp(Gtk.Application):
             lay = PangoCairo.create_layout(tctx)
             lay.set_font_description(Pango.FontDescription(_BUBBLE_FONT))
             lay.set_wrap(Pango.WrapMode.WORD_CHAR)
-            lay.set_height(-8)
+            # Must stay in lockstep with drawing.draw_chat_bubble's
+            # set_height(-16) — otherwise the entry box position drifts
+            # away from the actual bubble bottom edge.
+            lay.set_height(-16)
             lay.set_ellipsize(Pango.EllipsizeMode.END)
             self._bubble_layout_cache = lay
             self._bubble_layout_cached_text = None

@@ -360,7 +360,10 @@ def draw_chat_bubble(ctx, text: str, cat_x: float, cat_y: float,
     lay.set_text(text, -1)
     lay.set_width(text_w * Pango.SCALE)
     lay.set_wrap(Pango.WrapMode.WORD_CHAR)
-    lay.set_height(-8)  # max 8 lines
+    # Cap at 16 lines: Claude/Ollama responses are clamped to 256
+    # max_tokens (~12-14 lines at this bubble width), so 16 leaves
+    # comfortable headroom while still ellipsizing pathological cases.
+    lay.set_height(-16)
     lay.set_ellipsize(Pango.EllipsizeMode.END)
     _tw, th = lay.get_pixel_size()
 
