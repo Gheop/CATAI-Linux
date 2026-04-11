@@ -3557,15 +3557,28 @@ class CatAIApp(Gtk.Application):
                 bx = cat.x + cat.display_w / 2 - text_w / 2
                 by = cat.y - 40
                 rects.append((bx, by, text_w, 24))
-            # Include chat bubble area if visible
+            # Include chat bubble area if visible. The bubble's actual
+            # height is computed from the Pango layout and grows with
+            # the response length — for long multi-line responses it
+            # easily exceeds 200 px. We use a generous 320 px so the
+            # entire bubble (including the speaker icon at the top)
+            # always falls inside the input region.
             if cat.chat_visible and cat.chat_response:
                 bw = 280
-                bh = 150  # approximate
+                bh = 320  # generous — actual is pad*2 + th + 42
                 bx = cat.x + cat.display_w / 2 - bw / 2
                 by = cat.y - bh - 15
                 if by < 0:
                     by = cat.y + cat.display_h + 10
                 rects.append((bx, by, bw, bh))
+                # Also explicitly include the speaker icon click rect
+                # (computed by drawing.draw_chat_bubble at the actual
+                # bubble position) so even if the generous bh ever
+                # under-counts, the icon never falls outside the input
+                # region.
+                speaker_rect = getattr(cat, "_speaker_click_rect", None)
+                if speaker_rect is not None:
+                    rects.append(speaker_rect)
             # Include encounter bubble area if visible
             if cat.encounter_visible and cat.encounter_text:
                 enc_bw = max(90, len(cat.encounter_text) * 7 + 20)
@@ -3876,12 +3889,6 @@ class CatAIApp(Gtk.Application):
         return False
 
     def _on_canvas_drag_begin(self, gesture, start_x, start_y):
-        log.warning("CANVAS click @ (%.0f, %.0f)", start_x, start_y)
-        for c in self.cat_instances:
-            rect = getattr(c, "_speaker_click_rect", None)
-            if rect is not None:
-                log.warning("  speaker rect for %s = %s",
-                            c.config.get("char_id"), rect)
         # Easter egg menu dispatch (before anything else)
         if self._easter_menu_visible:
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
