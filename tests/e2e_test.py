@@ -607,6 +607,9 @@ def run_tests():
 
     # ── T15e: Seasonal overlay ─────────────────────────────
     print("\n[T15e] Seasonal overlay", flush=True)
+    # Re-enable first — the 30 s auto-dismiss may have fired already
+    # since this test block runs well over 30 s after app startup.
+    send_cmd("season on")
     resp = send_cmd("season")
     test("season query returns state",
          resp.startswith("OK season=") and "enabled=True" in resp,
