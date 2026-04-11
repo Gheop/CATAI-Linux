@@ -2981,6 +2981,21 @@ class CatAIApp(Gtk.Application):
             self._canvas_area.queue_draw()
         return "OK redraw queued"
 
+    def _cmd_tts_debug(self, parts):
+        """Dump per-cat TTS state: tts_enabled, chat_visible, speaker_click_rect.
+        Used to diagnose why a speaker icon isn't clickable on a given chat."""
+        out = [f"global={self._tts_enabled}"]
+        for i, c in enumerate(self.cat_instances):
+            name = c.config.get("char_id", "?")
+            rect = getattr(c, "_speaker_click_rect", None)
+            out.append(
+                f"[{i}] {name} tts={c.tts_enabled} "
+                f"chat_visible={c.chat_visible} "
+                f"response_len={len(c.chat_response) if c.chat_response else 0} "
+                f"rect={rect}"
+            )
+        return "OK " + " | ".join(out)
+
     def _cmd_monitors(self, parts):
         """Return the list of detected monitor rects. Usage:
             monitors              → list all rects
@@ -3144,6 +3159,7 @@ class CatAIApp(Gtk.Application):
                 "notify": self._cmd_notify,
                 "get_chat_response": self._cmd_get_chat_response,
                 "screenshot": self._cmd_screenshot,
+                "tts_debug": self._cmd_tts_debug,
                 "monitors": self._cmd_monitors,
                 "theme": self._cmd_theme,
                 "personality": self._cmd_personality,
@@ -3628,6 +3644,16 @@ class CatAIApp(Gtk.Application):
         Returns True if recording started, False otherwise."""
         if not self._voice_recorder or self._voice_recorder._recording:
             return False
+        # Stop any in-flight TTS playback synchronously. Without this,
+        # the TTS GStreamer pipeline can still hold the audio device
+        # in a transient state that makes the next autoaudiosrc capture
+        # return silence — user reported "first record per cat works,
+        # next ones empty" which was exactly this. stop() clears the
+        # queue and drops the active playbin pipeline.
+        try:
+            _tts.get_default_player().stop()
+        except Exception:
+            log.debug("TTS stop during voice start failed", exc_info=True)
         # Cancel any pending delayed submit from a previous recording
         if getattr(self, "_voice_submit_timer", None):
             try:

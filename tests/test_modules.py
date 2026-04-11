@@ -668,9 +668,11 @@ def test_tts() -> None:
     p2 = tts.get_default_player()
     test("get_default_player is a singleton", p1 is p2)
 
-    # ── Text cleaning: markdown + emoji stripped for Piper
-    test("clean: removes asterisks",
-         tts._clean_text_for_tts("*miaou* salut") == "miaou salut")
+    # ── Text cleaning: stage directions + emoji stripped
+    test("clean: drops *...* stage directions entirely",
+         tts._clean_text_for_tts("*s'étire* bonjour") == "bonjour")
+    test("clean: keeps dialogue before and after stage direction",
+         tts._clean_text_for_tts("salut *regarde* toi") == "salut toi")
     test("clean: removes emoji",
          tts._clean_text_for_tts("salut 😸 toi") == "salut toi")
     test("clean: keeps french accents",
@@ -681,14 +683,23 @@ def test_tts() -> None:
          tts._clean_text_for_tts("«Bonjour!» dit-il.") == "«Bonjour!» dit-il.")
     test("clean: all-emoji input → empty",
          tts._clean_text_for_tts("😸🌫✨") == "")
+    test("clean: pure stage direction → empty",
+         tts._clean_text_for_tts("*bâille longuement*") == "")
 
-    # Cleaning is applied inside split_cat_sounds too
-    chunks = tts.split_cat_sounds("*hello* 😸 world")
-    # 'hello' is not a cat sound → it stays as cleaned text
-    text_chunks = [c.content for c in chunks if c.kind == "text"]
-    test("split: markdown + emoji stripped from text chunks",
-         any("hello" in t and "*" not in t and "😸" not in t
-             for t in text_chunks),
+    # split_cat_sounds: cat tokens INSIDE *...* are extracted first,
+    # so *ronron* becomes a purr chunk, not dropped.
+    chunks = tts.split_cat_sounds("*ronron*")
+    test("split: *ronron* → purr chunk (cat token wins over stage direction)",
+         len(chunks) == 1 and chunks[0].kind == "cat"
+         and chunks[0].content == "purr",
+         str(chunks))
+
+    # split_cat_sounds drops stage-direction-only content via cleaner
+    chunks = tts.split_cat_sounds("Salut *s'étire* toi")
+    text_contents = [c.content for c in chunks if c.kind == "text"]
+    test("split: stage direction dropped from text chunks",
+         any("s'étire" not in t for t in text_contents)
+         and not any("s'étire" in t for t in text_contents),
          str(chunks))
 
 

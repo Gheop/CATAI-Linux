@@ -182,23 +182,35 @@ def split_cat_sounds(text: str) -> list[Chunk]:
 
 # Whitelist of characters Piper can pronounce cleanly: word characters,
 # whitespace, common punctuation, French accents, and guillemets.
-# Everything else (markdown asterisks, emoji, symbols) is stripped
-# before synthesis so the TTS engine doesn't read "astérisque" or
-# "nuage pensif" literally.
+# Everything else (emoji, symbols) is stripped before synthesis so the
+# TTS engine doesn't read "nuage pensif" literally.
 _TTS_TEXT_SAFE_RE = re.compile(
     r"[^0-9A-Za-z\s.,!?;:'\"«»()\[\]\-…"
     r"àâäéèêëîïôöùûüÿç"
     r"ÀÂÄÉÈÊËÎÏÔÖÙÛÜŸÇ"
     r"œŒæÆ]",
 )
+# LLMs writing roleplay cat responses use *...* to mark stage directions
+# — "*s'étire*", "*bâille*", "*regarde la fenêtre*". These describe cat
+# ACTIONS, not dialogue, so they must never be spoken. We drop the
+# whole span (contents included) before the whitelist filter runs.
+# Any cat onomatopoeia inside asterisks has already been extracted by
+# the splitter's _TOKEN_PATTERNS (which explicitly matches `*ronron*`,
+# `*purr*`, etc. before the text slicer calls _clean_text_for_tts),
+# so anything left here is definitively a stage direction.
+_TTS_ACTION_RE = re.compile(r"\*[^*]*\*")
 _TTS_WS_RE = re.compile(r"\s+")
 
 
 def _clean_text_for_tts(text: str) -> str:
-    """Strip markdown asterisks, emoji and other symbol characters so
-    Piper doesn't read them phonetically. Returns a whitespace-collapsed,
-    stripped string — may be empty if the input was all emoji."""
-    cleaned = _TTS_TEXT_SAFE_RE.sub(" ", text)
+    """Strip markdown stage directions (*...*), emoji and other symbol
+    characters so Piper doesn't read them phonetically. Returns a
+    whitespace-collapsed stripped string — may be empty if the input
+    was entirely a stage direction or emoji."""
+    # First pass: remove *...* spans entirely (stage directions)
+    cleaned = _TTS_ACTION_RE.sub(" ", text)
+    # Second pass: drop everything else outside the whitelist
+    cleaned = _TTS_TEXT_SAFE_RE.sub(" ", cleaned)
     return _TTS_WS_RE.sub(" ", cleaned).strip()
 
 
@@ -271,6 +283,15 @@ class SoundPlayer:
         # means "not loaded yet", False means "load failed permanently".
         self._voice = None
         self._voice_download_started = False
+        # Currently-playing GStreamer pipeline so stop() can yank it
+        # synchronously without waiting for the chunk to finish. Set by
+        # _play_file_blocking while the pipeline is in PLAYING state;
+        # cleared back to None on EOS/error.
+        self._active_pipeline = None
+        # Cancel flag watched by the worker drain loop. When set, the
+        # current chunk finishes (or is aborted via _active_pipeline)
+        # and no further chunks in the current or queued batches run.
+        self._cancel = False
 
     # ── Piper lazy load + download ───────────────────────────────────────
 
@@ -346,21 +367,48 @@ class SoundPlayer:
         if not chunks:
             return
         with self._lock:
+            self._cancel = False
             self._queue.append((chunks, voice_params))
-            if self._worker is None or not self._worker.is_alive():
-                self._worker = threading.Thread(
-                    target=self._drain_queue, daemon=True)
-                self._worker.start()
+            need_worker = self._worker is None or not self._worker.is_alive()
+        log.debug("TTS: queued %d chunks, need_worker=%s, queue_len=%d",
+                  len(chunks), need_worker, len(self._queue))
+        if need_worker:
+            self._worker = threading.Thread(
+                target=self._drain_queue, daemon=True)
+            self._worker.start()
+
+    def stop(self) -> None:
+        """Cancel any in-flight playback synchronously and drop any
+        queued batches. Used by the voice recorder so recording
+        captures aren't contaminated by the cat still speaking."""
+        with self._lock:
+            self._cancel = True
+            self._queue.clear()
+            pipeline = self._active_pipeline
+        if pipeline is not None:
+            try:
+                import gi
+                gi.require_version("Gst", "1.0")
+                from gi.repository import Gst
+                pipeline.set_state(Gst.State.NULL)
+            except Exception:
+                log.debug("TTS: stop() pipeline NULL failed", exc_info=True)
+        log.debug("TTS: stop() — queue cleared, pipeline yanked")
 
     # ── Worker loop ──────────────────────────────────────────────────────
 
     def _drain_queue(self) -> None:
+        log.debug("TTS: worker thread start")
         while True:
             with self._lock:
-                if not self._queue:
+                if not self._queue or self._cancel:
+                    log.debug("TTS: worker exit (empty=%s, cancel=%s)",
+                              not self._queue, self._cancel)
                     return
                 chunks, voice_params = self._queue.pop(0)
             for chunk in chunks:
+                if self._cancel:
+                    break
                 try:
                     if chunk.kind == "cat":
                         self._play_cat(chunk.content)
@@ -380,36 +428,54 @@ class SoundPlayer:
 
     def _play_file_blocking(self, path: str) -> None:
         """Play a media file through GStreamer and block until EOS.
-        Called from the worker thread, never from the main thread."""
+        Called from the worker thread, never from the main thread.
+
+        The pipeline is stored on ``self._active_pipeline`` while it's
+        in PLAYING state so ``stop()`` can yank it synchronously from
+        another thread. Cleanup (State.NULL + drop the reference) runs
+        in a finally block so a partial playback can't leak a held
+        audio device."""
         try:
             import gi
             gi.require_version("Gst", "1.0")
-            from gi.repository import Gst, GLib
+            from gi.repository import Gst
         except (ImportError, ValueError):
             log.debug("TTS: GStreamer unavailable, can't play %s", path)
             return
         if not Gst.is_initialized():
             Gst.init(None)
-        # playbin handles everything: file:// URI, decode, audio sink
         uri = "file://" + os.path.abspath(path)
         pipeline = Gst.ElementFactory.make("playbin", None)
         if pipeline is None:
             log.debug("TTS: playbin element unavailable")
             return
         pipeline.set_property("uri", uri)
-        pipeline.set_state(Gst.State.PLAYING)
-        bus = pipeline.get_bus()
-        # Wait for EOS or error, max 10 s to avoid a stuck sample from
-        # freezing the queue drain
-        msg = bus.timed_pop_filtered(
-            10 * Gst.SECOND,
-            Gst.MessageType.EOS | Gst.MessageType.ERROR,
-        )
-        if msg and msg.type == Gst.MessageType.ERROR:
-            err, debug = msg.parse_error()
-            log.debug("TTS: GStreamer error %s (%s)", err, debug)
-        pipeline.set_state(Gst.State.NULL)
-        _ = GLib  # keep import alive
+        with self._lock:
+            self._active_pipeline = pipeline
+        try:
+            log.debug("TTS: play %s", os.path.basename(path))
+            pipeline.set_state(Gst.State.PLAYING)
+            bus = pipeline.get_bus()
+            msg = bus.timed_pop_filtered(
+                10 * Gst.SECOND,
+                Gst.MessageType.EOS | Gst.MessageType.ERROR,
+            )
+            if msg and msg.type == Gst.MessageType.ERROR:
+                err, debug = msg.parse_error()
+                log.debug("TTS: GStreamer error %s (%s)", err, debug)
+        finally:
+            try:
+                pipeline.set_state(Gst.State.NULL)
+                # Drain any pending state change — some sinks (PulseAudio,
+                # PipeWire) only release the device after the state
+                # transition actually completes. 500 ms is more than
+                # enough on a healthy system.
+                pipeline.get_state(500 * Gst.MSECOND)
+            except Exception:
+                log.debug("TTS: pipeline cleanup failed", exc_info=True)
+            with self._lock:
+                if self._active_pipeline is pipeline:
+                    self._active_pipeline = None
 
     # ── Text playback (Piper) ────────────────────────────────────────────
 
