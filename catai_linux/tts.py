@@ -283,11 +283,13 @@ class SoundPlayer:
         # means "not loaded yet", False means "load failed permanently".
         self._voice = None
         self._voice_download_started = False
-        # Currently-playing GStreamer pipeline so stop() can yank it
-        # synchronously without waiting for the chunk to finish. Set by
-        # _play_file_blocking while the pipeline is in PLAYING state;
-        # cleared back to None on EOS/error.
-        self._active_pipeline = None
+        # Currently-playing gst-launch subprocess so stop() can kill
+        # it without waiting for the chunk to finish. Set by
+        # _play_file_blocking while the Popen is alive; cleared on
+        # EOS/error. Replaced the earlier in-process Gst pipeline
+        # because process-isolated playback sidesteps a whole class
+        # of stale-state bugs between mic capture and TTS output.
+        self._active_proc = None
         # Cancel flag watched by the worker drain loop. When set, the
         # current chunk finishes (or is aborted via _active_pipeline)
         # and no further chunks in the current or queued batches run.
@@ -382,39 +384,30 @@ class SoundPlayer:
         batches, and **block** until the worker thread has fully exited.
 
         Blocking the caller (typically the main GTK thread inside
-        ``_start_voice_recording``) is intentional: without it, the
-        voice recorder's autoaudiosrc pipeline races with the in-flight
-        TTS pipeline's teardown, and the autoaudiosrc capture returns
-        silence because the audio backend is still reconfiguring. The
-        wait is bounded to 2 s so a stuck worker never freezes the UI.
+        ``_start_voice_recording``) is intentional: the voice recorder
+        then knows the TTS subprocess has been killed and the audio
+        backend is free. Wait bounded to 2 s so a stuck subprocess
+        never freezes the UI.
         """
         with self._lock:
             self._cancel = True
             self._queue.clear()
-            pipeline = self._active_pipeline
+            proc = self._active_proc
             worker = self._worker
-        # Yank the active pipeline synchronously — this makes the
-        # worker's bus loop wake up immediately instead of waiting up
-        # to 500 ms for the next poll.
-        if pipeline is not None:
+        if proc is not None and proc.poll() is None:
             try:
-                import gi
-                gi.require_version("Gst", "1.0")
-                from gi.repository import Gst
-                pipeline.set_state(Gst.State.NULL)
-                # Wait for the NULL transition to fully complete so
-                # the audio backend releases the device before the
-                # voice pipeline tries to open it.
-                pipeline.get_state(500 * Gst.MSECOND)
+                proc.terminate()
+                proc.wait(timeout=1.0)
             except Exception:
-                log.warning("TTS: stop() pipeline NULL failed", exc_info=True)
-        # Wait for the worker to finish its cleanup + drain loop exit.
-        # Gated at 2 s so a runaway worker can't hang the UI.
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
         if worker is not None and worker.is_alive():
             worker.join(timeout=2.0)
             if worker.is_alive():
                 log.warning("TTS: stop() worker still alive after 2 s")
-        log.warning("TTS: stop() — queue cleared, pipeline yanked, worker joined")
+        log.warning("TTS: stop() — queue cleared, subprocess killed, worker joined")
 
     # ── Worker loop ──────────────────────────────────────────────────────
 
@@ -448,111 +441,66 @@ class SoundPlayer:
         self._play_file_blocking(path)
 
     def _play_file_blocking(self, path: str) -> None:
-        """Play a media file through GStreamer and block until EOS.
-        Called from the worker thread, never from the main thread.
+        """Play a media file by spawning ``gst-launch-1.0`` as a
+        **subprocess** and waiting for it to exit.
 
-        The pipeline is stored on ``self._active_pipeline`` while it's
-        in PLAYING state so ``stop()`` can yank it synchronously from
-        another thread. Cleanup (State.NULL + drop the reference) runs
-        in a finally block so a partial playback can't leak a held
-        audio device."""
-        try:
-            import gi
-            gi.require_version("Gst", "1.0")
-            from gi.repository import Gst
-        except (ImportError, ValueError):
-            log.warning("TTS: GStreamer unavailable, can't play %s", path)
-            return
-        if not Gst.is_initialized():
-            Gst.init(None)
+        We intentionally do NOT build a GStreamer pipeline inside this
+        process. User testing revealed that creating playbin pipelines
+        inside the same Python process as ``voice.py``'s autoaudiosrc
+        and across MP3/WAV calls left GStreamer's internal state in a
+        way that silently routed some streams to a null sink — even
+        though state transitions reached PLAYING and EOS fired cleanly
+        in the logs. The exact cause (stale sink cache? cross-decoder
+        contamination? PipeWire communication-role inheritance?) was
+        hard to pin down, so we side-step it entirely: every playback
+        is a fresh ``gst-launch-1.0`` process with no prior state.
+
+        Subprocess spawn overhead is ~50-100 ms per chunk, which is
+        acceptable for the few-chunks-per-response cadence CATAI uses.
+        The active ``Popen`` is stashed on ``self._active_proc`` so
+        ``stop()`` can send SIGTERM and move on synchronously.
+        """
+        import subprocess
+        size = os.path.getsize(path) if os.path.exists(path) else -1
         uri = "file://" + os.path.abspath(path)
-        pipeline = Gst.ElementFactory.make("playbin", None)
-        if pipeline is None:
-            log.warning("TTS: playbin element unavailable")
-            return
-        pipeline.set_property("uri", uri)
-        # Force an explicit audio sink. PulseAudio (or PipeWire's pulse
-        # compat layer) is preferred because pipewiresink, when created
-        # in a process that already has a mic source open, inherits the
-        # "Communication" media role and gets auto-ducked to 0 volume
-        # by PipeWire's echo cancellation logic. pulsesink advertises
-        # itself as a regular app stream, so the duck never triggers.
-        sink = None
-        for sink_name in ("pulsesink", "pipewiresink", "autoaudiosink"):
-            sink = Gst.ElementFactory.make(sink_name, None)
-            if sink is None:
-                continue
-            log.warning("TTS: using %s", sink_name)
-            # For pipewiresink, tag the stream as Music so PipeWire
-            # doesn't treat it as a voice-call output. Non-fatal if
-            # set_property fails on older PipeWire versions.
-            if sink_name == "pipewiresink":
-                try:
-                    props = Gst.Structure.new_empty("stream-properties")
-                    props.set_value("media.role", "Music")
-                    props.set_value("media.category", "Playback")
-                    sink.set_property("stream-properties", props)
-                except Exception:
-                    log.debug("TTS: pipewiresink stream-properties set failed",
-                              exc_info=True)
-            # For pulsesink, set a friendly client name so the user's
-            # per-app volume controls (pavucontrol, wpctl) show CATAI.
-            try:
-                sink.set_property("client-name", "CATAI-Linux TTS")
-            except Exception:
-                pass
-            break
-        if sink is not None:
-            pipeline.set_property("audio-sink", sink)
-        with self._lock:
-            self._active_pipeline = pipeline
+        log.warning("TTS: play %s (%d bytes)", os.path.basename(path), size)
         try:
-            size = os.path.getsize(path) if os.path.exists(path) else -1
-            log.warning("TTS: play %s (%d bytes)", os.path.basename(path), size)
-            ret = pipeline.set_state(Gst.State.PLAYING)
-            log.warning("TTS: set_state(PLAYING) = %s", ret)
-            bus = pipeline.get_bus()
+            proc = subprocess.Popen(
+                ["gst-launch-1.0", "-q", "playbin", f"uri={uri}"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            log.warning("TTS: gst-launch-1.0 not found, can't play audio")
+            return
+        except Exception:
+            log.exception("TTS: subprocess spawn failed")
+            return
+        with self._lock:
+            self._active_proc = proc
+        try:
+            # Poll the process with a cancel check every 100 ms so
+            # stop() can terminate mid-playback without waiting for
+            # the full duration of the chunk.
             import time as _t
-            deadline = _t.monotonic() + 10.0
-            while _t.monotonic() < deadline:
-                # Bail out immediately when stop() set the cancel flag.
-                # Otherwise the 10 s deadline + 500 ms bus poll means
-                # the worker can stay inside this loop for seconds
-                # after the user pressed the mic, racing with the
-                # voice pipeline.
+            while proc.poll() is None:
                 if self._cancel:
-                    log.warning("TTS: play loop cancelled")
-                    break
-                msg = bus.timed_pop(100 * Gst.MSECOND)
-                if msg is None:
-                    continue
-                if msg.type == Gst.MessageType.EOS:
-                    log.warning("TTS: EOS")
-                    break
-                if msg.type == Gst.MessageType.ERROR:
-                    err, debug = msg.parse_error()
-                    log.warning("TTS: GStreamer error %s (%s)", err, debug)
-                    break
-                if msg.type == Gst.MessageType.WARNING:
-                    w, d = msg.parse_warning()
-                    log.warning("TTS: GStreamer warning %s (%s)", w, d)
-                elif msg.type == Gst.MessageType.STATE_CHANGED:
-                    if msg.src == pipeline:
-                        old, new, pending = msg.parse_state_changed()
-                        log.warning("TTS: state %s → %s", old, new)
+                    log.warning("TTS: playback cancelled")
+                    try:
+                        proc.terminate()
+                        proc.wait(timeout=1.0)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                    except Exception:
+                        pass
+                    return
+                _t.sleep(0.1)
+            log.warning("TTS: play finished (exit %d)", proc.returncode)
         finally:
-            try:
-                pipeline.set_state(Gst.State.NULL)
-                # Drain any pending state change — some sinks (PulseAudio,
-                # PipeWire) only release the device after the state
-                # transition actually completes. 500 ms is more than
-                # enough on a healthy system.
-                pipeline.get_state(500 * Gst.MSECOND)
-            except Exception:
-                log.warning("TTS: pipeline cleanup failed", exc_info=True)
             with self._lock:
-                if self._active_pipeline is pipeline:
-                    self._active_pipeline = None
+                if self._active_proc is proc:
+                    self._active_proc = None
 
     # ── Text playback (Piper) ────────────────────────────────────────────
 
