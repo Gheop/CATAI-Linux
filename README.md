@@ -190,6 +190,14 @@ MIT
 
 ## Changelog
 
+### v0.7.2 — Bubble truncation fix (2026-04-11)
+
+- **Fix** — les réponses de Claude/Ollama étaient parfois tronquées avec
+  « … » en plein milieu d'une phrase parce que la bulle de chat était
+  capée à 8 lignes alors que `max_tokens=256` produit jusqu'à ~14 lignes
+  au width courant. Cap relevé à 16 lignes (`drawing.py` + `app.py` en
+  lockstep). Plus aucune réponse normale ne devrait se faire couper.
+
 ### v0.7.1 — Wake word par prénom de chat (2026-04-11)
 
 Issue #4 Tier 2 : appeler un chat par son **prénom** ouvre son chat
