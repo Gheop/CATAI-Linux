@@ -3876,6 +3876,12 @@ class CatAIApp(Gtk.Application):
         return False
 
     def _on_canvas_drag_begin(self, gesture, start_x, start_y):
+        log.warning("CANVAS click @ (%.0f, %.0f)", start_x, start_y)
+        for c in self.cat_instances:
+            rect = getattr(c, "_speaker_click_rect", None)
+            if rect is not None:
+                log.warning("  speaker rect for %s = %s",
+                            c.config.get("char_id"), rect)
         # Easter egg menu dispatch (before anything else)
         if self._easter_menu_visible:
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
