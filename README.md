@@ -189,6 +189,49 @@ MIT
 
 ## Changelog
 
+### v0.6.0 — Les chats prennent vie (2026-04-11)
+
+Major interactivity + visual update. Five self-contained features landed
+together — petting, moods, drift, theme sync, seasonal overlays, 3 more
+easter eggs, and multi-monitor awareness.
+
+- **Petting + invisible mood** — long-press a cat to pet it. Every cat
+  tracks four hidden stats (happiness, energy, bored, hunger) that drift
+  over time and bias its emergent behavior. A grumpy cat lounges. A
+  bored one bounces around. Persisted in `~/.config/catai/mood_*.json`.
+- **User activity awareness** — cats detect when you go AFK (> 10 min
+  idle) and curl up to sleep until you return. They also dim activity
+  late at night.
+- **D-Bus notification reactions** — when a desktop notification arrives,
+  the nearest cat reacts with a curious meow. Reaction lines are
+  AI-generated per cat so each one sounds like themselves.
+- **Dark mode sync** — bubbles + menus now follow your GNOME dark/light
+  preference automatically (polled every 30 s). Opt in bit: no config
+  needed. (#18)
+- **Seasonal overlays** — date-aware particles drift behind the cats:
+  ❄ snowflakes in winter, 🌼 cherry petals in spring, 🍂 autumn leaves,
+  🎃 Halloween pumpkins, 🎄 + heavier snow for Christmas, ♥ Valentine's,
+  ✨ NYE firework bursts. The overlay announces the current season for
+  30 s on launch then fades out to leave the canvas clean. Opt out via
+  `"seasonal": false` or `"seasonal_duration_sec": 0` for permanent
+  display. (#19)
+- **30 easter eggs** — added 🎮 Konami code (cheat-mode cascade
+  SURPRISED → LOVE → ROLLING + mood refresh), ☕ coffee rush (2× cat
+  speed for 15 s), and 🧘 zen mode (all cats freeze in perfect
+  meditation for 10 s). Magic phrases: `konami`, `up up down down`,
+  `cheat code`, `coffee`, `espresso`, `caffeine`, `zen`, `meditate`,
+  `calm`. Existing 27 eggs still there. (#20)
+- **Multi-monitor intelligence** — cats now spawn distributed across
+  every attached screen instead of stacked on monitor 0. New
+  `monitors` socket command inspects layout and detects dead-zones
+  between mismatched displays. (#21)
+- **Personality drift** — every 10 chat messages the cat silently asks
+  the AI backend to reflect on the conversation and propose ONE new
+  "quirk" it picked up from you. Quirks accumulate (max 5, oldest
+  falls off) in `~/.config/catai/personality_*.json` and flavor every
+  future chat's system prompt. No embeddings, no RAG — pure prompt
+  engineering. Opt out via `"personality_drift": false`. (#22)
+
 ### v0.5.0 — Big cleanup: modular refactor + smaller wheel (2026-04-10)
 
 Internal overhaul — no user-facing feature changes. If v0.4.0 works for
