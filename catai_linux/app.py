@@ -3271,14 +3271,7 @@ class CatAIApp(Gtk.Application):
             self._chat_entry.add_controller(key_ctrl)
 
         if self._voice_enabled:
-            self._voice_btn = Gtk.Button()
-            # Pixel-art mic icon — picks the dark fill variant for the
-            # default light theme. Theme flips will refresh it via
-            # _refresh_mic_icon() (called from _check_theme).
-            self._mic_image = Gtk.Image.new_from_file(
-                self._mic_icon_path())
-            self._mic_image.set_pixel_size(22)
-            self._voice_btn.set_child(self._mic_image)
+            self._voice_btn = Gtk.Button(label="\U0001f3a4")  # 🎤
             self._voice_btn.add_css_class("pixel-mic-btn")
             self._voice_btn.set_size_request(30, -1)
             self._voice_btn.set_tooltip_text("Hold to talk (or hold Space in the entry)")
@@ -3741,9 +3734,7 @@ class CatAIApp(Gtk.Application):
             self._voice_submit_timer = None
         self._chat_entry.set_text("")
         if self._voice_btn:
-            # Recording state — keep the pixel-art mic but apply the
-            # red CSS class to flag the active capture.
-            self._refresh_mic_icon()
+            self._voice_btn.set_label("\U0001f534")  # 🔴
             self._voice_btn.add_css_class("pixel-mic-btn-recording")
         self._chat_entry.set_placeholder_text("Recording... (release to send)")
         try:
@@ -3752,7 +3743,7 @@ class CatAIApp(Gtk.Application):
         except Exception:
             log.exception("Failed to start voice recording")
             if self._voice_btn:
-                self._refresh_mic_icon()
+                self._voice_btn.set_label("\U0001f3a4")  # 🎤
                 self._voice_btn.remove_css_class("pixel-mic-btn-recording")
             self._chat_entry.set_placeholder_text(L10n.s("talk"))
             return False
@@ -3806,12 +3797,7 @@ class CatAIApp(Gtk.Application):
             except Exception:
                 pass
             if self._voice_btn:
-                # Re-attach the pixel-art mic image (set_label removed
-                # the child Image, so we re-create it from the file).
-                self._mic_image = Gtk.Image.new_from_file(
-                    self._mic_icon_path())
-                self._mic_image.set_pixel_size(22)
-                self._voice_btn.set_child(self._mic_image)
+                self._voice_btn.set_label("\U0001f3a4")  # 🎤
                 self._voice_btn.set_sensitive(True)
             self._chat_entry.set_placeholder_text(L10n.s("talk"))
             if text and self._active_chat_cat:
@@ -5252,29 +5238,10 @@ class CatAIApp(Gtk.Application):
             if now_dark != getattr(self, "_dark_mode", False):
                 self._dark_mode = now_dark
                 _set_theme(dark=now_dark)
-                # Refresh the mic button icon to use the matching tint
-                self._refresh_mic_icon()
                 log.info("Theme flipped: dark=%s", now_dark)
         except Exception:
             log.exception("theme poll crashed")
         return True
-
-    def _mic_icon_path(self) -> str:
-        """Pick the mic icon variant whose ink contrasts the bubble bg.
-        Light theme → dark fill; dark theme → light fill."""
-        from catai_linux.drawing import ICONS_DIR
-        variant = "light" if getattr(self, "_dark_mode", False) else "dark"
-        return os.path.join(ICONS_DIR, f"mic_{variant}.png")
-
-    def _refresh_mic_icon(self) -> None:
-        """Reload the mic button image after a theme flip. Safe to call
-        when voice is disabled or the button hasn't been built yet."""
-        img = getattr(self, "_mic_image", None)
-        if img is not None:
-            try:
-                img.set_from_file(self._mic_icon_path())
-            except Exception:
-                log.debug("mic icon refresh failed", exc_info=True)
 
     def _check_fullscreen(self) -> bool:
         """Poll fullscreen state; on False → True rising edge (with 15 s
