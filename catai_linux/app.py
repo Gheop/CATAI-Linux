@@ -397,6 +397,11 @@ CATSET_PERSONALITIES = {
         "skills": {"fr": "Tu adores faire des bêtises et tu es toujours en mouvement.",
                    "en": "You love getting into mischief and are always on the move.",
                    "es": "Te encanta hacer travesuras y siempre estás en movimiento."},
+        # fr_FR-upmc-medium has 2 speakers: jessica=0, pierre=1. We
+        # combine speaker_id with length_scale variations so each of
+        # the 6 catset characters has a distinct voice profile without
+        # needing a second voice model download.
+        "tts_voice": {"speaker_id": 0, "length_scale": 0.90},  # perky jessica
     },
     "cat01": {
         "name": {"fr": "Tabby", "en": "Tabby", "es": "Tabby"},
@@ -404,6 +409,7 @@ CATSET_PERSONALITIES = {
         "skills": {"fr": "Tu explores chaque recoin et poses beaucoup de questions.",
                    "en": "You explore every corner and ask lots of questions.",
                    "es": "Exploras cada rincón y haces muchas preguntas."},
+        "tts_voice": {"speaker_id": 1, "length_scale": 0.95},  # curious pierre
     },
     "cat02": {
         "name": {"fr": "Ombre", "en": "Shadow", "es": "Sombra"},
@@ -411,6 +417,7 @@ CATSET_PERSONALITIES = {
         "skills": {"fr": "Tu observes tout sans rien dire et parles peu, mais avec profondeur.",
                    "en": "You observe everything silently and speak rarely but deeply.",
                    "es": "Observas todo en silencio y hablas poco, pero con profundidad."},
+        "tts_voice": {"speaker_id": 1, "length_scale": 1.18},  # slow grave pierre
     },
     "cat03": {
         "name": {"fr": "Noisette", "en": "Hazel", "es": "Avellana"},
@@ -418,6 +425,7 @@ CATSET_PERSONALITIES = {
         "skills": {"fr": "Tu aimes câliner et remonter le moral de tout le monde.",
                    "en": "You love to cuddle and cheer everyone up.",
                    "es": "Te encanta mimar y animar a todos."},
+        "tts_voice": {"speaker_id": 0, "length_scale": 1.05},  # soft jessica
     },
     "cat04": {
         "name": {"fr": "Brume", "en": "Mist", "es": "Niebla"},
@@ -425,6 +433,7 @@ CATSET_PERSONALITIES = {
         "skills": {"fr": "Tu médites et partages des pensées profondes sur la vie.",
                    "en": "You meditate and share deep thoughts about life.",
                    "es": "Meditas y compartes pensamientos profundos sobre la vida."},
+        "tts_voice": {"speaker_id": 1, "length_scale": 1.25},  # slow wise pierre
     },
     "cat05": {
         "name": {"fr": "Minuit", "en": "Midnight", "es": "Medianoche"},
@@ -432,6 +441,7 @@ CATSET_PERSONALITIES = {
         "skills": {"fr": "Tu es à ton aise dans l'obscurité et racontes des histoires mystérieuses.",
                    "en": "You're at home in the dark and tell mysterious stories.",
                    "es": "Te sientes a gusto en la oscuridad y cuentas historias misteriosas."},
+        "tts_voice": {"speaker_id": 0, "length_scale": 1.10},  # elegant jessica
     },
 }
 
@@ -1353,13 +1363,19 @@ class CatInstance:
             # per-cat self.tts_enabled toggle (the speaker icon in the
             # chat bubble). Both default to off so the feature is pure
             # opt-in — no risk of a silent install suddenly starting to
-            # make noises at the user.
+            # make noises at the user. Per-cat voice profile (speaker_id
+            # + length_scale) comes from CATSET_PERSONALITIES so each
+            # character has a distinct voice on a single Piper model.
             if (getattr(app, "_tts_enabled", False)
                     and getattr(self, "tts_enabled", False)
                     and self.chat_response):
                 try:
                     chunks = _tts.split_cat_sounds(self.chat_response)
-                    _tts.get_default_player().play(chunks)
+                    char_id = self.config.get("char_id", "cat01")
+                    p = CATSET_PERSONALITIES.get(
+                        char_id, CATSET_PERSONALITIES["cat01"])
+                    voice_params = p.get("tts_voice")
+                    _tts.get_default_player().play(chunks, voice_params)
                 except Exception:
                     log.exception("TTS playback failed")
             return False

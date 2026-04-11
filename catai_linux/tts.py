@@ -112,8 +112,10 @@ def split_cat_sounds(text: str) -> list[Chunk]:
     (``miaou``, ``prrrt``, ``*ronron*``, ``mrrp``, ``mew``, …) and
     replaces each occurrence with a ``Chunk(kind="cat", content=key)``.
     Everything between tokens becomes a ``Chunk(kind="text", content=…)``
-    with leading/trailing whitespace stripped; empty text chunks are
-    skipped entirely.
+    with markdown/emoji stripped for TTS. Empty text chunks are
+    skipped entirely, and consecutive cat chunks from the same sample
+    pool are collapsed into a single chunk so ``*miaou miaou*`` plays
+    one meow instead of two back-to-back.
 
     Example::
 
@@ -124,7 +126,7 @@ def split_cat_sounds(text: str) -> list[Chunk]:
          Chunk('text', 'ça va.')]
 
     Empty input returns an empty list. Input with no cat tokens
-    returns a single text chunk with the original string stripped.
+    returns a single text chunk with the original string cleaned.
     """
     if not text or not text.strip():
         return []
@@ -135,7 +137,8 @@ def split_cat_sounds(text: str) -> list[Chunk]:
         for m in pattern.finditer(text):
             matches.append((m.start(), m.end(), key))
     if not matches:
-        return [Chunk("text", text.strip())]
+        cleaned = _clean_text_for_tts(text)
+        return [Chunk("text", cleaned)] if cleaned else []
 
     # Sort by start offset. When two patterns overlap (e.g. "prrrr" is
     # matched by both the purr and mrrp patterns), keep the one that
@@ -155,15 +158,48 @@ def split_cat_sounds(text: str) -> list[Chunk]:
     cursor = 0
     for start, end, key in deduped:
         if start > cursor:
-            before = text[cursor:start].strip()
+            before = _clean_text_for_tts(text[cursor:start])
             if before:
                 chunks.append(Chunk("text", before))
         chunks.append(Chunk("cat", key))
         cursor = end
-    tail = text[cursor:].strip()
+    tail = _clean_text_for_tts(text[cursor:])
     if tail:
         chunks.append(Chunk("text", tail))
-    return chunks
+
+    # Collapse consecutive same-pool cat chunks. The behavior the user
+    # sees: "miaou miaou miaou" → one meow, not three spaced by brief
+    # pauses; "miaou *ronron*" → meow then purr (different pools, kept).
+    merged: list[Chunk] = []
+    for ch in chunks:
+        if (merged and merged[-1].kind == "cat"
+                and ch.kind == "cat"
+                and merged[-1].content == ch.content):
+            continue
+        merged.append(ch)
+    return merged
+
+
+# Whitelist of characters Piper can pronounce cleanly: word characters,
+# whitespace, common punctuation, French accents, and guillemets.
+# Everything else (markdown asterisks, emoji, symbols) is stripped
+# before synthesis so the TTS engine doesn't read "astérisque" or
+# "nuage pensif" literally.
+_TTS_TEXT_SAFE_RE = re.compile(
+    r"[^0-9A-Za-z\s.,!?;:'\"«»()\[\]\-…"
+    r"àâäéèêëîïôöùûüÿç"
+    r"ÀÂÄÉÈÊËÎÏÔÖÙÛÜŸÇ"
+    r"œŒæÆ]",
+)
+_TTS_WS_RE = re.compile(r"\s+")
+
+
+def _clean_text_for_tts(text: str) -> str:
+    """Strip markdown asterisks, emoji and other symbol characters so
+    Piper doesn't read them phonetically. Returns a whitespace-collapsed,
+    stripped string — may be empty if the input was all emoji."""
+    cleaned = _TTS_TEXT_SAFE_RE.sub(" ", text)
+    return _TTS_WS_RE.sub(" ", cleaned).strip()
 
 
 # ── Sample pools ─────────────────────────────────────────────────────────────
@@ -226,7 +262,10 @@ class SoundPlayer:
     def __init__(self):
         self._lock = threading.Lock()
         self._worker: threading.Thread | None = None
-        self._queue: list[list[Chunk]] = []
+        # Each queue entry is (chunks, voice_params) — voice_params is
+        # an optional dict with Piper SynthesisConfig fields per cat
+        # (see CATSET_PERSONALITIES['<char_id>']['tts_voice']).
+        self._queue: list[tuple[list[Chunk], dict | None]] = []
         # Piper voice loaded lazily on first text chunk. Shared across
         # every cat (per-cat voices are deferred to a later PR). None
         # means "not loaded yet", False means "load failed permanently".
@@ -296,12 +335,18 @@ class SoundPlayer:
 
     # ── Public API ───────────────────────────────────────────────────────
 
-    def play(self, chunks: list[Chunk]) -> None:
-        """Enqueue a chunk list for playback. Non-blocking."""
+    def play(self, chunks: list[Chunk],
+             voice_params: dict | None = None) -> None:
+        """Enqueue a chunk list for playback. Non-blocking.
+
+        ``voice_params`` is an optional dict of Piper SynthesisConfig
+        fields (``speaker_id``, ``length_scale``, ``noise_scale``,
+        ``noise_w_scale``) applied only to text chunks in this call —
+        lets each cat speak with a distinct voice profile."""
         if not chunks:
             return
         with self._lock:
-            self._queue.append(chunks)
+            self._queue.append((chunks, voice_params))
             if self._worker is None or not self._worker.is_alive():
                 self._worker = threading.Thread(
                     target=self._drain_queue, daemon=True)
@@ -314,13 +359,13 @@ class SoundPlayer:
             with self._lock:
                 if not self._queue:
                     return
-                chunks = self._queue.pop(0)
+                chunks, voice_params = self._queue.pop(0)
             for chunk in chunks:
                 try:
                     if chunk.kind == "cat":
                         self._play_cat(chunk.content)
                     elif chunk.kind == "text":
-                        self._play_text(chunk.content)
+                        self._play_text(chunk.content, voice_params)
                 except Exception:
                     log.exception("TTS chunk failed: %r", chunk)
 
@@ -368,24 +413,45 @@ class SoundPlayer:
 
     # ── Text playback (Piper) ────────────────────────────────────────────
 
-    def _play_text(self, text: str) -> None:
+    def _play_text(self, text: str, voice_params: dict | None = None) -> None:
         """Synthesize ``text`` via Piper and play the resulting WAV.
 
-        On first use this will block for ~2-5 s to download the 74 MB
-        voice model and another ~1 s to load it. Subsequent calls
-        synthesize in ~100-500 ms depending on sentence length. Every
-        call writes to a temp WAV file in /tmp and deletes it after
-        playback to keep the surface area minimal — we don't try to
-        stream chunks directly into a GStreamer appsrc because the
-        reliability gain isn't worth the pipeline complexity.
+        ``voice_params`` is an optional dict with Piper SynthesisConfig
+        fields (``speaker_id``, ``length_scale``, ``noise_scale``,
+        ``noise_w_scale``) — applied to this call only. On first use
+        this blocks for ~2-5 s to download the 74 MB voice model and
+        another ~1 s to load it; subsequent calls synthesize in
+        ~100-500 ms depending on sentence length.
         """
+        # Cleaned text should never contain markdown asterisks or emoji
+        # because split_cat_sounds already ran _clean_text_for_tts on
+        # every text chunk — this is a defensive fallback for callers
+        # that feed raw strings through the player directly.
+        text = _clean_text_for_tts(text)
+        if not text:
+            return
         voice = self._get_voice()
         if voice is None:
-            # Already logged in _get_voice on the first failure; later
-            # calls just silently skip text chunks.
             return
+        # Build a SynthesisConfig with the per-cat params on top of the
+        # voice's defaults. Fields we don't pass stay at the model's
+        # trained values.
+        syn_config = None
+        if voice_params:
+            try:
+                from piper import SynthesisConfig  # type: ignore
+                syn_config = SynthesisConfig(
+                    speaker_id=voice_params.get("speaker_id"),
+                    length_scale=voice_params.get("length_scale"),
+                    noise_scale=voice_params.get("noise_scale"),
+                    noise_w_scale=voice_params.get("noise_w_scale"),
+                )
+            except Exception:
+                log.debug("TTS: couldn't build SynthesisConfig", exc_info=True)
+                syn_config = None
         import tempfile
         import wave
+        wav_path = None
         try:
             with tempfile.NamedTemporaryFile(
                     suffix=".wav", delete=False) as tmp:
@@ -394,16 +460,21 @@ class SoundPlayer:
                 wav.setnchannels(1)
                 wav.setsampwidth(2)  # int16 → 2 bytes/sample
                 wav.setframerate(voice.config.sample_rate)
-                for chunk in voice.synthesize(text):
+                if syn_config is not None:
+                    gen = voice.synthesize(text, syn_config=syn_config)
+                else:
+                    gen = voice.synthesize(text)
+                for chunk in gen:
                     wav.writeframes(chunk.audio_int16_bytes)
             self._play_file_blocking(wav_path)
         except Exception:
             log.debug("TTS: Piper synthesis failed", exc_info=True)
         finally:
-            try:
-                os.unlink(wav_path)
-            except (OSError, NameError):
-                pass
+            if wav_path:
+                try:
+                    os.unlink(wav_path)
+                except OSError:
+                    pass
 
 
 # ── Module-level convenience ─────────────────────────────────────────────────

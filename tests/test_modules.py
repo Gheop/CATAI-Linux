@@ -579,11 +579,18 @@ def test_tts() -> None:
          chunks[1].kind == "text" and "mon ami" in chunks[1].content,
          str(chunks))
 
-    # Multiple meows in a row produce multiple cat chunks
+    # Multiple adjacent meows collapse into a single cat chunk so we
+    # don't play three separate samples back-to-back.
     chunks = tts.split_cat_sounds("Miaou miaou miaou")
-    test("split: 3 meows → 3 cat chunks",
-         len(chunks) == 3 and all(c.kind == "cat" for c in chunks),
+    test("split: 3 adjacent meows → 1 cat chunk (dedup)",
+         len(chunks) == 1 and chunks[0].kind == "cat"
+         and chunks[0].content == "meow",
          str(chunks))
+    # ... but different pools still emit distinct chunks
+    chunks = tts.split_cat_sounds("Miaou prrrrr mrrp")
+    cat_kinds = [c.content for c in chunks if c.kind == "cat"]
+    test("split: heterogeneous sounds stay distinct",
+         cat_kinds == ["meow", "purr", "mrrp"], str(chunks))
 
     # Purr with *ronron* markdown
     chunks = tts.split_cat_sounds("*ronron* ça va.")
@@ -660,6 +667,29 @@ def test_tts() -> None:
     p1 = tts.get_default_player()
     p2 = tts.get_default_player()
     test("get_default_player is a singleton", p1 is p2)
+
+    # ── Text cleaning: markdown + emoji stripped for Piper
+    test("clean: removes asterisks",
+         tts._clean_text_for_tts("*miaou* salut") == "miaou salut")
+    test("clean: removes emoji",
+         tts._clean_text_for_tts("salut 😸 toi") == "salut toi")
+    test("clean: keeps french accents",
+         tts._clean_text_for_tts("Ça va très bien") == "Ça va très bien")
+    test("clean: collapses whitespace",
+         tts._clean_text_for_tts("hello   world\n\ttest") == "hello world test")
+    test("clean: keeps guillemets + punctuation",
+         tts._clean_text_for_tts("«Bonjour!» dit-il.") == "«Bonjour!» dit-il.")
+    test("clean: all-emoji input → empty",
+         tts._clean_text_for_tts("😸🌫✨") == "")
+
+    # Cleaning is applied inside split_cat_sounds too
+    chunks = tts.split_cat_sounds("*hello* 😸 world")
+    # 'hello' is not a cat sound → it stays as cleaned text
+    text_chunks = [c.content for c in chunks if c.kind == "text"]
+    test("split: markdown + emoji stripped from text chunks",
+         any("hello" in t and "*" not in t and "😸" not in t
+             for t in text_chunks),
+         str(chunks))
 
 
 # ── catai_linux (package smoke test) ─────────────────────────────────────────
