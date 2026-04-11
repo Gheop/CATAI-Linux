@@ -625,6 +625,7 @@ from catai_linux.chat_backend import (  # noqa: E402
 
 from catai_linux.drawing import (  # noqa: E402
     apply_css, BUBBLE_FONT as _BUBBLE_FONT,
+    set_theme as _set_theme,
     draw_meow_bubble as _draw_meow_bubble,
     draw_encounter_bubble as _draw_encounter_bubble,
     draw_chat_bubble as _draw_chat_bubble,
@@ -639,6 +640,7 @@ from catai_linux.drawing import (  # noqa: E402
     draw_anger as _draw_anger,
     draw_speed_lines as _draw_speed_lines,
 )
+from catai_linux.theme import is_dark_mode as _is_dark_mode  # noqa: E402
 
 
 # ── Cat Instance ───────────────────────────────────────────────────────────────
@@ -2311,6 +2313,10 @@ class CatAIApp(Gtk.Application):
     def do_activate(self):
         _setup_logging()
         apply_css()
+        # Sync bubble/menu palette with desktop dark-mode preference before
+        # anything renders. Poller below keeps it live-updated.
+        self._dark_mode = _is_dark_mode()
+        _set_theme(dark=self._dark_mode)
         self._check_deps()
 
         display = Gdk.Display.get_default()
@@ -2413,6 +2419,11 @@ class CatAIApp(Gtk.Application):
             # Mood save — persist all cats' mood state to disk every 60s
             # (plus on shutdown and on key mood events).
             GLib.timeout_add(60000, self._save_all_moods),
+            # Theme poller — every 30 s, re-read the GNOME dark/light
+            # preference and flip the bubble palette if it changed.
+            # Cheap (one gsettings subprocess), so polling beats a live
+            # D-Bus subscription for our needs.
+            GLib.timeout_add(30000, self._check_theme),
         ]
 
         # Test socket for E2E tests (--test-socket flag)
@@ -2837,6 +2848,25 @@ class CatAIApp(Gtk.Application):
             self._canvas_area.queue_draw()
         return "OK redraw queued"
 
+    def _cmd_theme(self, parts):
+        """Query or force the bubble-palette dark mode. Usage:
+            theme           → report current state
+            theme dark      → force dark palette
+            theme light     → force light palette
+        E2E helper so tests can exercise set_theme without requiring a real
+        gsettings flip on the CI runner."""
+        if len(parts) < 2:
+            return f"OK dark={getattr(self, '_dark_mode', False)}"
+        target = parts[1].lower()
+        if target not in ("dark", "light"):
+            return "ERR: usage: theme [dark|light]"
+        dark = (target == "dark")
+        self._dark_mode = dark
+        _set_theme(dark=dark)
+        if self._canvas_area:
+            self._canvas_area.queue_draw()
+        return f"OK dark={dark}"
+
     def _cmd_personality(self, parts):
         """Query, force-drift, or reset a cat's personality state.
         Usage:
@@ -2919,6 +2949,7 @@ class CatAIApp(Gtk.Application):
                 "notify": self._cmd_notify,
                 "get_chat_response": self._cmd_get_chat_response,
                 "screenshot": self._cmd_screenshot,
+                "theme": self._cmd_theme,
                 "personality": self._cmd_personality,
             }
         handler = self._test_cmd_handlers.get(parts[0])
@@ -4843,6 +4874,19 @@ class CatAIApp(Gtk.Application):
             return "_NET_WM_STATE_FULLSCREEN" in r.stdout
         except Exception:
             return False
+
+    def _check_theme(self) -> bool:
+        """Poll GNOME dark-mode preference; on flip, swap the bubble palette
+        in `catai_linux.drawing.THEME`. Returns True to keep the timer."""
+        try:
+            now_dark = _is_dark_mode()
+            if now_dark != getattr(self, "_dark_mode", False):
+                self._dark_mode = now_dark
+                _set_theme(dark=now_dark)
+                log.info("Theme flipped: dark=%s", now_dark)
+        except Exception:
+            log.exception("theme poll crashed")
+        return True
 
     def _check_fullscreen(self) -> bool:
         """Poll fullscreen state; on False → True rising edge (with 15 s
