@@ -180,6 +180,54 @@ def test_x11_helpers() -> None:
     test("module exposes set_notification_type",
          callable(x11_helpers.set_notification_type))
 
+    # New helpers added in v0.7.3 cleanup — replaces xprop / xdotool
+    # subprocess polls. They MUST not crash when there's no display.
+    test("module exposes get_active_window_fullscreen",
+         callable(x11_helpers.get_active_window_fullscreen))
+    test("module exposes get_window_y_offset",
+         callable(x11_helpers.get_window_y_offset))
+    test("module exposes _x11_get_active_window",
+         callable(x11_helpers._x11_get_active_window))
+    test("module exposes _x11_window_has_state",
+         callable(x11_helpers._x11_window_has_state))
+
+    # Calling these without a display must return safe defaults — never
+    # raise. We can't assert the actual return value (depends on whether
+    # libX11 loads + whether DISPLAY is set), only that the call shape
+    # is correct and no exception escapes.
+    try:
+        result = x11_helpers.get_active_window_fullscreen()
+        test("get_active_window_fullscreen returns bool",
+             isinstance(result, bool))
+    except Exception as e:
+        test("get_active_window_fullscreen returns bool", False, repr(e))
+
+    try:
+        result = x11_helpers.get_window_y_offset(0)
+        test("get_window_y_offset(0) returns 0",
+             result == 0)
+    except Exception as e:
+        test("get_window_y_offset(0) returns 0", False, repr(e))
+
+    try:
+        result = x11_helpers.get_window_y_offset(999999999)
+        test("get_window_y_offset(bogus xid) returns int",
+             isinstance(result, int))
+    except Exception as e:
+        test("get_window_y_offset(bogus xid) returns int", False, repr(e))
+
+    try:
+        result = x11_helpers._x11_get_active_window()
+        test("_x11_get_active_window returns int",
+             isinstance(result, int))
+    except Exception as e:
+        test("_x11_get_active_window returns int", False, repr(e))
+
+    # The deprecated _run_x11 helper should be GONE — no more dead
+    # subprocess fallbacks shipping in the wheel.
+    test("_run_x11 was removed in 0.7.3 cleanup",
+         not hasattr(x11_helpers, "_run_x11"))
+
     # XRectangle is a ctypes.Structure
     rect = x11_helpers.XRectangle(x=10, y=20, width=100, height=200)
     test("XRectangle(x,y,w,h) assigns fields",
@@ -1325,6 +1373,52 @@ def test_activity() -> None:
     test("snapshot has expected keys",
          all(k in snap for k in ("idle_ms", "is_afk", "cpu_load", "hour", "is_night")),
          str(snap.keys()))
+
+    # ── D-Bus IdleMonitor path (added in v0.7.3 cleanup) ─────────────────
+    # Fresh instance — _idle_proxy is None until first _read_idle_ms call
+    fresh = ActivityMonitor()
+    test("default _idle_proxy is None (lazy)",
+         fresh._idle_proxy is None)
+
+    # Force the proxy to "unavailable" — _read_idle_ms must NOT crash
+    fresh._idle_proxy = False
+    fresh._xprintidle = None  # also disable subprocess fallback
+    result = fresh._read_idle_ms()
+    test("_read_idle_ms returns 0 when both paths unavailable",
+         result == 0)
+
+    # Mock D-Bus proxy that returns a known value
+    class _MockResult:
+        def __init__(self, value): self._v = value
+        def unpack(self): return (self._v,)
+
+    class _MockProxy:
+        def __init__(self, value): self._v = value
+        def call_sync(self, method, params, flags, timeout, cancellable):
+            assert method == "GetIdletime", f"unexpected method {method}"
+            return _MockResult(self._v)
+
+    mocked = ActivityMonitor()
+    mocked._idle_proxy = _MockProxy(42_000)  # 42 sec idle
+    result = mocked._read_idle_ms()
+    test("_read_idle_ms uses proxy result",
+         result == 42_000, str(result))
+
+    # Proxy raises → fallback to xprintidle subprocess (or 0 if both
+    # unavailable). The proxy state should also flip to False so we
+    # don't keep retrying.
+    class _BrokenProxy:
+        def call_sync(self, *a, **kw):
+            raise RuntimeError("simulated D-Bus failure")
+
+    broken = ActivityMonitor()
+    broken._idle_proxy = _BrokenProxy()
+    broken._xprintidle = None
+    result = broken._read_idle_ms()
+    test("_read_idle_ms tolerates proxy crash",
+         result == 0)
+    test("crashed proxy is marked dead",
+         broken._idle_proxy is False)
 
 
 def test_wake_word() -> None:

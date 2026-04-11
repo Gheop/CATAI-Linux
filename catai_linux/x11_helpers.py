@@ -1,17 +1,17 @@
 """Low-level X11 / GDK helpers: window positioning, always-on-top, notification
-type, XShape input region passthrough.
+type, XShape input region passthrough, plus direct Xlib queries for the
+active window's fullscreen state and a window's screen-Y offset.
 
-These are kept as a separate module so the rest of the codebase doesn't have to
-deal with ctypes and libX11 directly. The entire module degrades gracefully:
-if Xlib isn't available (e.g. pure Wayland session), the higher-level helpers
-fall back to xdotool / wmctrl subprocesses.
+These are kept as a separate module so the rest of the codebase doesn't have
+to deal with ctypes and libX11 directly. Everything goes through libX11 +
+libXext loaded via ``ctypes.cdll.LoadLibrary`` — no subprocess forks during
+normal operation. If libX11 isn't loadable (extremely rare on systems that
+can run GTK4), every helper degrades to a graceful no-op.
 """
 from __future__ import annotations
 
 import ctypes
 import logging
-import subprocess
-import threading
 
 import gi
 gi.require_version("Gdk", "4.0")
@@ -74,7 +74,7 @@ def _init_xlib():
     except Exception as e:
         log.debug("Xlib init failed: %s", e)
     _xlib = False
-    log.debug("Xlib unavailable, using xdotool fallback")
+    log.debug("Xlib unavailable — window helpers will be no-ops")
     return False
 
 
@@ -82,7 +82,8 @@ _xlib_dirty = False
 
 
 def move_window(window, x: float, y: float) -> None:
-    """Move a GTK4 window. Uses Xlib directly, falls back to xdotool."""
+    """Move a GTK4 window via Xlib XMoveWindow. No-op when libX11 isn't
+    loadable (e.g. pure Wayland session without Xwayland)."""
     global _xlib_dirty
     xid = _get_xid(window)
     if not xid:
@@ -90,8 +91,6 @@ def move_window(window, x: float, y: float) -> None:
     if _init_xlib() and _xdpy:
         _xlib.XMoveWindow(ctypes.c_void_p(_xdpy), xid, int(x), int(y))
         _xlib_dirty = True
-    else:
-        _run_x11(["xdotool", "windowmove", str(xid), str(int(x)), str(int(y))])
 
 
 def flush_x11() -> None:
@@ -100,16 +99,6 @@ def flush_x11() -> None:
     if _xlib_dirty and _xlib and _xdpy:
         _xlib.XFlush(ctypes.c_void_p(_xdpy))
         _xlib_dirty = False
-
-
-def _run_x11(cmd: list[str]) -> None:
-    """Run an X11 tool non-blocking in a background thread."""
-    def _bg():
-        try:
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
-        except Exception:
-            pass
-    threading.Thread(target=_bg, daemon=True).start()
 
 
 def _x11_set_property_atom(xid: int, prop_name: str, value_name: str) -> bool:
@@ -192,19 +181,20 @@ _notification_windows: list = []
 
 
 def _apply_xid_hints(window, above: bool = False, notification: bool = False) -> None:
-    """Apply X11 hints immediately if XID is available."""
+    """Apply X11 hints immediately if XID is available. Pure Xlib —
+    no subprocess fallbacks. Failures are logged at debug level and
+    silently swallowed; the worst case is the canvas window not being
+    perfectly always-on-top, which the user can manually fix."""
     xid = _get_xid(window)
     if not xid:
         return
     wid = id(window)
     if above and ("above", wid) not in _applied:
-        if not _x11_set_above_skip_taskbar(xid):
-            _run_x11(["wmctrl", "-i", "-r", str(xid), "-b", "add,above,skip_taskbar"])
+        _x11_set_above_skip_taskbar(xid)
         _applied.add(("above", wid))
     if notification and ("notif", wid) not in _applied:
-        if not _x11_set_property_atom(xid, "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_NOTIFICATION"):
-            _run_x11(["xprop", "-id", str(xid), "-f", "_NET_WM_WINDOW_TYPE", "32a",
-                      "-set", "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_NOTIFICATION"])
+        _x11_set_property_atom(xid, "_NET_WM_WINDOW_TYPE",
+                               "_NET_WM_WINDOW_TYPE_NOTIFICATION")
         _applied.add(("notif", wid))
     if _xlib and _xdpy:
         _xlib.XFlush(ctypes.c_void_p(_xdpy))
@@ -246,6 +236,169 @@ def apply_above_all() -> bool:
         if ("notif", id(w)) not in _applied:
             _apply_xid_hints(w, notification=True)
     return True
+
+
+# ── Direct Xlib queries (replace xprop / xdotool subprocess polls) ──────────
+
+
+def _ensure_xlib_query_signatures() -> None:
+    """Set up the ctypes signatures for the read-only Xlib query
+    functions used by ``get_active_window_fullscreen`` and
+    ``get_window_y_offset``. Idempotent — only fills in argtypes that
+    haven't been set yet."""
+    # XInternAtom + XDefaultRootWindow signatures are already set in
+    # _x11_set_above_skip_taskbar / _x11_set_property_atom on the same
+    # _xlib instance, but we re-set them defensively in case those
+    # paths haven't been triggered yet.
+    _xlib.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+    _xlib.XInternAtom.restype = ctypes.c_ulong
+    _xlib.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+    _xlib.XDefaultRootWindow.restype = ctypes.c_ulong
+    _xlib.XGetWindowProperty.argtypes = [
+        ctypes.c_void_p,                              # display
+        ctypes.c_ulong,                               # window
+        ctypes.c_ulong,                               # property atom
+        ctypes.c_long,                                # long_offset
+        ctypes.c_long,                                # long_length
+        ctypes.c_int,                                 # delete (Bool)
+        ctypes.c_ulong,                               # req_type atom (AnyPropertyType=0)
+        ctypes.POINTER(ctypes.c_ulong),               # actual_type_return
+        ctypes.POINTER(ctypes.c_int),                 # actual_format_return
+        ctypes.POINTER(ctypes.c_ulong),               # nitems_return
+        ctypes.POINTER(ctypes.c_ulong),               # bytes_after_return
+        ctypes.POINTER(ctypes.POINTER(ctypes.c_ulong)),  # prop_return
+    ]
+    _xlib.XGetWindowProperty.restype = ctypes.c_int
+    _xlib.XFree.argtypes = [ctypes.c_void_p]
+    _xlib.XFree.restype = ctypes.c_int
+    _xlib.XTranslateCoordinates.argtypes = [
+        ctypes.c_void_p,                # display
+        ctypes.c_ulong,                 # src_w
+        ctypes.c_ulong,                 # dst_w
+        ctypes.c_int,                   # src_x
+        ctypes.c_int,                   # src_y
+        ctypes.POINTER(ctypes.c_int),   # dest_x_return
+        ctypes.POINTER(ctypes.c_int),   # dest_y_return
+        ctypes.POINTER(ctypes.c_ulong), # child_return
+    ]
+    _xlib.XTranslateCoordinates.restype = ctypes.c_int
+
+
+def _x11_get_active_window() -> int:
+    """Return the XID of the currently focused window via
+    ``_NET_ACTIVE_WINDOW`` on the root window. Returns 0 on failure."""
+    if not (_init_xlib() and _xdpy):
+        return 0
+    try:
+        _ensure_xlib_query_signatures()
+        dpy = ctypes.c_void_p(_xdpy)
+        root = _xlib.XDefaultRootWindow(dpy)
+        active_atom = _xlib.XInternAtom(dpy, b"_NET_ACTIVE_WINDOW", 0)
+
+        actual_type = ctypes.c_ulong(0)
+        actual_format = ctypes.c_int(0)
+        nitems = ctypes.c_ulong(0)
+        bytes_after = ctypes.c_ulong(0)
+        prop_ptr = ctypes.POINTER(ctypes.c_ulong)()
+
+        # Read up to 1 long (32-bit on the wire, c_ulong here is fine
+        # since Xlib zero-extends to native long).
+        rc = _xlib.XGetWindowProperty(
+            dpy, root, active_atom, 0, 1, 0, 0,
+            ctypes.byref(actual_type),
+            ctypes.byref(actual_format),
+            ctypes.byref(nitems),
+            ctypes.byref(bytes_after),
+            ctypes.byref(prop_ptr),
+        )
+        if rc != 0 or not prop_ptr or nitems.value == 0:
+            return 0
+        try:
+            return int(prop_ptr[0])
+        finally:
+            _xlib.XFree(prop_ptr)
+    except Exception:
+        log.debug("Xlib _x11_get_active_window failed", exc_info=True)
+        return 0
+
+
+def _x11_window_has_state(xid: int, state_atom_name: str) -> bool:
+    """Return True if ``xid`` has ``state_atom_name`` in its
+    ``_NET_WM_STATE`` property. Reads up to 32 atoms (more than any
+    real window would carry)."""
+    if not (_init_xlib() and _xdpy and xid):
+        return False
+    try:
+        _ensure_xlib_query_signatures()
+        dpy = ctypes.c_void_p(_xdpy)
+        wm_state_atom = _xlib.XInternAtom(dpy, b"_NET_WM_STATE", 0)
+        target_atom = _xlib.XInternAtom(dpy, state_atom_name.encode(), 0)
+
+        actual_type = ctypes.c_ulong(0)
+        actual_format = ctypes.c_int(0)
+        nitems = ctypes.c_ulong(0)
+        bytes_after = ctypes.c_ulong(0)
+        prop_ptr = ctypes.POINTER(ctypes.c_ulong)()
+
+        rc = _xlib.XGetWindowProperty(
+            dpy, xid, wm_state_atom, 0, 32, 0, 0,
+            ctypes.byref(actual_type),
+            ctypes.byref(actual_format),
+            ctypes.byref(nitems),
+            ctypes.byref(bytes_after),
+            ctypes.byref(prop_ptr),
+        )
+        if rc != 0 or not prop_ptr:
+            return False
+        try:
+            n = int(nitems.value)
+            for i in range(n):
+                if int(prop_ptr[i]) == int(target_atom):
+                    return True
+            return False
+        finally:
+            _xlib.XFree(prop_ptr)
+    except Exception:
+        log.debug("Xlib _x11_window_has_state failed", exc_info=True)
+        return False
+
+
+def get_active_window_fullscreen() -> bool:
+    """Return True if the currently focused window has the
+    ``_NET_WM_STATE_FULLSCREEN`` atom set. Replaces the previous
+    ``xprop -root`` + ``xprop -id`` subprocess pair: same result,
+    ~50 µs instead of ~30 ms, no fork."""
+    xid = _x11_get_active_window()
+    if not xid:
+        return False
+    return _x11_window_has_state(xid, "_NET_WM_STATE_FULLSCREEN")
+
+
+def get_window_y_offset(xid: int) -> int:
+    """Return the absolute Y position (screen-pixel) of an X11 window
+    via ``XTranslateCoordinates`` (translate (0, 0) of ``xid`` into the
+    root window's frame). Used to detect the GNOME top bar offset for
+    chat-bubble positioning. Replaces ``xdotool getwindowgeometry``.
+    Returns 0 on any failure."""
+    if not (_init_xlib() and _xdpy and xid):
+        return 0
+    try:
+        _ensure_xlib_query_signatures()
+        dpy = ctypes.c_void_p(_xdpy)
+        root = _xlib.XDefaultRootWindow(dpy)
+        dest_x = ctypes.c_int(0)
+        dest_y = ctypes.c_int(0)
+        child = ctypes.c_ulong(0)
+        ok = _xlib.XTranslateCoordinates(
+            dpy, xid, root, 0, 0,
+            ctypes.byref(dest_x),
+            ctypes.byref(dest_y),
+            ctypes.byref(child),
+        )
+        return int(dest_y.value) if ok else 0
+    except Exception:
+        log.debug("Xlib get_window_y_offset failed", exc_info=True)
+        return 0
 
 
 # ── XShape input passthrough ──────────────────────────────────────────────────

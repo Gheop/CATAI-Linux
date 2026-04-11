@@ -13,14 +13,23 @@ behavior tick can make the cats feel aware of their environment:
     Subtle but accumulates: by 3 AM most cats will be napping on
     their own.
 
-Everything is best-effort. If the platform doesn't expose a given
-signal (e.g. xprintidle missing on pure Wayland, /proc/loadavg on
-non-Linux) the corresponding check silently returns a neutral value.
+Idle detection layered fallback (cheapest first):
+
+  1. **Mutter D-Bus IdleMonitor** — ``org.gnome.Mutter.IdleMonitor``
+     on the session bus. Method ``GetIdletime`` returns ms exactly
+     like ``xprintidle``. ~0.1 ms per call, no subprocess fork.
+     Available on every modern GNOME (Wayland or X11). Some KDE
+     setups also expose it via the kglobalaccel-mutter shim.
+  2. **xprintidle subprocess** — legacy fallback for X11 sessions
+     where Mutter isn't running (e.g. minimal i3, IceWM). ~5-15 ms
+     per fork.
+  3. **Constant 0** — last-resort no-op so AFK detection silently
+     stays off rather than crashing.
 
 The monitor is stateless: callers (CatAIApp.behavior_tick) invoke
 ``update()`` once per tick, then read the properties. No background
-threads, no subprocess pools — the subprocess cost is ~10 ms every
-few seconds and the rest is file reads / int arithmetic.
+threads, no subprocess pools — D-Bus calls go through the in-process
+session bus connection that GIO already maintains.
 """
 from __future__ import annotations
 
@@ -52,10 +61,16 @@ class ActivityMonitor:
         self.hour: int = 12
         self.is_afk: bool = False
         self._last_update: float = 0.0
+        # D-Bus idle monitor proxy (lazy init in _read_idle_ms). Three
+        # states: None = not yet attempted, False = attempted and
+        # unavailable, anything else = a live Gio.DBusProxy.
+        self._idle_proxy = None
+        # Legacy subprocess fallback. Resolved once at construction so
+        # we don't shutil.which() in the hot path.
         self._xprintidle = shutil.which("xprintidle")
         # Test override: when set to True/False, update() leaves is_afk
         # alone (pinned) so the e2e suite can force AFK transitions on a
-        # CI runner where xprintidle reports 0 ms and the hysteresis
+        # CI runner where idle detection reports 0 ms and the hysteresis
         # would otherwise reset the flag on the next tick. None means
         # "normal behavior, hysteresis in charge".
         self._pinned_afk: bool | None = None
@@ -88,18 +103,71 @@ class ActivityMonitor:
     # ── Signal readers ───────────────────────────────────────────────────────
 
     def _read_idle_ms(self) -> int:
-        """Return current user idle time in ms. Returns 0 if we can't
-        determine it (non-X11 session, xprintidle missing, etc.)."""
-        if not self._xprintidle:
-            return 0
+        """Return current user idle time in ms. Tries Mutter D-Bus
+        first (cheap, no fork), falls back to xprintidle subprocess
+        on non-GNOME setups, then to a constant 0 if neither is
+        available. Never raises."""
+        # Path 1 — Mutter D-Bus IdleMonitor (works on GNOME Wayland and X11)
+        proxy = self._ensure_idle_proxy()
+        if proxy is not None:
+            try:
+                # call_sync(method, params, flags, timeout_ms, cancellable)
+                # GetIdletime takes no args and returns (t: u64)
+                from gi.repository import Gio
+                result = proxy.call_sync(
+                    "GetIdletime", None,
+                    Gio.DBusCallFlags.NONE, 200, None,
+                )
+                return int(result.unpack()[0])
+            except Exception:
+                # Mark dead so we don't keep retrying every poll. The
+                # subprocess fallback below picks up the slack.
+                log.debug("activity: Mutter idle monitor call failed", exc_info=True)
+                self._idle_proxy = False
+
+        # Path 2 — legacy xprintidle subprocess (X11-only)
+        if self._xprintidle:
+            try:
+                r = subprocess.run(
+                    [self._xprintidle],
+                    capture_output=True, text=True, timeout=1,
+                )
+                return int(r.stdout.strip())
+            except Exception:
+                return 0
+        return 0
+
+    def _ensure_idle_proxy(self):
+        """Lazy-create the Gio.DBusProxy for org.gnome.Mutter.IdleMonitor.
+        Returns the proxy on success, None if D-Bus / GIO is unavailable
+        or if we already determined Mutter isn't on the bus.
+
+        ``self._idle_proxy`` tri-state:
+            None  → first call, attempt construction
+            False → previous attempt failed, don't retry every poll
+            obj   → live proxy, ready to call
+        """
+        if self._idle_proxy is False:
+            return None
+        if self._idle_proxy is not None:
+            return self._idle_proxy
         try:
-            r = subprocess.run(
-                [self._xprintidle],
-                capture_output=True, text=True, timeout=1,
+            from gi.repository import Gio
+            self._idle_proxy = Gio.DBusProxy.new_for_bus_sync(
+                Gio.BusType.SESSION,
+                Gio.DBusProxyFlags.NONE,
+                None,  # interface info
+                "org.gnome.Mutter.IdleMonitor",
+                "/org/gnome/Mutter/IdleMonitor/Core",
+                "org.gnome.Mutter.IdleMonitor",
+                None,  # cancellable
             )
-            return int(r.stdout.strip())
+            log.debug("activity: bound Mutter D-Bus IdleMonitor")
+            return self._idle_proxy
         except Exception:
-            return 0
+            log.debug("activity: Mutter D-Bus IdleMonitor unavailable", exc_info=True)
+            self._idle_proxy = False
+            return None
 
     def _read_loadavg(self) -> float:
         """First value of /proc/loadavg (1-min average). Returns 0 on non-Linux."""
