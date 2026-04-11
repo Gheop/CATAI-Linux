@@ -415,6 +415,82 @@ def test_personality() -> None:
             personality._CONFIG_SUBDIR = orig
 
 
+def test_monitors() -> None:
+    print("\n[monitors]", flush=True)
+    import random as _random
+
+    from catai_linux import monitors
+
+    # Classic dual-monitor: 1920×1080 next to a 2560×1440 (taller),
+    # with a dead zone on the bottom of the first monitor.
+    rects = [
+        (0, 0, 1920, 1080),       # monitor 0
+        (1920, 0, 2560, 1440),    # monitor 1, taller → dead zone 1080-1440 on the left half
+    ]
+
+    # monitor_at
+    test("monitor_at(500, 500) = rect 0",
+         monitors.monitor_at(500, 500, rects) == rects[0])
+    test("monitor_at(2500, 1200) = rect 1",
+         monitors.monitor_at(2500, 1200, rects) == rects[1])
+    test("monitor_at(500, 1200) = None (dead zone)",
+         monitors.monitor_at(500, 1200, rects) is None)
+    test("monitor_at(5000, 5000) = None (outside all)",
+         monitors.monitor_at(5000, 5000, rects) is None)
+
+    # nearest_monitor rescues a dead-zone point
+    nearest = monitors.nearest_monitor(500, 1200, rects)
+    test("nearest_monitor(500, 1200) rescues to rect 0",
+         nearest == rects[0], str(nearest))
+    nearest = monitors.nearest_monitor(5000, 100, rects)
+    test("nearest_monitor(5000, 100) snaps to rect 1",
+         nearest == rects[1], str(nearest))
+
+    # snap_to_nearest clamps inside the rect
+    snapped = monitors.snap_to_nearest(500, 1200, 80, 80, rects)
+    test("snap_to_nearest returns (int, int)",
+         isinstance(snapped, tuple) and len(snapped) == 2
+         and all(isinstance(v, int) for v in snapped),
+         str(snapped))
+    # Clamped point should be inside rect 0 (since that's the nearest)
+    cx, cy = snapped
+    test("snap_to_nearest keeps x inside nearest rect",
+         0 <= cx <= 1920 - 80, f"cx={cx}")
+    test("snap_to_nearest clamps y to rect 0 bottom",
+         0 <= cy <= 1080 - 80, f"cy={cy}")
+
+    # Empty rects edge cases
+    test("monitor_at([]) = None",
+         monitors.monitor_at(0, 0, []) is None)
+    test("nearest_monitor([]) = None",
+         monitors.nearest_monitor(0, 0, []) is None)
+    test("snap_to_nearest([]) = None",
+         monitors.snap_to_nearest(0, 0, 80, 80, []) is None)
+
+    # distribute_spawns round-robin
+    rng = _random.Random(42)
+    spawns = monitors.distribute_spawns(6, rects, rng=rng, padding=40)
+    test("distribute_spawns returns n points",
+         len(spawns) == 6, str(spawns))
+    # Each spawn must be inside one of the rects (padding-respecting)
+    all_inside = all(
+        monitors.monitor_at(x, y, rects) is not None
+        for x, y in spawns
+    )
+    test("every spawn is inside a monitor", all_inside, str(spawns))
+    # Round-robin: point 0 should be in rect 0, point 1 in rect 1
+    test("spawn 0 is on monitor 0",
+         monitors.monitor_at(*spawns[0], rects) == rects[0])
+    test("spawn 1 is on monitor 1",
+         monitors.monitor_at(*spawns[1], rects) == rects[1])
+    # Empty rects → empty list
+    test("distribute_spawns([]) = []",
+         monitors.distribute_spawns(5, []) == [])
+    # n=0 → empty list even with rects
+    test("distribute_spawns(0) = []",
+         monitors.distribute_spawns(0, rects) == [])
+
+
 def test_seasonal() -> None:
     print("\n[seasonal]", flush=True)
     import cairo
@@ -498,6 +574,7 @@ def test_import_smoke() -> None:
         "catai_linux.voice",
         "catai_linux.drawing",
         "catai_linux.personality",
+        "catai_linux.monitors",
         "catai_linux.seasonal",
         "catai_linux.reactions",
         "catai_linux.mood",
@@ -745,6 +822,7 @@ def main() -> int:
     _run_section("drawing", test_drawing)
     _run_section("theme", test_theme)
     _run_section("personality", test_personality)
+    _run_section("monitors", test_monitors)
     _run_section("seasonal", test_seasonal)
     _run_section("reactions", test_reactions)
     _run_section("mood", test_mood)

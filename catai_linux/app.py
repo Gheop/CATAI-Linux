@@ -336,6 +336,25 @@ MAGIC_EGG_PHRASES = {
     "notify": "notification",
     "ping": "notification",
     "notification": "notification",
+    # Konami code — magic phrase fallback since we can't hook global
+    # arrow-key events (canvas is click-through). Triggering through the
+    # chat gets you the same 30-lives celebration.
+    "konami": "konami",
+    "up up down down": "konami",
+    "up up down down left right left right ba": "konami",
+    "cheat code": "konami",
+    "god mode": "konami",
+    # Coffee rush — all cats move 2× speed for 15 s
+    "coffee": "coffee",
+    "espresso": "coffee",
+    "caffeine": "coffee",
+    "latte": "coffee",
+    # Zen mode — all cats freeze calmly for 10 s
+    "zen": "zen",
+    "meditate": "zen",
+    "meditation": "zen",
+    "calm": "zen",
+    "breathe": "zen",
 }
 
 EASTER_EGGS = [
@@ -366,6 +385,9 @@ EASTER_EGGS = [
     ("uptime",      "\u23f1",     "Uptime party",  "eg_uptime"),
     ("fullscreen",  "\U0001f64c", "Fullscreen",    "eg_fullscreen"),
     ("notification","\U0001f514", "Notification",  "eg_notification"),
+    ("konami",      "\U0001f3ae", "Konami code",   "eg_konami"),
+    ("coffee",      "\u2615",     "Coffee rush",   "eg_coffee"),
+    ("zen",         "\U0001f9d8", "Zen mode",      "eg_zen"),
 ]
 
 CATSET_PERSONALITIES = {
@@ -614,6 +636,7 @@ from catai_linux.reactions import ReactionPool  # noqa: E402
 from catai_linux.mood import CatMood  # noqa: E402
 from catai_linux.activity import ActivityMonitor  # noqa: E402
 from catai_linux import personality as _personality  # noqa: E402
+from catai_linux import monitors as _monitors_mod  # noqa: E402
 from catai_linux import seasonal as _seasonal  # noqa: E402
 
 
@@ -2327,14 +2350,21 @@ class CatAIApp(Gtk.Application):
 
         display = Gdk.Display.get_default()
         monitors = display.get_monitors()
+        # Collect per-monitor rects for multi-monitor awareness (dead-zone
+        # rescue, spawn distribution, socket inspection). The bounding-box
+        # screen_w/screen_h stay the same as before so nothing else has
+        # to change.
+        self._monitor_rects: list[tuple[int, int, int, int]] = []
         if monitors.get_n_items() > 0:
             max_w, max_h = 0, 0
             for i in range(monitors.get_n_items()):
                 geo = monitors.get_item(i).get_geometry()
+                self._monitor_rects.append((geo.x, geo.y, geo.width, geo.height))
                 max_w = max(max_w, geo.x + geo.width)
                 max_h = max(max_h, geo.y + geo.height)
             self.screen_w = max_w
             self.screen_h = max_h
+        log.info("Monitors detected: %d %r", len(self._monitor_rects), self._monitor_rects)
 
         cfg = load_config()
         self.cat_scale = cfg.get("scale", DEFAULT_SCALE)
@@ -2405,6 +2435,16 @@ class CatAIApp(Gtk.Application):
         # Pre-create context menu and settings (hidden) so NOTIFICATION type
         # is applied before user ever sees them (avoids GNOME "is ready" alert)
         # Settings window created on first use (not pre-opened to avoid GNOME notification)
+
+        # Plan initial spawn coordinates across monitors (round-robin) so
+        # a dual-screen user doesn't get every cat stacked on monitor 0.
+        # Falls back to an empty list → _create_instance uses its own
+        # random-on-monitor-0 logic.
+        if self._monitor_rects and self.cat_configs:
+            self._spawn_plan = _monitors_mod.distribute_spawns(
+                len(self.cat_configs), self._monitor_rects, padding=80)
+        else:
+            self._spawn_plan = []
 
         # Create cat instances (no windows, just state)
         for i, cat_cfg in enumerate(self.cat_configs):
@@ -2873,6 +2913,28 @@ class CatAIApp(Gtk.Application):
             self._canvas_area.queue_draw()
         return "OK redraw queued"
 
+    def _cmd_monitors(self, parts):
+        """Return the list of detected monitor rects. Usage:
+            monitors              → list all rects
+            monitors at <x> <y>   → report which monitor (if any) contains
+                                    the given point
+        Used by e2e tests and for manual debugging of multi-monitor
+        geometry (e.g. when a cat walks into a dead zone)."""
+        if len(parts) >= 2 and parts[1] == "at":
+            if len(parts) != 4:
+                return "ERR: usage: monitors at <x> <y>"
+            try:
+                px, py = int(parts[2]), int(parts[3])
+            except ValueError:
+                return "ERR: usage: monitors at <x> <y>"
+            rect = _monitors_mod.monitor_at(px, py, self._monitor_rects)
+            if rect is None:
+                nearest = _monitors_mod.nearest_monitor(px, py, self._monitor_rects)
+                return f"OK dead_zone=True nearest={nearest}"
+            return f"OK dead_zone=False rect={rect}"
+        rects = self._monitor_rects
+        return f"OK count={len(rects)} rects={rects}"
+
     def _cmd_theme(self, parts):
         """Query or force the bubble-palette dark mode. Usage:
             theme           → report current state
@@ -3014,6 +3076,7 @@ class CatAIApp(Gtk.Application):
                 "notify": self._cmd_notify,
                 "get_chat_response": self._cmd_get_chat_response,
                 "screenshot": self._cmd_screenshot,
+                "monitors": self._cmd_monitors,
                 "theme": self._cmd_theme,
                 "personality": self._cmd_personality,
                 "season": self._cmd_season,
@@ -3879,6 +3942,13 @@ class CatAIApp(Gtk.Application):
                    dw, dh,
                    self.selected_model, L10n.lang,
                    start_x, self.screen_w, self.screen_h)
+        # Multi-monitor spawn: override the post-setup (x, y) with our
+        # planned round-robined point so cats don't all start on monitor 0.
+        plan = getattr(self, "_spawn_plan", None)
+        if plan and index < len(plan):
+            inst.x, inst.y = plan[index]
+            inst.dest_x = inst.x
+            inst.dest_y = inst.y
         self.cat_instances.append(inst)
 
     def _save_all(self):
@@ -5141,6 +5211,143 @@ class CatAIApp(Gtk.Application):
         except Exception:
             log.exception("Failed to load nyan cat assets")
             self._nyan_frames = []
+
+    def eg_konami(self):
+        """Konami code unlocked — all cats briefly flash through SURPRISED →
+        LOVE → ROLLING, like a "GOD MODE" celebration. Also bumps every
+        cat's mood toward content without pinning it to the extreme values
+        that would lock ``_roll_mood_adjusted`` into a single narrow IDLE
+        branch for the rest of the session.
+
+        Magic phrases: 'konami', 'up up down down', 'cheat code'."""
+        if not self.cat_instances:
+            return
+        if getattr(self, "_konami_active", False):
+            return
+        self._konami_active = True
+
+        # Phase 1: SURPRISED (all cats, 500 ms)
+        for cat in self.cat_instances:
+            if cat.in_encounter:
+                continue
+            cat.state = CatState.SURPRISED
+            cat.direction = "south"
+            cat.frame_index = 0
+            cat.in_encounter = True
+            # Mood bump toward happy/rested WITHOUT pinning to extremes.
+            # is_affectionate triggers at happiness > 75 and is_bored at
+            # bored > 70 — we stay safely below both so the behavior
+            # tick's IDLE branch doesn't get locked into a single band.
+            if hasattr(cat, "mood") and cat.mood is not None:
+                cat.mood.happiness = min(75.0, cat.mood.happiness + 30)
+                cat.mood.energy = min(99.0, cat.mood.energy + 30)
+                cat.mood.bored = max(0.0, cat.mood.bored - 40)
+                cat.mood.hunger = max(0.0, cat.mood.hunger - 20)
+
+        def phase_love():
+            for cat in self.cat_instances:
+                cat.state = CatState.LOVE
+                cat.frame_index = 0
+            GLib.timeout_add(1500, phase_rolling)
+            return False
+
+        def phase_rolling():
+            for cat in self.cat_instances:
+                cat.state = CatState.ROLLING
+                cat.frame_index = 0
+            GLib.timeout_add(1200, phase_done)
+            return False
+
+        def phase_done():
+            self._release_encounter_lock()
+            self._konami_active = False
+            return False
+
+        GLib.timeout_add(500, phase_love)
+
+    def eg_coffee(self):
+        """Caffeine rush — all cats move at 2× behavior tick speed for 15 s,
+        then settle back. Combined with a one-shot happiness/energy bump.
+        Magic phrases: 'coffee', 'espresso', 'caffeine'."""
+        if getattr(self, "_coffee_active", False):
+            return
+        self._coffee_active = True
+
+        # Burst of energy on the mood stats. Cap happiness at 75 so we
+        # don't trigger is_affectionate() which would lock the IDLE
+        # branch into a narrow LOVE/sparkle band for the rest of the
+        # session — same pitfall as eg_konami without the cap.
+        for cat in self.cat_instances:
+            if hasattr(cat, "mood") and cat.mood is not None:
+                cat.mood.energy = min(99.0, cat.mood.energy + 25)
+                cat.mood.happiness = min(75.0, cat.mood.happiness + 10)
+
+        # Swap the behavior tick for a 2× faster variant for 15 s. Keep
+        # render tick untouched so the cats look hyperactive rather than
+        # time-sped-up.
+        try:
+            for tid in self._timers:
+                try:
+                    GLib.source_remove(tid)
+                except Exception:
+                    pass
+            self._timers = [
+                GLib.timeout_add(RENDER_MS, self._render_tick),
+                GLib.timeout_add(max(1, BEHAVIOR_MS // 2), self._behavior_tick),
+                GLib.timeout_add(10000, _apply_above_all),
+                GLib.timeout_add(30000, self._gc_collect),
+            ]
+        except Exception:
+            log.exception("eg_coffee timer swap failed")
+
+        def restore():
+            for tid in self._timers:
+                try:
+                    GLib.source_remove(tid)
+                except Exception:
+                    pass
+            self._timers = [
+                GLib.timeout_add(RENDER_MS, self._render_tick),
+                GLib.timeout_add(BEHAVIOR_MS, self._behavior_tick),
+                GLib.timeout_add(10000, _apply_above_all),
+                GLib.timeout_add(30000, self._gc_collect),
+            ]
+            self._coffee_active = False
+            return False
+
+        GLib.timeout_add(15000, restore)
+
+    def eg_zen(self):
+        """Meditation mode — all cats freeze in IDLE state, perfectly still,
+        for 10 seconds. Drops their bored stat briefly.
+        Magic phrases: 'zen', 'meditate', 'calm'."""
+        if not self.cat_instances:
+            return
+        if getattr(self, "_zen_active", False):
+            return
+        self._zen_active = True
+
+        for cat in self.cat_instances:
+            if cat.in_encounter:
+                continue
+            cat.state = CatState.IDLE
+            cat.direction = "south"
+            cat.frame_index = 0
+            cat.in_encounter = True
+            if hasattr(cat, "mood") and cat.mood is not None:
+                cat.mood.bored = max(0.0, cat.mood.bored - 30)
+                # Cap below is_affectionate threshold (>75) for the same
+                # reason as eg_konami / eg_coffee — avoid locking the
+                # IDLE roll into a single narrow band.
+                cat.mood.happiness = min(75.0, cat.mood.happiness + 10)
+
+        def release():
+            for cat in self.cat_instances:
+                cat.in_encounter = False
+            self._zen_active = False
+            return False
+
+        GLib.timeout_add(10000, release)
 
     def eg_nyan(self):
         """Classic Nyan Cat: flies across the screen with a tiled animated rainbow trail."""

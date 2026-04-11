@@ -494,6 +494,29 @@ def run_tests():
     send_cmd("click_cat 0")
     time.sleep(0.3)
 
+    # T13n: Konami code — magic-phrase triggered, goes through
+    # SURPRISED → LOVE → ROLLING phases. Each phase is ~1.2-1.5 s so
+    # the total is ~3.2 s. Just check the socket returned OK and wait
+    # for the phases to settle before the love encounters.
+    resp = send_cmd("egg konami")
+    test("egg konami triggered", resp.startswith("OK"), resp)
+    time.sleep(4)  # 0.5 + 1.5 + 1.2 = 3.2s + margin
+
+    # T13o: Coffee rush — magic-phrase triggered, runs at 2× behavior
+    # tick for 15 s then restores. Check state restores cleanly.
+    resp = send_cmd("egg coffee")
+    test("egg coffee triggered", resp.startswith("OK"), resp)
+    time.sleep(0.5)
+    # Don't wait the full 15 s — we already verified the trigger path.
+    # The restore timer keeps running in the background; test continues.
+
+    # T13p: Zen mode — magic-phrase triggered, freezes all cats in IDLE
+    # for 10 s. Check state after the release timer fires.
+    resp = send_cmd("egg zen")
+    test("egg zen triggered", resp.startswith("OK"), resp)
+    time.sleep(0.5)
+    # Similarly: don't wait the full 10 s here.
+
     # ── T14: Love encounter — all 3 outcomes ─────────────
     print("\n[T14] Love encounters", flush=True)
 
@@ -651,8 +674,31 @@ def run_tests():
     resp = send_cmd("season bogus")
     test("season rejects unknown name", resp.startswith("ERR"), resp)
 
-    # ── T15f: Personality drift ───────────────────────────
-    print("\n[T15f] Personality drift", flush=True)
+    # ── T15f: Multi-monitor awareness ─────────────────────
+    print("\n[T15f] Multi-monitor awareness", flush=True)
+    resp = send_cmd("monitors")
+    test("monitors query returns OK",
+         resp.startswith("OK count=") and "rects=" in resp, resp)
+    # CI has exactly 1 virtual display from xvfb, so count should be 1.
+    # Locally it may be 1-3. Accept anything >= 1.
+    import re as _re
+    m = _re.search(r"count=(\d+)", resp)
+    count = int(m.group(1)) if m else 0
+    test("at least 1 monitor detected", count >= 1, resp)
+    # Point inside a monitor
+    resp = send_cmd("monitors at 100 100")
+    test("monitors at <inside> returns dead_zone=False",
+         resp.startswith("OK") and "dead_zone=False" in resp, resp)
+    # Point far outside any monitor
+    resp = send_cmd("monitors at 999999 999999")
+    test("monitors at <outside> returns dead_zone=True",
+         resp.startswith("OK") and "dead_zone=True" in resp, resp)
+    # Bad usage
+    resp = send_cmd("monitors at 10")
+    test("monitors rejects bad usage", resp.startswith("ERR"), resp)
+
+    # ── T15g: Personality drift ───────────────────────────
+    print("\n[T15g] Personality drift", flush=True)
     # Fresh cat should have no quirks
     resp = send_cmd("personality state 0")
     test("personality state query returns OK",
