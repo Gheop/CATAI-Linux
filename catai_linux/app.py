@@ -635,6 +635,7 @@ from catai_linux.x11_helpers import (  # noqa: E402
 from catai_linux.reactions import ReactionPool  # noqa: E402
 from catai_linux.mood import CatMood  # noqa: E402
 from catai_linux.activity import ActivityMonitor  # noqa: E402
+from catai_linux import monitors as _monitors_mod  # noqa: E402
 from catai_linux import seasonal as _seasonal  # noqa: E402
 
 
@@ -2314,14 +2315,21 @@ class CatAIApp(Gtk.Application):
 
         display = Gdk.Display.get_default()
         monitors = display.get_monitors()
+        # Collect per-monitor rects for multi-monitor awareness (dead-zone
+        # rescue, spawn distribution, socket inspection). The bounding-box
+        # screen_w/screen_h stay the same as before so nothing else has
+        # to change.
+        self._monitor_rects: list[tuple[int, int, int, int]] = []
         if monitors.get_n_items() > 0:
             max_w, max_h = 0, 0
             for i in range(monitors.get_n_items()):
                 geo = monitors.get_item(i).get_geometry()
+                self._monitor_rects.append((geo.x, geo.y, geo.width, geo.height))
                 max_w = max(max_w, geo.x + geo.width)
                 max_h = max(max_h, geo.y + geo.height)
             self.screen_w = max_w
             self.screen_h = max_h
+        log.info("Monitors detected: %d %r", len(self._monitor_rects), self._monitor_rects)
 
         cfg = load_config()
         self.cat_scale = cfg.get("scale", DEFAULT_SCALE)
@@ -2388,6 +2396,16 @@ class CatAIApp(Gtk.Application):
         # Pre-create context menu and settings (hidden) so NOTIFICATION type
         # is applied before user ever sees them (avoids GNOME "is ready" alert)
         # Settings window created on first use (not pre-opened to avoid GNOME notification)
+
+        # Plan initial spawn coordinates across monitors (round-robin) so
+        # a dual-screen user doesn't get every cat stacked on monitor 0.
+        # Falls back to an empty list → _create_instance uses its own
+        # random-on-monitor-0 logic.
+        if self._monitor_rects and self.cat_configs:
+            self._spawn_plan = _monitors_mod.distribute_spawns(
+                len(self.cat_configs), self._monitor_rects, padding=80)
+        else:
+            self._spawn_plan = []
 
         # Create cat instances (no windows, just state)
         for i, cat_cfg in enumerate(self.cat_configs):
@@ -2856,6 +2874,28 @@ class CatAIApp(Gtk.Application):
             self._canvas_area.queue_draw()
         return "OK redraw queued"
 
+    def _cmd_monitors(self, parts):
+        """Return the list of detected monitor rects. Usage:
+            monitors              → list all rects
+            monitors at <x> <y>   → report which monitor (if any) contains
+                                    the given point
+        Used by e2e tests and for manual debugging of multi-monitor
+        geometry (e.g. when a cat walks into a dead zone)."""
+        if len(parts) >= 2 and parts[1] == "at":
+            if len(parts) != 4:
+                return "ERR: usage: monitors at <x> <y>"
+            try:
+                px, py = int(parts[2]), int(parts[3])
+            except ValueError:
+                return "ERR: usage: monitors at <x> <y>"
+            rect = _monitors_mod.monitor_at(px, py, self._monitor_rects)
+            if rect is None:
+                nearest = _monitors_mod.nearest_monitor(px, py, self._monitor_rects)
+                return f"OK dead_zone=True nearest={nearest}"
+            return f"OK dead_zone=False rect={rect}"
+        rects = self._monitor_rects
+        return f"OK count={len(rects)} rects={rects}"
+
     def _cmd_theme(self, parts):
         """Query or force the bubble-palette dark mode. Usage:
             theme           → report current state
@@ -2955,6 +2995,7 @@ class CatAIApp(Gtk.Application):
                 "notify": self._cmd_notify,
                 "get_chat_response": self._cmd_get_chat_response,
                 "screenshot": self._cmd_screenshot,
+                "monitors": self._cmd_monitors,
                 "theme": self._cmd_theme,
                 "season": self._cmd_season,
             }
@@ -3819,6 +3860,13 @@ class CatAIApp(Gtk.Application):
                    dw, dh,
                    self.selected_model, L10n.lang,
                    start_x, self.screen_w, self.screen_h)
+        # Multi-monitor spawn: override the post-setup (x, y) with our
+        # planned round-robined point so cats don't all start on monitor 0.
+        plan = getattr(self, "_spawn_plan", None)
+        if plan and index < len(plan):
+            inst.x, inst.y = plan[index]
+            inst.dest_x = inst.x
+            inst.dest_y = inst.y
         self.cat_instances.append(inst)
 
     def _save_all(self):

@@ -674,6 +674,29 @@ def run_tests():
     resp = send_cmd("season bogus")
     test("season rejects unknown name", resp.startswith("ERR"), resp)
 
+    # ── T15f: Multi-monitor awareness ─────────────────────
+    print("\n[T15f] Multi-monitor awareness", flush=True)
+    resp = send_cmd("monitors")
+    test("monitors query returns OK",
+         resp.startswith("OK count=") and "rects=" in resp, resp)
+    # CI has exactly 1 virtual display from xvfb, so count should be 1.
+    # Locally it may be 1-3. Accept anything >= 1.
+    import re as _re
+    m = _re.search(r"count=(\d+)", resp)
+    count = int(m.group(1)) if m else 0
+    test("at least 1 monitor detected", count >= 1, resp)
+    # Point inside a monitor
+    resp = send_cmd("monitors at 100 100")
+    test("monitors at <inside> returns dead_zone=False",
+         resp.startswith("OK") and "dead_zone=False" in resp, resp)
+    # Point far outside any monitor
+    resp = send_cmd("monitors at 999999 999999")
+    test("monitors at <outside> returns dead_zone=True",
+         resp.startswith("OK") and "dead_zone=True" in resp, resp)
+    # Bad usage
+    resp = send_cmd("monitors at 10")
+    test("monitors rejects bad usage", resp.startswith("ERR"), resp)
+
     # ── T16: Quit ─────────────────────────────────────────
     print("\n[T16] Quit via socket", flush=True)
     resp = send_cmd("click_menu_quit")
