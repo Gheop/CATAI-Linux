@@ -8,6 +8,7 @@ tempfile-backed surface.
 from __future__ import annotations
 
 import math
+import os
 import time
 
 import cairo
@@ -16,6 +17,31 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Pango", "1.0")
 gi.require_version("PangoCairo", "1.0")
 from gi.repository import Gdk, Gtk, Pango, PangoCairo  # noqa: E402
+
+# Pixel-art icon directory (hand-drawn, CC0 by us, ships in the wheel
+# under catai_linux/icons/). Loaded as cairo.ImageSurface on first use
+# and cached for the rest of the session — they're tiny so memory is
+# negligible. Resolved at import time so PyInstaller bundles and
+# pip-installed wheels both find them.
+ICONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons")
+_icon_cache: dict[str, cairo.ImageSurface] = {}
+
+
+def _load_icon(name: str) -> cairo.ImageSurface | None:
+    """Load a PNG from icons/ as a cairo.ImageSurface, cached. Returns
+    None if the file is missing (graceful degradation: callers fall
+    back to a Pango emoji glyph)."""
+    if name in _icon_cache:
+        return _icon_cache[name]
+    path = os.path.join(ICONS_DIR, f"{name}.png")
+    if not os.path.isfile(path):
+        return None
+    try:
+        surface = cairo.ImageSurface.create_from_png(path)
+    except Exception:
+        return None
+    _icon_cache[name] = surface
+    return surface
 
 
 # ── CSS Theme ─────────────────────────────────────────────────────────────────
@@ -382,10 +408,24 @@ def draw_chat_bubble(ctx, text: str, cat_x: float, cat_y: float,
         ctx.set_line_width(1.5)
         ctx.rectangle(icon_x - 2, icon_y - 2, icon_w + 4, icon_h + 4)
         ctx.stroke()
-        # Glyph — PangoCairo handles emoji fallback
-        glyph = "\U0001f50a" if speaker_state else "\U0001f507"  # 🔊 / 🔇
-        _draw_pango_symbol(ctx, glyph, icon_x, icon_y, 14,
-                           *THEME["bubble_text"])
+        # Pixel-art icon — pick the variant whose ink color contrasts
+        # the current bubble background. THEME is mutated in place by
+        # set_theme() so this branch picks the right tint at every
+        # frame even after a dark/light flip.
+        is_dark = THEME["bubble_bg"][0] < 0.5
+        variant = "_light" if is_dark else "_dark"
+        icon_name = f"speaker_{'on' if speaker_state else 'off'}{variant}"
+        surface = _load_icon(icon_name)
+        if surface is not None:
+            ctx.save()
+            ctx.set_source_surface(surface, icon_x, icon_y)
+            ctx.paint()
+            ctx.restore()
+        else:
+            # Fallback if the bundled PNGs are missing for some reason
+            glyph = "\U0001f50a" if speaker_state else "\U0001f507"
+            _draw_pango_symbol(ctx, glyph, icon_x, icon_y, 14,
+                               *THEME["bubble_text"])
         return (icon_x - 2, icon_y - 2, icon_w + 4, icon_h + 4)
     return None
 
