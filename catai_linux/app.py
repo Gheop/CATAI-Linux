@@ -3697,6 +3697,13 @@ class CatAIApp(Gtk.Application):
         text = cat.chat_response or ""
         pad = 12
         content_w = 256
+        # Match draw_chat_bubble's reservation for the speaker icon so
+        # the entry's bh estimate matches the actual bubble height.
+        # The chat bubble always shows the speaker icon (per-cat
+        # tts_enabled state, but presence is constant), so we always
+        # subtract the icon column.
+        ICON_RESERVE = 24 + 12  # speaker_on width + margin/outline pad
+        text_w = content_w - ICON_RESERVE
 
         # Lazy-create + cache the Pango layout (once per CatAIApp lifetime)
         lay = self._bubble_layout_cache
@@ -3705,12 +3712,14 @@ class CatAIApp(Gtk.Application):
             tctx = cairo.Context(tmp)
             lay = PangoCairo.create_layout(tctx)
             lay.set_font_description(Pango.FontDescription(_BUBBLE_FONT))
-            lay.set_width(content_w * Pango.SCALE)
             lay.set_wrap(Pango.WrapMode.WORD_CHAR)
             lay.set_height(-8)
             lay.set_ellipsize(Pango.EllipsizeMode.END)
             self._bubble_layout_cache = lay
             self._bubble_layout_cached_text = None
+        # Width may change frame-to-frame if the layout ever gets
+        # narrowed dynamically; set it every call for safety.
+        lay.set_width(text_w * Pango.SCALE)
 
         if text != self._bubble_layout_cached_text:
             lay.set_text(text, -1)
