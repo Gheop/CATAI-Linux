@@ -370,8 +370,12 @@ def draw_chat_bubble(ctx, text: str, cat_x: float, cat_y: float,
     bh = pad * 2 + th + 42   # text + 30 entry + 12 pad
     bx = cat_x + cat_w / 2 - bw / 2
     by = cat_y - bh - 15
+    # Track which side of the cat the bubble lands on so the tail
+    # points the right way (towards the cat).
+    bubble_above_cat = True
     if by < 0:
         by = cat_y + cat_h + 10
+        bubble_above_cat = False
 
     # Background
     ctx.set_source_rgba(*THEME["bubble_bg_translucent"])
@@ -391,13 +395,22 @@ def draw_chat_bubble(ctx, text: str, cat_x: float, cat_y: float,
     ctx.set_source_rgba(*THEME["bubble_text"])
     PangoCairo.show_layout(ctx, lay)
 
-    # Tail (small triangle pointing down)
+    # Tail — small triangle pointing toward the cat. If the bubble
+    # had to flip below the cat (cat near the top of the screen),
+    # the tail goes on the TOP edge pointing UP instead of the
+    # bottom edge pointing DOWN.
     tx = bx + bw / 2
-    ty = by + bh
     ctx.set_source_rgba(*THEME["bubble_border"])
-    ctx.move_to(tx - 8, ty)
-    ctx.line_to(tx + 8, ty)
-    ctx.line_to(tx, ty + 10)
+    if bubble_above_cat:
+        ty = by + bh
+        ctx.move_to(tx - 8, ty)
+        ctx.line_to(tx + 8, ty)
+        ctx.line_to(tx, ty + 10)
+    else:
+        ty = by
+        ctx.move_to(tx - 8, ty)
+        ctx.line_to(tx + 8, ty)
+        ctx.line_to(tx, ty - 10)
     ctx.close_path()
     ctx.fill()
 
