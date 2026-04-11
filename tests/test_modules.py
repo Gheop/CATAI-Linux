@@ -703,6 +703,137 @@ def test_tts() -> None:
          str(chunks))
 
 
+def test_memory() -> None:
+    print("\n[memory]", flush=True)
+    import tempfile
+    from catai_linux import memory
+
+    # Sandbox: redirect db path so we don't touch ~/.config
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "memory.db")
+        memory.MemoryStore.set_path(path)
+        try:
+            # Empty initial state
+            test("count empty cat = 0",
+                 memory.MemoryStore.count("cat01") == 0)
+
+            # Add facts
+            memory.MemoryStore.add_fact(
+                "cat01", "L'utilisateur s'appelle Sib")
+            memory.MemoryStore.add_fact(
+                "cat01", "Aime débuguer les pipelines GStreamer")
+            memory.MemoryStore.add_fact(
+                "cat01", "Travaille avec Linux et Python depuis 10 ans")
+            test("count after 3 adds = 3",
+                 memory.MemoryStore.count("cat01") == 3)
+
+            # Different cat is isolated
+            memory.MemoryStore.add_fact("cat02", "Aime le jardinage")
+            test("cat02 isolated count = 1",
+                 memory.MemoryStore.count("cat02") == 1)
+            test("cat01 still 3",
+                 memory.MemoryStore.count("cat01") == 3)
+
+            # Retrieval by keyword overlap
+            top = memory.MemoryStore.retrieve_relevant(
+                "cat01", "tu connais Python ?", n=2)
+            test("retrieve picks the Python fact",
+                 any("Python" in f for f in top), str(top))
+
+            top = memory.MemoryStore.retrieve_relevant(
+                "cat01", "Sib comment vas-tu ?", n=1)
+            test("retrieve picks the Sib name fact",
+                 any("Sib" in f for f in top), str(top))
+
+            top = memory.MemoryStore.retrieve_relevant(
+                "cat01", "GStreamer pipeline question", n=1)
+            test("retrieve picks the gstreamer fact",
+                 any("GStreamer" in f for f in top), str(top))
+
+            # Empty query → empty result, never crash
+            test("empty query → []",
+                 memory.MemoryStore.retrieve_relevant("cat01", "", n=3) == [])
+            # No matching facts → empty
+            test("no overlap → []",
+                 memory.MemoryStore.retrieve_relevant(
+                     "cat01", "abracadabra xyzzy", n=3) == [])
+
+            # all_facts returns insertion order
+            facts = memory.MemoryStore.all_facts("cat01")
+            test("all_facts returns 3 entries", len(facts) == 3)
+            test("first fact is the name", "Sib" in facts[0])
+
+            # Clear specific cat
+            memory.MemoryStore.clear("cat01")
+            test("clear(cat01) drops cat01",
+                 memory.MemoryStore.count("cat01") == 0)
+            test("clear(cat01) preserves cat02",
+                 memory.MemoryStore.count("cat02") == 1)
+
+            # Clear all
+            memory.MemoryStore.clear()
+            test("clear() wipes everything",
+                 memory.MemoryStore.count("cat02") == 0)
+
+            # Bounded growth — over the cap
+            for i in range(memory.MAX_FACTS_PER_CAT + 5):
+                memory.MemoryStore.add_fact("cat01", f"fact number {i}")
+            test("bounded at MAX_FACTS_PER_CAT",
+                 memory.MemoryStore.count("cat01") == memory.MAX_FACTS_PER_CAT)
+            # The oldest 5 should have been pruned, so the surviving
+            # facts start at index 5
+            facts = memory.MemoryStore.all_facts("cat01")
+            test("oldest pruned, fact 5 survived",
+                 "fact number 5" in facts[0])
+
+            # Empty / over-long content rejected
+            before = memory.MemoryStore.count("cat01")
+            memory.MemoryStore.add_fact("cat01", "")
+            memory.MemoryStore.add_fact("cat01", " " * 10)
+            memory.MemoryStore.add_fact("cat01", "x" * 500)
+            test("empty / huge content rejected",
+                 memory.MemoryStore.count("cat01") == before)
+
+        finally:
+            memory.MemoryStore.set_path(memory.DB_PATH)
+
+    # ── tokenization
+    tok = memory._tokenize
+    t = tok("Le chat aime le jardinage et le café.")
+    test("tokenize drops stopwords (le)", "le" not in t)
+    test("tokenize keeps content words",
+         "chat" in t and "jardinage" in t and "café" in t)
+    test("tokenize empty input → set()", tok("") == set())
+
+    # ── parser
+    parse = memory.parse_extract_response
+    test("parse plain JSON array",
+         parse('["fact one", "fact two"]') == ["fact one", "fact two"])
+    test("parse fenced JSON",
+         parse('```json\n["a", "b"]\n```') == ["a", "b"])
+    test("parse embedded JSON",
+         parse('Here you go: ["x"] thanks!') == ["x"])
+    test("parse empty → []", parse("") == [])
+    test("parse garbage → []", parse("not json at all") == [])
+
+    # ── append_memories_to_prompt
+    with tempfile.TemporaryDirectory() as td:
+        memory.MemoryStore.set_path(os.path.join(td, "m.db"))
+        try:
+            memory.MemoryStore.add_fact("cat01", "Aime le café noir")
+            base = "You are a cat."
+            out = memory.append_memories_to_prompt(
+                base, "cat01", "tu veux du café ?", "fr")
+            test("append injects matching fact",
+                 "café" in out, out)
+            out2 = memory.append_memories_to_prompt(
+                base, "cat01", "abracadabra", "fr")
+            test("no match → unchanged base",
+                 out2 == base)
+        finally:
+            memory.MemoryStore.set_path(memory.DB_PATH)
+
+
 def test_character_packs() -> None:
     print("\n[character_packs]", flush=True)
     import json
@@ -970,6 +1101,7 @@ def test_import_smoke() -> None:
         "catai_linux.updater",
         "catai_linux.metrics",
         "catai_linux.character_packs",
+        "catai_linux.memory",
         "catai_linux.reactions",
         "catai_linux.mood",
         "catai_linux.activity",
@@ -1222,6 +1354,7 @@ def main() -> int:
     _run_section("updater", test_updater)
     _run_section("metrics", test_metrics)
     _run_section("character_packs", test_character_packs)
+    _run_section("memory", test_memory)
     _run_section("reactions", test_reactions)
     _run_section("mood", test_mood)
     _run_section("activity", test_activity)
