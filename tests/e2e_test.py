@@ -605,6 +605,23 @@ def run_tests():
     test("afk_sleep=False after force_afk off",
          "afk_sleep=False" in resp, resp)
 
+    # ── T15d: Theme sync (dark/light) ─────────────────────
+    print("\n[T15d] Theme sync", flush=True)
+    resp = send_cmd("theme")
+    test("theme state query", resp.startswith("OK dark="), resp)
+    resp = send_cmd("theme dark")
+    test("theme dark accepted", resp.startswith("OK dark=True"), resp)
+    time.sleep(0.2)
+    resp = send_cmd("theme")
+    test("theme reports dark after flip", "dark=True" in resp, resp)
+    resp = send_cmd("theme light")
+    test("theme light accepted", resp.startswith("OK dark=False"), resp)
+    time.sleep(0.2)
+    resp = send_cmd("theme")
+    test("theme reports light after flip", "dark=False" in resp, resp)
+    resp = send_cmd("theme bogus")
+    test("theme rejects bogus value", resp.startswith("ERR"), resp)
+
     # ── T15e: Seasonal overlay ─────────────────────────────
     print("\n[T15e] Seasonal overlay", flush=True)
     # Re-enable first — the 30 s auto-dismiss may have fired already
