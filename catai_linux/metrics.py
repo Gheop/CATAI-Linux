@@ -24,7 +24,8 @@ Tracked events:
     love_encounter/<kind> — love | surprised | angry
     kitten_born           — increment when a love encounter produces a kitten
     pet_session           — increment when a petting session ends
-    per_cat/<id>/<event>  — per-cat counters (chats, pets)
+    wake_word_triggered   — voice wake word detected for a cat
+    per_cat/<id>/<event>  — per-cat counters (chats, pets, wakes)
     session/start         — first_run, total_sessions, total_session_minutes
 
 Usage from elsewhere:
@@ -88,6 +89,7 @@ def _default_stats() -> dict:
         "love_encounters": {"love": 0, "surprised": 0, "angry": 0},
         "kittens_born": 0,
         "pet_sessions": 0,
+        "wake_words_triggered": 0,
         "per_cat": {},
     }
 
@@ -174,6 +176,12 @@ def track(event: str, **kwargs) -> None:
             if cat_id:
                 bucket = data["per_cat"].setdefault(cat_id, {})
                 bucket["petted"] = bucket.get("petted", 0) + 1
+        elif event == "wake_word_triggered":
+            data["wake_words_triggered"] = data.get("wake_words_triggered", 0) + 1
+            cat_id = kwargs.get("cat_id")
+            if cat_id:
+                bucket = data["per_cat"].setdefault(cat_id, {})
+                bucket["wakes"] = bucket.get("wakes", 0) + 1
         else:
             log.debug("metrics: unknown event %r", event)
             return

@@ -52,6 +52,7 @@ from catai_linux.voice import (
     VOICE_AVAILABLE, VoiceRecorder, WHISPER_MODEL_SIZES,
     is_model_cached as _whisper_model_cached,
 )
+from catai_linux.wake_word import WAKE_AVAILABLE, WakeWordListener
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -1992,6 +1993,61 @@ class SettingsWindow:
             voice_model_hint.set_margin_start(24)
             box.append(voice_model_hint)
 
+            # Wake word — each cat answers to its own first name
+            from catai_linux.wake_word import WAKE_AVAILABLE as _WAKE_OK
+            wake_check = Gtk.CheckButton(label="Wake word (call cats by name)")
+            wake_check.set_active(getattr(self.app, "_wake_word_enabled", False))
+            wake_check.add_css_class("pixel-label-small")
+            wake_check.set_margin_top(8)
+            wake_check.set_margin_start(24)
+            wake_check.set_sensitive(_WAKE_OK)
+
+            def _on_wake_toggled(btn):
+                enabled = btn.get_active() and _WAKE_OK
+                self.app._wake_word_enabled = enabled
+                self.app._save_all()
+                # Live start/stop. The first start kicks off the model
+                # download in a background thread (~41 MB) so the UI
+                # never blocks; subsequent toggles are instant.
+                if enabled:
+                    if self.app._wake is None:
+                        from catai_linux.wake_word import WakeWordListener as _WW
+                        self.app._wake = _WW(on_wake=self.app._on_wake_word_heard)
+                    self.app._wake.set_names({
+                        c.get("char_id"): c.get("name", "")
+                        for c in self.app.cat_configs if c.get("char_id")
+                    })
+                    self.app._wake.start()
+                else:
+                    if self.app._wake is not None:
+                        self.app._wake.stop()
+            wake_check.connect("toggled", _on_wake_toggled)
+            box.append(wake_check)
+
+            wake_ack_check = Gtk.CheckButton(label="Acknowledge meow on wake")
+            wake_ack_check.set_active(getattr(self.app, "_wake_ack_sound", True))
+            wake_ack_check.add_css_class("pixel-label-small")
+            wake_ack_check.set_margin_start(48)
+            wake_ack_check.set_sensitive(_WAKE_OK)
+
+            def _on_wake_ack_toggled(btn):
+                self.app._wake_ack_sound = btn.get_active()
+                self.app._save_all()
+            wake_ack_check.connect("toggled", _on_wake_ack_toggled)
+            box.append(wake_ack_check)
+
+            wake_hint = Gtk.Label()
+            wake_hint.set_markup(
+                '<span foreground="#888888" size="x-small">'
+                'First launch downloads ~41 MB Vosk model. '
+                'Cats respond to their renameable first name.'
+                '</span>'
+            )
+            wake_hint.set_wrap(True)
+            wake_hint.set_xalign(0)
+            wake_hint.set_margin_start(24)
+            box.append(wake_hint)
+
         # Voice output (TTS) — global kill switch. Per-cat toggles live
         # on the speaker icon in each chat bubble.
         tts_check = Gtk.CheckButton(label="Voice output (cat sound effects)")
@@ -2664,6 +2720,15 @@ class CatAIApp(Gtk.Application):
         self._voice_model = "base"
         self._voice_recorder = None
         self._voice_btn = None
+        # Wake word — each cat answers to its own first name. Off by
+        # default; flipped on via the Voice section in Settings. The
+        # listener instance is lazy: only built once Vosk + a model
+        # are available, so users without the optional dep pay zero
+        # cost.
+        self._wake_word_enabled = False
+        self._wake_ack_sound = True
+        self._wake: WakeWordListener | None = None
+        self._wake_ptt_stop_timer = None
         # Easter egg menu state
         self._easter_menu_visible = False
         self._easter_menu_x = 0
@@ -2865,6 +2930,23 @@ class CatAIApp(Gtk.Application):
             log.warning("Voice chat requested but faster-whisper not installed. "
                         "Run: pip install catai-linux[voice]")
 
+        # Wake word — opt-in (issue #4 Tier 2). Each cat responds to
+        # its own renameable first name via Vosk. Off by default; the
+        # user enables it from Settings → Voice. The listener is only
+        # built when the optional `vosk` dep is installed; otherwise
+        # we silently no-op so the rest of the app keeps working.
+        self._wake_word_enabled = bool(cfg.get("wake_word_enabled", False))
+        self._wake_ack_sound = bool(cfg.get("wake_word_ack_sound", True))
+        if self._wake_word_enabled:
+            if WAKE_AVAILABLE:
+                self._wake = WakeWordListener(on_wake=self._on_wake_word_heard)
+                # set_names is deferred until after self.cat_configs is
+                # finalized below — see the call right after instance
+                # creation.
+            else:
+                log.warning("Wake word requested but vosk not installed. "
+                            "Run: pip install catai-linux[voice]")
+
         # Migrate: drop any legacy color_id-only configs (replaced by catset chars)
         catset_cfgs = [c for c in self.cat_configs if c.get("char_id")]
         if not catset_cfgs:
@@ -2900,6 +2982,16 @@ class CatAIApp(Gtk.Application):
         # Create cat instances (no windows, just state)
         for i, cat_cfg in enumerate(self.cat_configs):
             self._create_instance(cat_cfg, i)
+
+        # Register wake-word names now that the catset is finalized.
+        # The download (~41 MB) and model load happen in a daemon
+        # thread inside start(), so this never blocks the GTK init.
+        if self._wake is not None:
+            self._wake.set_names({
+                c.get("char_id"): c.get("name", "")
+                for c in self.cat_configs if c.get("char_id")
+            })
+            self._wake.start()
 
         # Actions
         for name, cb in [("quit", lambda *a: self.quit()), ("settings", lambda *a: self._open_settings())]:
@@ -4200,6 +4292,11 @@ class CatAIApp(Gtk.Application):
         Returns True if recording started, False otherwise."""
         if not self._voice_recorder or self._voice_recorder._recording:
             return False
+        # Release the wake-word listener's grip on autoaudiosrc — both
+        # pipelines target the same exclusive device on PulseAudio. We
+        # call resume() in the on_result callback once Whisper is done.
+        if self._wake is not None:
+            self._wake.pause()
         # Stop any in-flight TTS playback synchronously. Without this,
         # the TTS GStreamer pipeline can still hold the audio device
         # in a transient state that makes the next autoaudiosrc capture
@@ -4238,6 +4335,15 @@ class CatAIApp(Gtk.Application):
         & Space keyup. Returns True if a stop was triggered."""
         if not self._voice_recorder or not self._voice_recorder._recording:
             return False
+        # If a wake-triggered auto-stop timer is pending and the user
+        # released the mic / Space themselves, cancel the timer so it
+        # doesn't fire on a no-op recording later.
+        if getattr(self, "_wake_ptt_stop_timer", None):
+            try:
+                GLib.source_remove(self._wake_ptt_stop_timer)
+            except Exception:
+                pass
+            self._wake_ptt_stop_timer = None
         if self._voice_btn:
             # Transcribing state — swap the mic image for a pixel-art
             # hourglass that matches the bubble theme. The mic image
@@ -4311,10 +4417,90 @@ class CatAIApp(Gtk.Application):
                     self._chat_entry.set_text("")
                     return False
                 self._voice_submit_timer = GLib.timeout_add(1500, clear_entry)
+            # Hand the mic back to the wake-word listener now that
+            # transcription is done. Cheap — pipeline state is just
+            # flipped back to PLAYING.
+            if self._wake is not None:
+                self._wake.resume()
             return False  # idle_add callback
 
         self._voice_recorder.stop_and_transcribe(L10n.lang, on_result)
         return True
+
+    # ── Wake word ────────────────────────────────────────────────────────────
+
+    def _on_wake_word_heard(self, char_id: str) -> bool:
+        """GTK-main callback fired by WakeWordListener when one of the
+        registered cat names is recognized in live audio.
+
+        Behavior:
+            1. Look up the matching CatInstance.
+            2. Open its chat bubble (same path as a manual click).
+            3. Auto-trigger a push-to-talk recording if voice + a recorder
+               are wired up — saves the user pressing Space afterwards.
+
+        Returns False so callers can pass this directly to GLib.idle_add."""
+        target = next(
+            (c for c in self.cat_instances if c.config.get("char_id") == char_id),
+            None,
+        )
+        if target is None:
+            log.debug("WAKE: no instance for %s", char_id)
+            return False
+        log.warning("WAKE: opening chat for %s on user wake call", char_id)
+        _metrics.track("wake_word_triggered", cat_id=target.config.get("id"))
+        # Make sure the bubble is open & focused. _toggle_chat_for would
+        # close it if already open, so set state directly.
+        for c in self.cat_instances:
+            c.chat_visible = False
+        target.chat_visible = True
+        if not target.chat_response:
+            target.chat_response = L10n.s("hi")
+        self._active_chat_cat = target
+        self._position_chat_entry(target)
+        if self._chat_box is not None:
+            self._chat_box.set_visible(True)
+        if self._chat_entry is not None:
+            self._chat_entry.grab_focus()
+        # Auto-start a push-to-talk capture so the user can speak right
+        # after their wake word without an extra key press. Falls back
+        # to "just opened the chat" if voice isn't enabled.
+        #
+        # Critical: the normal PTT design is press-and-hold (mic button
+        # or Space). When triggered programmatically, nobody is holding
+        # anything down — so we MUST schedule an auto-stop, otherwise
+        # the recording runs forever, on_result never fires, the wake
+        # listener stays paused, and subsequent wake calls go nowhere.
+        if self._voice_enabled and self._voice_recorder is not None:
+            try:
+                started = self._start_voice_recording()
+            except Exception:
+                log.exception("WAKE: auto-start PTT crashed")
+                started = False
+            if started:
+                # Cancel any leftover wake-PTT timer (shouldn't happen
+                # since pause/resume serializes things, but defensive).
+                if getattr(self, "_wake_ptt_stop_timer", None):
+                    try:
+                        GLib.source_remove(self._wake_ptt_stop_timer)
+                    except Exception:
+                        pass
+                    self._wake_ptt_stop_timer = None
+
+                def _wake_ptt_auto_stop():
+                    self._wake_ptt_stop_timer = None
+                    try:
+                        self._stop_voice_recording()
+                    except Exception:
+                        log.exception("WAKE: auto-stop PTT crashed")
+                    return False  # one-shot
+
+                # 6 s gives the user time to formulate a sentence after
+                # the wake word, which is what every voice assistant
+                # gives roughly. Adjust here if it feels too short.
+                self._wake_ptt_stop_timer = GLib.timeout_add(
+                    6000, _wake_ptt_auto_stop)
+        return False
 
     def _on_voice_press(self, gesture, n_press, x, y):
         """Mic button pressed down → start recording."""
@@ -4609,6 +4795,20 @@ class CatAIApp(Gtk.Application):
             _metrics.shutdown()
         except Exception:
             pass
+        # Tear down the wake-word listener so we release autoaudiosrc
+        # and don't leak the worker thread.
+        if self._wake is not None:
+            try:
+                self._wake.stop()
+            except Exception:
+                log.debug("WAKE: shutdown stop failed", exc_info=True)
+            self._wake = None
+        if getattr(self, "_wake_ptt_stop_timer", None):
+            try:
+                GLib.source_remove(self._wake_ptt_stop_timer)
+            except Exception:
+                pass
+            self._wake_ptt_stop_timer = None
         for tid in self._timers:
             GLib.source_remove(tid)
         self._timers.clear()
@@ -4689,6 +4889,8 @@ class CatAIApp(Gtk.Application):
             "metrics_enabled": getattr(self, "_metrics_enabled", False),
             "api_enabled": getattr(self, "_api_enabled", False),
             "long_term_memory": getattr(self, "_long_term_memory_enabled", True),
+            "wake_word_enabled": getattr(self, "_wake_word_enabled", False),
+            "wake_word_ack_sound": getattr(self, "_wake_ack_sound", True),
         })
 
     def _render_tick(self):
@@ -6370,6 +6572,14 @@ class CatAIApp(Gtk.Application):
             if inst.config.get("char_id") == char_id:
                 inst.config["name"] = name
                 inst.update_system_prompt(L10n.lang)
+        # Refresh the wake-word grammar so the renamed cat answers to
+        # the new name immediately (and forgets the old one). No-op
+        # when the listener is None.
+        if getattr(self, "_wake", None):
+            self._wake.set_names({
+                c.get("char_id"): c.get("name", "")
+                for c in self.cat_configs if c.get("char_id")
+            })
 
     def apply_new_scale(self, s):
         self.cat_scale = s
