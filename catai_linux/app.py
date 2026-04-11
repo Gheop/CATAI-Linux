@@ -2132,6 +2132,37 @@ class SettingsWindow:
         reset_btn.connect("clicked", _on_reset_stats)
         box.append(reset_btn)
 
+        # ── Public API socket section (#9) ────────────────────────────────
+        api_label = Gtk.Label(label="SCRIPTABLE API")
+        api_label.add_css_class("pixel-label")
+        api_label.set_margin_top(12)
+        api_label.set_xalign(0)
+        box.append(api_label)
+
+        api_check = Gtk.CheckButton(
+            label="Enable Unix socket for shell scripts")
+        api_check.set_active(getattr(self.app, "_api_enabled", False))
+        api_check.add_css_class("pixel-label-small")
+
+        def _on_api_toggled(btn):
+            self.app._api_enabled = btn.get_active()
+            self.app._save_all()
+        api_check.connect("toggled", _on_api_toggled)
+        box.append(api_check)
+
+        api_hint = Gtk.Label()
+        api_hint.set_markup(
+            '<span foreground="#888888" size="x-small">'
+            'Requires restart. Socket at $XDG_RUNTIME_DIR/catai.sock '
+            '(mode 0600). Commands: status, list_cats, list_eggs, '
+            'meow &lt;idx&gt; [text], egg &lt;key&gt;, notify, help.'
+            '</span>'
+        )
+        api_hint.set_wrap(True)
+        api_hint.set_xalign(0)
+        api_hint.set_margin_start(8)
+        box.append(api_hint)
+
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.set_child(box)
@@ -2699,6 +2730,12 @@ class CatAIApp(Gtk.Application):
         # transmitted anywhere; pure self-curiosity feature.
         self._metrics_enabled = bool(cfg.get("metrics_enabled", False))
         _metrics.set_enabled(self._metrics_enabled)
+        # Public scriptable API socket (#9). Off by default for security.
+        # When enabled, opens a Unix socket at $XDG_RUNTIME_DIR/catai.sock
+        # with mode 0600 (same-user-only) exposing a small curated set
+        # of commands so shell scripts can make cats react to external
+        # events without importing Python or running --test-socket.
+        self._api_enabled = bool(cfg.get("api_enabled", False))
 
         # Voice chat: enabled from --voice CLI flag OR config.json
         cli_voice = "--voice" in sys.argv
@@ -2815,6 +2852,141 @@ class CatAIApp(Gtk.Application):
         # Test socket for E2E tests (--test-socket flag)
         if "--test-socket" in sys.argv:
             self._start_test_socket()
+
+        # Public scriptable API socket (#9, opt-in via config)
+        if self._api_enabled:
+            try:
+                self._start_api_socket()
+            except Exception:
+                log.exception("API socket failed to start")
+
+    # ── Public scriptable API socket (#9) ────────────────────────────────
+
+    def _api_socket_path(self) -> str:
+        runtime = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+        return os.path.join(runtime, "catai.sock")
+
+    def _start_api_socket(self) -> None:
+        """Open a Unix socket for the public scriptable API. Mode 0600
+        means same-user-only — anyone else on the box can't connect.
+        Curated dispatch (vs the test socket which exposes everything)."""
+        import socket as sock_mod
+        path = self._api_socket_path()
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        self._api_sock = sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM)
+        self._api_sock.setblocking(False)
+        self._api_sock.bind(path)
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            log.debug("api socket: chmod 0600 failed", exc_info=True)
+        self._api_sock.listen(4)
+        GLib.io_add_watch(
+            self._api_sock.fileno(),
+            GLib.IOCondition.IN,
+            self._on_api_connection,
+        )
+        log.info("API socket listening on %s", path)
+
+    def _on_api_connection(self, fd, condition):
+        try:
+            conn, _ = self._api_sock.accept()
+        except Exception:
+            log.exception("api socket accept failed")
+            return True
+        try:
+            conn.setblocking(True)
+            data = conn.recv(4096).decode().strip()
+            response = self._handle_api_cmd(data)
+            try:
+                conn.sendall((response + "\n").encode())
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+        except Exception:
+            log.exception("api socket handler error")
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        return True
+
+    def _handle_api_cmd(self, raw: str) -> str:
+        """Public API dispatch — only the curated commands. Unlike
+        _handle_test_cmd, this never exposes internal state or test
+        helpers. Same response shape: 'OK ...' or 'ERR: ...'."""
+        parts = raw.split()
+        if not parts:
+            return "ERR: empty command"
+        cmd = parts[0]
+        try:
+            if cmd == "status":
+                return (f"OK cats={len(self.cat_instances)} "
+                        f"version={_updater.get_installed_version() or 'dev'}")
+            if cmd == "list_cats":
+                items = [
+                    f"{i}:{c.config.get('char_id', '?')}:{c.config.get('name', '?')}"
+                    for i, c in enumerate(self.cat_instances)
+                ]
+                return "OK " + " | ".join(items)
+            if cmd == "list_eggs":
+                keys = [k for k, _, _, _ in EASTER_EGGS]
+                return "OK " + " ".join(keys)
+            if cmd == "meow":
+                if len(parts) < 2:
+                    return "ERR: usage: meow <idx> [text]"
+                try:
+                    idx = int(parts[1])
+                except ValueError:
+                    return "ERR: cat idx must be int"
+                if not (0 <= idx < len(self.cat_instances)):
+                    return "ERR: cat idx out of range"
+                cat = self.cat_instances[idx]
+                text = " ".join(parts[2:]) if len(parts) > 2 else None
+                if text:
+                    cat.meow_text = text
+                    cat.meow_visible = True
+                    if getattr(cat, "_meow_timer_id", None):
+                        try:
+                            GLib.source_remove(cat._meow_timer_id)
+                        except Exception:
+                            pass
+                    def _hide():
+                        cat.meow_visible = False
+                        cat._meow_timer_id = None
+                        return False
+                    cat._meow_timer_id = GLib.timeout_add(8000, _hide)
+                else:
+                    cat._show_random_meow()
+                return f"OK meow on {idx}"
+            if cmd == "egg":
+                if len(parts) < 2:
+                    return "ERR: usage: egg <key>"
+                key = parts[1]
+                valid = {k for k, _, _, _ in EASTER_EGGS}
+                if key not in valid:
+                    return f"ERR: unknown egg '{key}'"
+                GLib.timeout_add(10, lambda k=key: self._trigger_easter_egg(k))
+                return f"OK trigger {key}"
+            if cmd == "notify":
+                # Forward to the existing notification reaction infra
+                app_name = parts[1] if len(parts) > 1 else ""
+                summary = " ".join(parts[2:]) if len(parts) > 2 else ""
+                if hasattr(self, "eg_notification"):
+                    GLib.timeout_add(10,
+                        lambda: self.eg_notification(app_name, summary) or False)
+                return "OK notify queued"
+            if cmd == "help":
+                return ("OK commands: status list_cats list_eggs "
+                        "meow egg notify help")
+            return f"ERR: unknown command '{cmd}' (try 'help')"
+        except Exception as e:
+            log.exception("api cmd %r crashed", cmd)
+            return f"ERR: {e}"
 
     # ── Test socket for E2E tests ─────────────────────────────────────────
 
@@ -4406,6 +4578,7 @@ class CatAIApp(Gtk.Application):
             "tts_cat_sounds_enabled": getattr(self, "_tts_cat_sounds_enabled", True),
             "auto_update": getattr(self, "_auto_update_mode", _updater.MODE_AUTO),
             "metrics_enabled": getattr(self, "_metrics_enabled", False),
+            "api_enabled": getattr(self, "_api_enabled", False),
         })
 
     def _render_tick(self):
