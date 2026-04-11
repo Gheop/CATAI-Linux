@@ -111,6 +111,29 @@ MIN_NAME_LEN = 3
 # once shouldn't fire 5x because Vosk happens to also report partials.
 COOLDOWN_S = 2.0
 
+# ── Direct command verbs ─────────────────────────────────────────────────────
+#
+# When the user says a cat's name FOLLOWED BY one of these verbs, we
+# fire on_wake(cat_id, verb=<verb>) instead of the default
+# on_wake(cat_id, verb=None) chat-opening behavior. Each verb is added
+# to the Vosk grammar so the recognizer can transcribe full phrases
+# like "mandarine dors".
+#
+# Adding a new verb is two lines: list it here AND wire it in the
+# higher-level _on_wake_word_heard() callback.
+#
+# All verbs are normalized identically to cat names — lowercase, no
+# accents, no punctuation. So "danse" matches "Danse", "DANSE", and
+# (more importantly) Vosk's `[unk]` model variants.
+COMMAND_VERBS: tuple[str, ...] = (
+    "dors",      # cat.state = SLEEPING_BALL
+    "viens",     # walk to mouse cursor
+    "raconte",   # open chat + ask for an anecdote
+    "danse",     # mini-disco loop on this one cat
+    "saute",     # JUMPING animation
+    "roule",     # ROLLING animation
+)
+
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -364,17 +387,22 @@ class WakeWordListener:
 
     def _rebuild_recognizer_locked(self) -> None:
         """Build a fresh KaldiRecognizer with the current grammar.
-        Caller must hold ``self._lock``."""
+        Caller must hold ``self._lock``.
+
+        Grammar = cat names + command verbs + ``[unk]``. Vosk happily
+        composes them, so the user can say either ``"mandarine"`` or
+        ``"mandarine dors"`` and both transcribe correctly."""
         if self._model is None:
+            return
+        names = list(self._names.keys())
+        if not names:
+            self._recognizer = None
             return
         # Closed grammar = whitelist of phrases. ``[unk]`` lets Vosk
         # report "unknown" instead of forcing a misclassification on
-        # background noise.
-        phrases = list(self._names.keys())
-        if not phrases:
-            self._recognizer = None
-            return
-        grammar = json.dumps(phrases + ["[unk]"])
+        # background noise. Verbs are added so phrases like
+        # "mandarine dors" can be transcribed in one shot.
+        grammar = json.dumps(names + list(COMMAND_VERBS) + ["[unk]"])
         try:
             self._recognizer = KaldiRecognizer(self._model, SAMPLE_RATE, grammar)
         except Exception:
@@ -471,16 +499,26 @@ class WakeWordListener:
         text = (payload.get("text") or "").strip().lower()
         if not text:
             return
-        # Vosk may emit multi-word phrases like "ok mandarine" — match
-        # any token against our names.
+        # Vosk may emit multi-word phrases like "ok mandarine dors" —
+        # walk the tokens, find the cat name, then look ahead 1-2
+        # tokens for an optional verb.
         tokens = text.split()
         with self._lock:
             names = dict(self._names)  # snapshot
         cat_id: str | None = None
-        for tok in tokens:
+        verb: str | None = None
+        for i, tok in enumerate(tokens):
             tok_n = _normalize_name(tok)
             if tok_n in names:
                 cat_id = names[tok_n]
+                # Look ahead up to 2 tokens for a verb. Stops at the
+                # first verb match — the user normally says
+                # "<name> <verb>" or "<name>" alone.
+                for j in range(i + 1, min(i + 3, len(tokens))):
+                    vtok = _normalize_name(tokens[j])
+                    if vtok in COMMAND_VERBS:
+                        verb = vtok
+                        break
                 break
         if cat_id is None:
             return
@@ -490,15 +528,28 @@ class WakeWordListener:
             log.debug("WAKE: cooldown swallowed %s", cat_id)
             return
         self._last_fire[cat_id] = now
-        log.warning("WAKE: heard %r → %s", text, cat_id)
+        if verb:
+            log.warning("WAKE: heard %r → %s + verb %r", text, cat_id, verb)
+        else:
+            log.warning("WAKE: heard %r → %s", text, cat_id)
         try:
-            GLib.idle_add(self._fire, cat_id)
+            GLib.idle_add(self._fire, cat_id, verb)
         except Exception:
             log.exception("WAKE: idle_add failed")
 
-    def _fire(self, cat_id: str) -> bool:
+    def _fire(self, cat_id: str, verb: str | None = None) -> bool:
+        """Trampoline to the user-supplied callback. Tolerates two
+        signatures for backward compatibility:
+            on_wake(cat_id)
+            on_wake(cat_id, verb)
+        Older callers that take a single arg keep working when no
+        verb was detected."""
         try:
-            self.on_wake(cat_id)
+            try:
+                self.on_wake(cat_id, verb)
+            except TypeError:
+                # Caller has the legacy single-arg signature.
+                self.on_wake(cat_id)
         except Exception:
             log.exception("WAKE: on_wake callback crashed")
         return False  # one-shot idle
