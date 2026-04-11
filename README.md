@@ -190,6 +190,44 @@ MIT
 
 ## Changelog
 
+### v0.7.3 — Cleanup subprocess X11 (2026-04-11)
+
+Suite à la discussion autour du portage Wayland natif (#7) : tant que
+GNOME Mutter ne supporte pas `wlr-layer-shell` (issue ouverte depuis
+2019, sans signe de mouvement), CATAI reste obligatoirement en
+**Xwayland sur GNOME** parce que `XShape` n'a pas d'équivalent sans
+layer-shell. Du coup on a fait un cleanup intermédiaire pour gagner
+en propreté côté code sans toucher à l'architecture.
+
+- **`xprintidle` subprocess viré** — l'idle detection passe par
+  `org.gnome.Mutter.IdleMonitor` D-Bus via `Gio.DBusProxy` (PyGObject
+  natif, zéro nouvelle dep). Fallback subprocess `xprintidle` sur
+  setups non-GNOME, fallback `0` sinon. Coût d'un appel : ~0.1 ms vs
+  ~5-15 ms pour une fork().
+- **`xprop` subprocess pour fullscreen viré** — `_is_any_fullscreen()`
+  passe par 2 appels `XGetWindowProperty` directs en ctypes
+  (`_NET_ACTIVE_WINDOW` puis `_NET_WM_STATE`). ~50 µs au total contre
+  ~30 ms pour les 2 fork() précédents. Le poll fullscreen tourne à
+  0.67 Hz donc l'économie cumulée est ~20 ms/sec.
+- **`xdotool getwindowgeometry` viré** — la détection du Y offset GNOME
+  top bar passe par `XTranslateCoordinates` direct en ctypes. One-shot
+  au boot, mais une fork() en moins.
+- **Fallbacks subprocess morts retirés** — `_run_x11()` et les
+  fallbacks `xdotool windowmove` / `wmctrl` / `xprop -set` étaient
+  inatteignables en pratique (libX11 toujours dispo). 30 lignes de
+  plomberie en moins.
+- **Module `subprocess` retiré complètement de `app.py`** — un fichier
+  de moins à parcourir pour comprendre les dépendances externes.
+- **3 deps runtime virées** : `xdotool`, `xprop`, `xprintidle` ne sont
+  plus jamais appelées. Tu peux désinstaller ces packages sans rien
+  casser. Toujours requis pour `make e2e` (le harnais de test, pas
+  l'app elle-même).
+
+Aucun changement fonctionnel visible. Économie CPU : ~6 fork()
+supprimés par seconde, sub-1% de charge. Plus important : code plus
+propre, plus testable, future-proof contre la dépréciation progressive
+de la session X11 sur GNOME.
+
 ### v0.7.2 — Bubble truncation fix (2026-04-11)
 
 - **Fix** — les réponses de Claude/Ollama étaient parfois tronquées avec
