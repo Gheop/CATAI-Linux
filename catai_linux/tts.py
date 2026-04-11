@@ -378,22 +378,43 @@ class SoundPlayer:
             self._worker.start()
 
     def stop(self) -> None:
-        """Cancel any in-flight playback synchronously and drop any
-        queued batches. Used by the voice recorder so recording
-        captures aren't contaminated by the cat still speaking."""
+        """Cancel any in-flight playback synchronously, drop any queued
+        batches, and **block** until the worker thread has fully exited.
+
+        Blocking the caller (typically the main GTK thread inside
+        ``_start_voice_recording``) is intentional: without it, the
+        voice recorder's autoaudiosrc pipeline races with the in-flight
+        TTS pipeline's teardown, and the autoaudiosrc capture returns
+        silence because the audio backend is still reconfiguring. The
+        wait is bounded to 2 s so a stuck worker never freezes the UI.
+        """
         with self._lock:
             self._cancel = True
             self._queue.clear()
             pipeline = self._active_pipeline
+            worker = self._worker
+        # Yank the active pipeline synchronously — this makes the
+        # worker's bus loop wake up immediately instead of waiting up
+        # to 500 ms for the next poll.
         if pipeline is not None:
             try:
                 import gi
                 gi.require_version("Gst", "1.0")
                 from gi.repository import Gst
                 pipeline.set_state(Gst.State.NULL)
+                # Wait for the NULL transition to fully complete so
+                # the audio backend releases the device before the
+                # voice pipeline tries to open it.
+                pipeline.get_state(500 * Gst.MSECOND)
             except Exception:
                 log.warning("TTS: stop() pipeline NULL failed", exc_info=True)
-        log.warning("TTS: stop() — queue cleared, pipeline yanked")
+        # Wait for the worker to finish its cleanup + drain loop exit.
+        # Gated at 2 s so a runaway worker can't hang the UI.
+        if worker is not None and worker.is_alive():
+            worker.join(timeout=2.0)
+            if worker.is_alive():
+                log.warning("TTS: stop() worker still alive after 2 s")
+        log.warning("TTS: stop() — queue cleared, pipeline yanked, worker joined")
 
     # ── Worker loop ──────────────────────────────────────────────────────
 
@@ -512,6 +533,13 @@ class SoundPlayer:
         # that feed raw strings through the player directly.
         text = _clean_text_for_tts(text)
         if not text:
+            return
+        # Piper can't synthesize a string with no letters (pure
+        # punctuation like '!' or '?'). It silently emits 0 bytes of
+        # audio. Skip those chunks to avoid playing empty WAV files
+        # through GStreamer for no benefit.
+        if not any(c.isalpha() for c in text):
+            log.warning("TTS: skip punctuation-only chunk %r", text)
             return
         voice = self._get_voice()
         if voice is None:
