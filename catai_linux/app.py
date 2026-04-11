@@ -2495,8 +2495,32 @@ class CatAIApp(Gtk.Application):
         # `seasonal_duration_sec` (default 30 s). Set the duration to 0
         # in config.json to keep the overlay on permanently (the classic
         # desktop-pet behavior).
+        # Additionally, the announce only fires on the FIRST launch of
+        # the day — relaunching CATAI several times in the same day
+        # would otherwise replay the falling petals/snow over and over,
+        # which gets old fast. We persist the last-shown date in
+        # ~/.config/catai/seasonal_last_shown and skip the overlay if
+        # today's date matches.
         self._seasonal_enabled = cfg.get("seasonal", True)
         self._seasonal_duration_sec = int(cfg.get("seasonal_duration_sec", 30))
+        if self._seasonal_enabled and self._seasonal_duration_sec > 0:
+            try:
+                import datetime
+                today_iso = datetime.date.today().isoformat()
+                stamp_path = os.path.join(CONFIG_DIR, "seasonal_last_shown")
+                last = None
+                if os.path.isfile(stamp_path):
+                    with open(stamp_path) as f:
+                        last = f.read().strip()
+                if last == today_iso:
+                    log.info("Seasonal overlay already shown today, skipping")
+                    self._seasonal_enabled = False
+                else:
+                    os.makedirs(CONFIG_DIR, exist_ok=True)
+                    with open(stamp_path, "w") as f:
+                        f.write(today_iso)
+            except OSError:
+                log.debug("seasonal stamp read/write failed", exc_info=True)
         self.cat_configs = cfg.get("cats", [])
         # Personality drift — on by default. Users can opt out via
         # config.json key `"personality_drift": false`. The drift engine
