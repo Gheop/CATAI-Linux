@@ -703,6 +703,94 @@ def test_tts() -> None:
          str(chunks))
 
 
+def test_character_packs() -> None:
+    print("\n[character_packs]", flush=True)
+    import json
+    import tempfile
+    from catai_linux import character_packs
+
+    # Empty / nonexistent base dir → empty result
+    with tempfile.TemporaryDirectory() as td:
+        empty_dir = os.path.join(td, "no_packs_here")
+        test("missing dir → {}", character_packs.discover_packs(empty_dir) == {})
+
+    # Build a fake pack and verify it loads
+    with tempfile.TemporaryDirectory() as td:
+        pack_dir = os.path.join(td, "my_pack")
+        os.makedirs(os.path.join(pack_dir, "rotations"), exist_ok=True)
+        # Touch a fake rotation PNG so the validator's rotations/ check passes
+        with open(os.path.join(pack_dir, "rotations", "south.png"), "wb") as f:
+            f.write(b"fake")
+        # Bare-minimum metadata.json (the validator only checks existence)
+        with open(os.path.join(pack_dir, "metadata.json"), "w") as f:
+            json.dump({"character": {"size": {"width": 80, "height": 80}}}, f)
+        # Valid personality.json
+        with open(os.path.join(pack_dir, "personality.json"), "w") as f:
+            json.dump({
+                "char_id": "my_pack",
+                "name": {"fr": "Truc", "en": "Thing", "es": "Cosa"},
+                "traits": {"fr": "bizarre", "en": "weird", "es": "raro"},
+                "skills": {"fr": "Test", "en": "Test", "es": "Prueba"},
+            }, f)
+
+        result = character_packs.discover_packs(td)
+        test("valid pack discovered", "my_pack" in result, str(result.keys()))
+        test("personality has _external_dir flag",
+             "_external_dir" in result["my_pack"])
+        test("is_external returns True",
+             character_packs.is_external(result["my_pack"]))
+        test("external_sprite_dir matches pack folder",
+             character_packs.external_sprite_dir(result["my_pack"]) == os.path.abspath(pack_dir))
+
+    # Char_id mismatch with directory name → rejected
+    with tempfile.TemporaryDirectory() as td:
+        pack_dir = os.path.join(td, "real_name")
+        os.makedirs(os.path.join(pack_dir, "rotations"), exist_ok=True)
+        with open(os.path.join(pack_dir, "rotations", "south.png"), "wb") as f:
+            f.write(b"")
+        with open(os.path.join(pack_dir, "metadata.json"), "w") as f:
+            f.write("{}")
+        with open(os.path.join(pack_dir, "personality.json"), "w") as f:
+            json.dump({
+                "char_id": "wrong_name",  # mismatch
+                "name": {"fr": "X"},
+                "traits": {"fr": "Y"},
+                "skills": {"fr": "Z"},
+            }, f)
+        test("char_id mismatch → skipped",
+             character_packs.discover_packs(td) == {})
+
+    # Missing required key → rejected
+    with tempfile.TemporaryDirectory() as td:
+        pack_dir = os.path.join(td, "incomplete")
+        os.makedirs(os.path.join(pack_dir, "rotations"), exist_ok=True)
+        with open(os.path.join(pack_dir, "rotations", "south.png"), "wb") as f:
+            f.write(b"")
+        with open(os.path.join(pack_dir, "metadata.json"), "w") as f:
+            f.write("{}")
+        with open(os.path.join(pack_dir, "personality.json"), "w") as f:
+            json.dump({"char_id": "incomplete"}, f)  # missing name/traits/skills
+        test("missing keys → skipped",
+             character_packs.discover_packs(td) == {})
+
+    # Bad JSON → rejected, no crash
+    with tempfile.TemporaryDirectory() as td:
+        pack_dir = os.path.join(td, "broken")
+        os.makedirs(os.path.join(pack_dir, "rotations"), exist_ok=True)
+        with open(os.path.join(pack_dir, "rotations", "south.png"), "wb") as f:
+            f.write(b"")
+        with open(os.path.join(pack_dir, "metadata.json"), "w") as f:
+            f.write("{}")
+        with open(os.path.join(pack_dir, "personality.json"), "w") as f:
+            f.write("not json {")
+        test("bad json → skipped, no crash",
+             character_packs.discover_packs(td) == {})
+
+    # is_external on a bundled (no _external_dir) personality
+    test("bundled personality is_external = False",
+         not character_packs.is_external({"char_id": "cat01", "name": {}}))
+
+
 def test_metrics() -> None:
     print("\n[metrics]", flush=True)
     import tempfile
@@ -881,6 +969,7 @@ def test_import_smoke() -> None:
         "catai_linux.tts",
         "catai_linux.updater",
         "catai_linux.metrics",
+        "catai_linux.character_packs",
         "catai_linux.reactions",
         "catai_linux.mood",
         "catai_linux.activity",
@@ -1132,6 +1221,7 @@ def main() -> int:
     _run_section("tts", test_tts)
     _run_section("updater", test_updater)
     _run_section("metrics", test_metrics)
+    _run_section("character_packs", test_character_packs)
     _run_section("reactions", test_reactions)
     _run_section("mood", test_mood)
     _run_section("activity", test_activity)
