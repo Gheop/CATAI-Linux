@@ -2303,7 +2303,14 @@ class CatAIApp(Gtk.Application):
         # Seasonal overlay — enabled by default, user can opt out via
         # `"seasonal": false` in config.json. The resolver does its own
         # CATAI_SEASON env-var override, independent of this flag.
+        #
+        # The overlay is meant to *announce* the current season at startup
+        # then get out of the way, so it auto-dismisses after
+        # `seasonal_duration_sec` (default 30 s). Set the duration to 0
+        # in config.json to keep the overlay on permanently (the classic
+        # desktop-pet behavior).
         self._seasonal_enabled = cfg.get("seasonal", True)
+        self._seasonal_duration_sec = int(cfg.get("seasonal_duration_sec", 30))
         self.cat_configs = cfg.get("cats", [])
 
         # Voice chat: enabled from --voice CLI flag OR config.json
@@ -2385,6 +2392,14 @@ class CatAIApp(Gtk.Application):
             # (plus on shutdown and on key mood events).
             GLib.timeout_add(60000, self._save_all_moods),
         ]
+
+        # Schedule the seasonal overlay auto-dismiss. Fires once after
+        # `seasonal_duration_sec` seconds, then the particles fade out
+        # permanently unless the user re-enables via the `season` socket
+        # command. Duration=0 keeps the overlay on forever.
+        if self._seasonal_enabled and self._seasonal_duration_sec > 0:
+            GLib.timeout_add(self._seasonal_duration_sec * 1000,
+                             self._seasonal_auto_dismiss)
 
         # Test socket for E2E tests (--test-socket flag)
         if "--test-socket" in sys.argv:
@@ -2799,6 +2814,18 @@ class CatAIApp(Gtk.Application):
         if self._canvas_area:
             self._canvas_area.queue_draw()
         return "OK redraw queued"
+
+    def _seasonal_auto_dismiss(self) -> bool:
+        """One-shot GLib timer: turn off the seasonal overlay after the
+        configured duration so the particles announce the season then
+        fade out of the way. Returns False so GLib removes the source."""
+        if self._seasonal_enabled:
+            self._seasonal_enabled = False
+            log.info("Seasonal overlay auto-dismissed after %d s",
+                     self._seasonal_duration_sec)
+            if self._canvas_area:
+                self._canvas_area.queue_draw()
+        return False
 
     def _cmd_season(self, parts):
         """Query or force the seasonal overlay. Usage:
