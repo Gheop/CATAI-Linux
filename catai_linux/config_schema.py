@@ -78,7 +78,10 @@ CONFIG_SCHEMA: dict[str, dict] = {
     "voice_model": {
         "type": str,
         "default": "base",
-        "choices": ["tiny", "base", "small", "medium", "large-v3"],
+        # No choices constraint — faster-whisper supports an open set
+        # of model names (tiny, base, small, medium, large-v3,
+        # large-v3-turbo, distil-large-v3, turbo, etc.) and users can
+        # also point at custom HuggingFace repos.
     },
     "wake_word_enabled": {
         "type": bool,
