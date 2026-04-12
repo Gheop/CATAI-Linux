@@ -381,6 +381,250 @@
           "animations/wallgrab/west/frame_006.png",
           "animations/wallgrab/west/frame_007.png"
         ]
+      },
+      "chasing-butterfly": {
+        "east": [
+          "animations/chasing-butterfly/east/frame_000.png",
+          "animations/chasing-butterfly/east/frame_001.png",
+          "animations/chasing-butterfly/east/frame_002.png",
+          "animations/chasing-butterfly/east/frame_003.png",
+          "animations/chasing-butterfly/east/frame_004.png",
+          "animations/chasing-butterfly/east/frame_005.png",
+          "animations/chasing-butterfly/east/frame_006.png",
+          "animations/chasing-butterfly/east/frame_007.png"
+        ],
+        "west": [
+          "animations/chasing-butterfly/west/frame_000.png",
+          "animations/chasing-butterfly/west/frame_001.png",
+          "animations/chasing-butterfly/west/frame_002.png",
+          "animations/chasing-butterfly/west/frame_003.png",
+          "animations/chasing-butterfly/west/frame_004.png",
+          "animations/chasing-butterfly/west/frame_005.png",
+          "animations/chasing-butterfly/west/frame_006.png",
+          "animations/chasing-butterfly/west/frame_007.png"
+        ]
+      },
+      "playing-ball": {
+        "south": [
+          "animations/playing-ball/south/frame_000.png",
+          "animations/playing-ball/south/frame_001.png",
+          "animations/playing-ball/south/frame_002.png",
+          "animations/playing-ball/south/frame_003.png",
+          "animations/playing-ball/south/frame_004.png",
+          "animations/playing-ball/south/frame_005.png",
+          "animations/playing-ball/south/frame_006.png",
+          "animations/playing-ball/south/frame_007.png"
+        ]
+      },
+      "dancing": {
+        "south": [
+          "animations/dancing/south/frame_000.png",
+          "animations/dancing/south/frame_001.png",
+          "animations/dancing/south/frame_002.png",
+          "animations/dancing/south/frame_003.png",
+          "animations/dancing/south/frame_004.png",
+          "animations/dancing/south/frame_005.png",
+          "animations/dancing/south/frame_006.png",
+          "animations/dancing/south/frame_007.png"
+        ]
+      },
+      "stretching": {
+        "south": [
+          "animations/stretching/south/frame_000.png",
+          "animations/stretching/south/frame_001.png",
+          "animations/stretching/south/frame_002.png",
+          "animations/stretching/south/frame_003.png",
+          "animations/stretching/south/frame_004.png",
+          "animations/stretching/south/frame_005.png",
+          "animations/stretching/south/frame_006.png",
+          "animations/stretching/south/frame_007.png"
+        ]
+      },
+      "yawning": {
+        "south": [
+          "animations/yawning/south/frame_000.png",
+          "animations/yawning/south/frame_001.png",
+          "animations/yawning/south/frame_002.png",
+          "animations/yawning/south/frame_003.png",
+          "animations/yawning/south/frame_004.png",
+          "animations/yawning/south/frame_005.png",
+          "animations/yawning/south/frame_006.png",
+          "animations/yawning/south/frame_007.png"
+        ]
+      },
+      "pouncing": {
+        "east": [
+          "animations/pouncing/east/frame_000.png",
+          "animations/pouncing/east/frame_001.png",
+          "animations/pouncing/east/frame_002.png",
+          "animations/pouncing/east/frame_003.png",
+          "animations/pouncing/east/frame_004.png",
+          "animations/pouncing/east/frame_005.png",
+          "animations/pouncing/east/frame_006.png",
+          "animations/pouncing/east/frame_007.png"
+        ],
+        "west": [
+          "animations/pouncing/west/frame_000.png",
+          "animations/pouncing/west/frame_001.png",
+          "animations/pouncing/west/frame_002.png",
+          "animations/pouncing/west/frame_003.png",
+          "animations/pouncing/west/frame_004.png",
+          "animations/pouncing/west/frame_005.png",
+          "animations/pouncing/west/frame_006.png",
+          "animations/pouncing/west/frame_007.png"
+        ]
+      },
+      "sitting-with-bird": {
+        "south": [
+          "animations/sitting-with-bird/south/frame_000.png",
+          "animations/sitting-with-bird/south/frame_001.png",
+          "animations/sitting-with-bird/south/frame_002.png",
+          "animations/sitting-with-bird/south/frame_003.png",
+          "animations/sitting-with-bird/south/frame_004.png",
+          "animations/sitting-with-bird/south/frame_005.png",
+          "animations/sitting-with-bird/south/frame_006.png",
+          "animations/sitting-with-bird/south/frame_007.png"
+        ]
+      },
+      "fishing": {
+        "south": [
+          "animations/fishing/south/frame_000.png",
+          "animations/fishing/south/frame_001.png",
+          "animations/fishing/south/frame_002.png",
+          "animations/fishing/south/frame_003.png",
+          "animations/fishing/south/frame_004.png",
+          "animations/fishing/south/frame_005.png",
+          "animations/fishing/south/frame_006.png",
+          "animations/fishing/south/frame_007.png"
+        ]
+      },
+      "sneaking": {
+        "east": [
+          "animations/sneaking/east/frame_000.png",
+          "animations/sneaking/east/frame_001.png",
+          "animations/sneaking/east/frame_002.png",
+          "animations/sneaking/east/frame_003.png",
+          "animations/sneaking/east/frame_004.png",
+          "animations/sneaking/east/frame_005.png",
+          "animations/sneaking/east/frame_006.png",
+          "animations/sneaking/east/frame_007.png"
+        ],
+        "west": [
+          "animations/sneaking/west/frame_000.png",
+          "animations/sneaking/west/frame_001.png",
+          "animations/sneaking/west/frame_002.png",
+          "animations/sneaking/west/frame_003.png",
+          "animations/sneaking/west/frame_004.png",
+          "animations/sneaking/west/frame_005.png",
+          "animations/sneaking/west/frame_006.png",
+          "animations/sneaking/west/frame_007.png"
+        ]
+      },
+      "hello-kitty": {
+        "south": [
+          "animations/hello-kitty/south/frame_000.png",
+          "animations/hello-kitty/south/frame_001.png",
+          "animations/hello-kitty/south/frame_002.png",
+          "animations/hello-kitty/south/frame_003.png",
+          "animations/hello-kitty/south/frame_004.png",
+          "animations/hello-kitty/south/frame_005.png",
+          "animations/hello-kitty/south/frame_006.png",
+          "animations/hello-kitty/south/frame_007.png"
+        ]
+      },
+      "bandaged": {
+        "south": [
+          "animations/bandaged/south/frame_000.png",
+          "animations/bandaged/south/frame_001.png",
+          "animations/bandaged/south/frame_002.png",
+          "animations/bandaged/south/frame_003.png",
+          "animations/bandaged/south/frame_004.png",
+          "animations/bandaged/south/frame_005.png",
+          "animations/bandaged/south/frame_006.png",
+          "animations/bandaged/south/frame_007.png"
+        ]
+      },
+      "pirouette": {
+        "south": [
+          "animations/pirouette/south/frame_000.png",
+          "animations/pirouette/south/frame_001.png",
+          "animations/pirouette/south/frame_002.png",
+          "animations/pirouette/south/frame_003.png",
+          "animations/pirouette/south/frame_004.png",
+          "animations/pirouette/south/frame_005.png",
+          "animations/pirouette/south/frame_006.png",
+          "animations/pirouette/south/frame_007.png"
+        ]
+      },
+      "rolling-on-back": {
+        "south": [
+          "animations/rolling-on-back/south/frame_000.png",
+          "animations/rolling-on-back/south/frame_001.png",
+          "animations/rolling-on-back/south/frame_002.png",
+          "animations/rolling-on-back/south/frame_003.png",
+          "animations/rolling-on-back/south/frame_004.png",
+          "animations/rolling-on-back/south/frame_005.png",
+          "animations/rolling-on-back/south/frame_006.png",
+          "animations/rolling-on-back/south/frame_007.png"
+        ]
+      },
+      "bothered-by-bee": {
+        "south": [
+          "animations/bothered-by-bee/south/frame_000.png",
+          "animations/bothered-by-bee/south/frame_001.png",
+          "animations/bothered-by-bee/south/frame_002.png",
+          "animations/bothered-by-bee/south/frame_003.png",
+          "animations/bothered-by-bee/south/frame_004.png",
+          "animations/bothered-by-bee/south/frame_005.png",
+          "animations/bothered-by-bee/south/frame_006.png",
+          "animations/bothered-by-bee/south/frame_007.png"
+        ]
+      },
+      "bothered-by-fly": {
+        "south": [
+          "animations/bothered-by-fly/south/frame_000.png",
+          "animations/bothered-by-fly/south/frame_001.png",
+          "animations/bothered-by-fly/south/frame_002.png",
+          "animations/bothered-by-fly/south/frame_003.png",
+          "animations/bothered-by-fly/south/frame_004.png",
+          "animations/bothered-by-fly/south/frame_005.png",
+          "animations/bothered-by-fly/south/frame_006.png",
+          "animations/bothered-by-fly/south/frame_007.png"
+        ]
+      },
+      "sleeping-by-fire": {
+        "south": [
+          "animations/sleeping-by-fire/south/frame_000.png",
+          "animations/sleeping-by-fire/south/frame_001.png",
+          "animations/sleeping-by-fire/south/frame_002.png",
+          "animations/sleeping-by-fire/south/frame_003.png",
+          "animations/sleeping-by-fire/south/frame_004.png",
+          "animations/sleeping-by-fire/south/frame_005.png",
+          "animations/sleeping-by-fire/south/frame_006.png",
+          "animations/sleeping-by-fire/south/frame_007.png"
+        ]
+      },
+      "walking-in-puddle": {
+        "east": [
+          "animations/walking-in-puddle/east/frame_000.png",
+          "animations/walking-in-puddle/east/frame_001.png",
+          "animations/walking-in-puddle/east/frame_002.png",
+          "animations/walking-in-puddle/east/frame_003.png",
+          "animations/walking-in-puddle/east/frame_004.png",
+          "animations/walking-in-puddle/east/frame_005.png",
+          "animations/walking-in-puddle/east/frame_006.png",
+          "animations/walking-in-puddle/east/frame_007.png"
+        ],
+        "west": [
+          "animations/walking-in-puddle/west/frame_000.png",
+          "animations/walking-in-puddle/west/frame_001.png",
+          "animations/walking-in-puddle/west/frame_002.png",
+          "animations/walking-in-puddle/west/frame_003.png",
+          "animations/walking-in-puddle/west/frame_004.png",
+          "animations/walking-in-puddle/west/frame_005.png",
+          "animations/walking-in-puddle/west/frame_006.png",
+          "animations/walking-in-puddle/west/frame_007.png"
+        ]
       }
     }
   }

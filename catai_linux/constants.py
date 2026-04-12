@@ -52,6 +52,23 @@ class CatState(enum.Enum):
     LEDGEIDLE = "ledgeidle"
     WALLCLIMB = "wallclimb"
     WALLGRAB = "wallgrab"
+    CHASING_BUTTERFLY = "chasing_butterfly"
+    PLAYING_BALL = "playing_ball"
+    DANCING = "dancing"
+    STRETCHING = "stretching"
+    YAWNING = "yawning"
+    POUNCING = "pouncing"
+    SITTING_WITH_BIRD = "sitting_with_bird"
+    FISHING = "fishing"
+    SNEAKING = "sneaking"
+    HELLO_KITTY = "hello_kitty"
+    BANDAGED = "bandaged"
+    PIROUETTE = "pirouette"
+    ROLLING_ON_BACK = "rolling_on_back"
+    BOTHERED_BY_BEE = "bothered_by_bee"
+    BOTHERED_BY_FLY = "bothered_by_fly"
+    SLEEPING_BY_FIRE = "sleeping_by_fire"
+    WALKING_IN_PUDDLE = "walking_in_puddle"
 
 
 ANIM_KEYS = {
@@ -78,6 +95,23 @@ ANIM_KEYS = {
     CatState.LEDGEIDLE: "ledgeidle",
     CatState.WALLCLIMB: "wallclimb",
     CatState.WALLGRAB: "wallgrab",
+    CatState.CHASING_BUTTERFLY: "chasing-butterfly",
+    CatState.PLAYING_BALL: "playing-ball",
+    CatState.DANCING: "dancing",
+    CatState.STRETCHING: "stretching",
+    CatState.YAWNING: "yawning",
+    CatState.POUNCING: "pouncing",
+    CatState.SITTING_WITH_BIRD: "sitting-with-bird",
+    CatState.FISHING: "fishing",
+    CatState.SNEAKING: "sneaking",
+    CatState.HELLO_KITTY: "hello-kitty",
+    CatState.BANDAGED: "bandaged",
+    CatState.PIROUETTE: "pirouette",
+    CatState.ROLLING_ON_BACK: "rolling-on-back",
+    CatState.BOTHERED_BY_BEE: "bothered-by-bee",
+    CatState.BOTHERED_BY_FLY: "bothered-by-fly",
+    CatState.SLEEPING_BY_FIRE: "sleeping-by-fire",
+    CatState.WALKING_IN_PUDDLE: "walking-in-puddle",
 }
 
 ONE_SHOT_STATES = {
@@ -88,6 +122,13 @@ ONE_SHOT_STATES = {
     CatState.FALLING,
     CatState.LANDING, CatState.LEDGECLIMB_STRUGGLE, CatState.LEDGEGRAB,
     CatState.WALLCLIMB,
+    CatState.CHASING_BUTTERFLY, CatState.PLAYING_BALL, CatState.DANCING,
+    CatState.STRETCHING, CatState.YAWNING, CatState.POUNCING,
+    CatState.SITTING_WITH_BIRD, CatState.FISHING, CatState.SNEAKING,
+    CatState.HELLO_KITTY, CatState.BANDAGED, CatState.PIROUETTE,
+    CatState.ROLLING_ON_BACK, CatState.BOTHERED_BY_BEE,
+    CatState.BOTHERED_BY_FLY, CatState.SLEEPING_BY_FIRE,
+    CatState.WALKING_IN_PUDDLE,
 }
 
 

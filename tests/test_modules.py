@@ -1220,6 +1220,7 @@ def test_import_smoke() -> None:
         "catai_linux.constants",
         "catai_linux.encounters",
         "catai_linux.settings_window",
+        "catai_linux.shell",
         "catai_linux.app",
     ]
     for m in modules:
@@ -1887,6 +1888,112 @@ def _run_section(name: str, fn) -> None:
               flush=True)
 
 
+# ── catai_linux.shell ──────────────────────────────────────────────────────
+
+def test_shell() -> None:
+    print("\n[shell]", flush=True)
+    from catai_linux.shell import CatAIShell, main as shell_main, _parse_cat_name
+
+    test("CatAIShell class exists", callable(CatAIShell))
+    test("main function exists", callable(shell_main))
+
+    # _parse_cat_name with index
+    cats = [
+        {"index": 0, "name": "Mandarine"},
+        {"index": 1, "name": "Pixel"},
+        {"index": 2, "name": "Nyx"},
+    ]
+    test("parse cat name by index '1'", _parse_cat_name("1", cats) == 1)
+    test("parse cat name by name 'Pixel'", _parse_cat_name("Pixel", cats) == 1)
+    test("parse cat name case insensitive 'nyx'", _parse_cat_name("nyx", cats) == 2)
+    test("parse cat name unknown returns None", _parse_cat_name("unknown", cats) is None)
+    test("parse cat index out of range returns None", _parse_cat_name("99", cats) is None)
+
+    # Shell instantiation (no socket)
+    shell = CatAIShell(sock_path="/nonexistent/catai.sock")
+    test("shell prompt contains 'catai>'", "catai>" in shell.prompt)
+    test("do_quit returns True", shell.do_quit("") is True)
+
+
+def test_new_animations() -> None:
+    print("\n[new_animations]", flush=True)
+    from catai_linux.constants import CatState, ANIM_KEYS, ONE_SHOT_STATES
+
+    # ── Batch 1 (already integrated) ────────────────────────────────────
+    # New states exist in the enum
+    test("CatState.CHASING_BUTTERFLY exists", CatState.CHASING_BUTTERFLY.value == "chasing_butterfly")
+    test("CatState.PLAYING_BALL exists", CatState.PLAYING_BALL.value == "playing_ball")
+    test("CatState.DANCING exists", CatState.DANCING.value == "dancing")
+
+    # New states are in ANIM_KEYS
+    test("CHASING_BUTTERFLY in ANIM_KEYS", CatState.CHASING_BUTTERFLY in ANIM_KEYS)
+    test("PLAYING_BALL in ANIM_KEYS", CatState.PLAYING_BALL in ANIM_KEYS)
+    test("DANCING in ANIM_KEYS", CatState.DANCING in ANIM_KEYS)
+
+    # Anim key values match the animation directory names
+    test("chasing-butterfly key", ANIM_KEYS[CatState.CHASING_BUTTERFLY] == "chasing-butterfly")
+    test("playing-ball key", ANIM_KEYS[CatState.PLAYING_BALL] == "playing-ball")
+    test("dancing key", ANIM_KEYS[CatState.DANCING] == "dancing")
+
+    # New states are one-shot
+    test("CHASING_BUTTERFLY is one-shot", CatState.CHASING_BUTTERFLY in ONE_SHOT_STATES)
+    test("PLAYING_BALL is one-shot", CatState.PLAYING_BALL in ONE_SHOT_STATES)
+    test("DANCING is one-shot", CatState.DANCING in ONE_SHOT_STATES)
+
+    # ── Batch 2 (11 new animations) ─────────────────────────────────────
+    batch2 = {
+        "STRETCHING":      ("stretching",       "stretching"),
+        "YAWNING":         ("yawning",          "yawning"),
+        "POUNCING":        ("pouncing",         "pouncing"),
+        "SITTING_WITH_BIRD": ("sitting_with_bird", "sitting-with-bird"),
+        "FISHING":         ("fishing",          "fishing"),
+        "SNEAKING":        ("sneaking",         "sneaking"),
+        "HELLO_KITTY":     ("hello_kitty",      "hello-kitty"),
+        "BANDAGED":        ("bandaged",         "bandaged"),
+        "PIROUETTE":       ("pirouette",        "pirouette"),
+        "ROLLING_ON_BACK": ("rolling_on_back",  "rolling-on-back"),
+        "BOTHERED_BY_BEE": ("bothered_by_bee",  "bothered-by-bee"),
+    }
+
+    for enum_name, (enum_val, anim_key) in batch2.items():
+        cs = getattr(CatState, enum_name)
+        test(f"CatState.{enum_name} exists", cs.value == enum_val)
+        test(f"{enum_name} in ANIM_KEYS", cs in ANIM_KEYS)
+        test(f"{anim_key} key", ANIM_KEYS[cs] == anim_key)
+        test(f"{enum_name} is one-shot", cs in ONE_SHOT_STATES)
+
+    # ── Batch 3 (3 new animations) ──────────────────────────────────────
+    batch3 = {
+        "BOTHERED_BY_FLY":  ("bothered_by_fly",  "bothered-by-fly"),
+        "SLEEPING_BY_FIRE": ("sleeping_by_fire",  "sleeping-by-fire"),
+        "WALKING_IN_PUDDLE": ("walking_in_puddle", "walking-in-puddle"),
+    }
+
+    for enum_name, (enum_val, anim_key) in batch3.items():
+        cs = getattr(CatState, enum_name)
+        test(f"CatState.{enum_name} exists", cs.value == enum_val)
+        test(f"{enum_name} in ANIM_KEYS", cs in ANIM_KEYS)
+        test(f"{anim_key} key", ANIM_KEYS[cs] == anim_key)
+        test(f"{enum_name} is one-shot", cs in ONE_SHOT_STATES)
+
+    # Metadata includes all animations for all 6 cats
+    import json
+    from pathlib import Path
+    cats_dir = Path(__file__).resolve().parent.parent / "catai_linux"
+    all_anim_keys = (
+        ["chasing-butterfly", "playing-ball", "dancing"]
+        + [v[1] for v in batch2.values()]
+        + [v[1] for v in batch3.values()]
+    )
+    for cat in ["cat_orange", "cat01", "cat02", "cat03", "cat04", "cat05"]:
+        meta_path = cats_dir / cat / "metadata.json"
+        with open(meta_path) as f:
+            meta = json.load(f)
+        anims = meta["frames"]["animations"]
+        for anim_key in all_anim_keys:
+            test(f"{cat} has {anim_key}", anim_key in anims)
+
+
 def main() -> int:
     print("=== CATAI Unit Tests (headless) ===\n", flush=True)
     test_import_smoke()
@@ -1913,6 +2020,8 @@ def main() -> int:
     _run_section("pil_to_surface", test_pil_to_surface)
     _run_section("sprite_cache", test_sprite_cache)
     _run_section("wake_word", test_wake_word)
+    _run_section("shell", test_shell)
+    _run_section("new_animations", test_new_animations)
     print(f"\n=== Results: {PASS} passed, {FAIL} failed ===\n", flush=True)
     return 0 if FAIL == 0 else 1
 

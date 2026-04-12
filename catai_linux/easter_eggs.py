@@ -355,10 +355,12 @@ class EasterEggMixin:
         GLib.timeout_add(6000, lambda: (self._release_encounter_lock(), False)[1])
 
     def eg_disco(self):
-        disco_states = [CatState.LOVE, CatState.ROLLING, CatState.GROOMING, CatState.FLAT]
+        disco_states = [CatState.DANCING, CatState.DANCING,
+                        CatState.LOVE, CatState.ROLLING,
+                        CatState.GROOMING, CatState.FLAT]
         for cat in self.cat_instances:
             cat.in_encounter = True
-            cat.state = random.choice(disco_states)
+            cat.state = CatState.DANCING
             cat.direction = "south"
             cat.frame_index = 0
         ticks = [20]  # 10s at 500ms per tick

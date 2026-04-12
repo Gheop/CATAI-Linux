@@ -137,6 +137,36 @@ CSS = b"""
     font-size: 11px;
     color: #805020;
 }
+.quake-console {
+    background-color: rgba(0, 0, 0, 0.85);
+    color: #33ff33;
+}
+.quake-output {
+    color: #33ff33;
+    font-family: monospace;
+    font-size: 12px;
+}
+.quake-input {
+    color: #33ff33;
+    background: transparent;
+    border: none;
+    font-family: monospace;
+    font-size: 12px;
+    caret-color: #33ff33;
+}
+.quake-input:focus {
+    outline: none;
+    box-shadow: none;
+}
+.quake-prompt {
+    color: #33ff33;
+    font-family: monospace;
+    font-size: 12px;
+}
+.quake-border {
+    background: #33ff33;
+    min-height: 2px;
+}
 """
 
 

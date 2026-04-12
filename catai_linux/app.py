@@ -955,6 +955,50 @@ class CatInstance:
                 self._start_sequence("dash_crash")
             elif r < 0.91:
                 self._start_sequence("full_jump")
+            elif r < 0.93:
+                self.state = CatState.CHASING_BUTTERFLY
+                self.frame_index = 0
+                self.direction = random.choice(["east", "west"])
+            elif r < 0.95:
+                self.state = CatState.PLAYING_BALL
+                self.frame_index = 0
+                self.direction = "south"
+            elif r < 0.97:
+                self.state = CatState.DANCING
+                self.frame_index = 0
+                self.direction = "south"
+            elif r < 1.0:
+                # Batch-2 rare idle animations — pick one at random.
+                # Bandaged only triggers when happiness < 20; pouncing
+                # and sneaking use east/west directions.
+                if self.mood.happiness < 20:
+                    pick = CatState.BANDAGED
+                    d = "south"
+                else:
+                    rare_anims = [
+                        CatState.STRETCHING,
+                        CatState.YAWNING,
+                        CatState.POUNCING,
+                        CatState.SITTING_WITH_BIRD,
+                        CatState.FISHING,
+                        CatState.SNEAKING,
+                        CatState.HELLO_KITTY,
+                        CatState.PIROUETTE,
+                        CatState.ROLLING_ON_BACK,
+                        CatState.BOTHERED_BY_BEE,
+                        CatState.BOTHERED_BY_FLY,
+                        CatState.SLEEPING_BY_FIRE,
+                        CatState.WALKING_IN_PUDDLE,
+                    ]
+                    pick = random.choice(rare_anims)
+                    if pick in (CatState.POUNCING, CatState.SNEAKING,
+                                CatState.WALKING_IN_PUDDLE):
+                        d = random.choice(["east", "west"])
+                    else:
+                        d = "south"
+                self.state = pick
+                self.frame_index = 0
+                self.direction = d
             # drama_queen no longer random — only triggered by wall crash or angry attack
         elif self.state == CatState.SLEEPING_BALL:
             self.idle_ticks += 1
@@ -1397,6 +1441,12 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
         # Activity monitor — polled from behavior_tick, drives AFK sleep
         self._activity = ActivityMonitor()
         self._afk_sleep_active = False  # cats currently mass-sleeping from AFK
+        # Quake-style drop-down console (² key)
+        self._quake_revealer = None
+        self._quake_output = None   # Gtk.TextView
+        self._quake_entry = None    # Gtk.Entry
+        self._quake_history: list[str] = []
+        self._quake_history_idx = -1
 
     def do_activate(self):
         _setup_logging()
@@ -1796,9 +1846,92 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
                     GLib.timeout_add(10,
                         lambda: self.eg_notification(app_name, summary) or False)
                 return "OK notify queued"
+            if cmd == "cats":
+                items = []
+                for i, c in enumerate(self.cat_instances):
+                    items.append({
+                        "name": c.config.get("name", "?"),
+                        "char_id": c.config.get("char_id", "?"),
+                        "x": int(c.x), "y": int(c.y),
+                        "state": c.state.value if hasattr(c.state, "value") else str(c.state),
+                        "index": i,
+                    })
+                return "OK " + json.dumps(items)
+            if cmd == "force_state":
+                if len(parts) < 3:
+                    return "ERR: usage: force_state <idx> <state_name>"
+                try:
+                    idx = int(parts[1])
+                except ValueError:
+                    return "ERR: cat idx must be int"
+                if not (0 <= idx < len(self.cat_instances)):
+                    return "ERR: cat idx out of range"
+                cat = self.cat_instances[idx]
+                state_name = parts[2]
+                try:
+                    cat.state = CatState(state_name)
+                except ValueError:
+                    return f"ERR: unknown state {state_name}"
+                cat.frame_index = 0
+                cat.idle_ticks = 0
+                cat._sequence = None
+                cat._sequence_index = 0
+                cat._sequence_pause_ticks = 0
+                return f"OK cat {idx} -> {state_name}"
+            if cmd == "say":
+                if len(parts) < 3:
+                    return "ERR: usage: say <idx> <text>"
+                try:
+                    idx = int(parts[1])
+                except ValueError:
+                    return "ERR: cat idx must be int"
+                if not (0 <= idx < len(self.cat_instances)):
+                    return "ERR: cat idx out of range"
+                cat = self.cat_instances[idx]
+                text = " ".join(parts[2:])
+                cat.send_chat(text)
+                return f"OK sent: {text}"
+            if cmd == "move":
+                if len(parts) < 4:
+                    return "ERR: usage: move <idx> <x> <y>"
+                try:
+                    idx = int(parts[1])
+                except ValueError:
+                    return "ERR: cat idx must be int"
+                if not (0 <= idx < len(self.cat_instances)):
+                    return "ERR: cat idx out of range"
+                cat = self.cat_instances[idx]
+                try:
+                    cat.dest_x, cat.dest_y = int(parts[2]), int(parts[3])
+                except ValueError:
+                    return "ERR: invalid coordinates"
+                cat.state = CatState.WALKING
+                cat.frame_index = 0
+                return f"OK cat {idx} walking to {parts[2]},{parts[3]}"
+            if cmd == "mood":
+                if len(parts) < 2:
+                    return "ERR: usage: mood <idx>"
+                try:
+                    idx = int(parts[1])
+                except ValueError:
+                    return "ERR: cat idx must be int"
+                if not (0 <= idx < len(self.cat_instances)):
+                    return "ERR: cat idx out of range"
+                cat = self.cat_instances[idx]
+                mood_data = {}
+                if hasattr(cat, "mood"):
+                    m = cat.mood
+                    mood_data = {
+                        "happiness": getattr(m, "happiness", None),
+                        "energy": getattr(m, "energy", None),
+                        "social": getattr(m, "social", None),
+                    }
+                return "OK " + json.dumps(mood_data)
+            if cmd == "season":
+                return self._cmd_season(parts)
             if cmd == "help":
-                return ("OK commands: status list_cats list_eggs "
-                        "meow egg notify help")
+                return ("OK commands: status list_cats list_eggs cats "
+                        "meow egg notify force_state say move mood season help")
             return f"ERR: unknown command '{cmd}' (try 'help')"
         except Exception as e:
             log.exception("api cmd %r crashed", cmd)
@@ -2470,6 +2603,9 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
             key_ctrl.connect("key-released", self._on_entry_key_released)
             self._chat_entry.add_controller(key_ctrl)
 
+        # ² key handled in _on_entry_key_pressed (when chat entry has focus)
+        # + right-click context menu "Console" entry (always available)
+
         if self._voice_enabled:
             self._voice_btn = Gtk.Button()
             # Bundled pixel-art mic icon (matches the chat bubble's
@@ -2490,6 +2626,9 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
             self._chat_box.append(self._voice_btn)
 
         overlay.add_overlay(self._chat_box)
+
+        # Quake drop-down console (² key)
+        self._create_quake_console(overlay)
 
         win.set_child(overlay)
 
@@ -2738,6 +2877,8 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
         )
         box = getattr(self, '_chat_box', None)
         box_visible = bool(box and box.get_visible())
+        quake_visible = (self._quake_revealer is not None
+                         and self._quake_revealer.get_reveal_child())
         return (
             cat_keys,
             self._menu_visible, self._menu_x, self._menu_y,
@@ -2746,6 +2887,7 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
             box.get_margin_start() if box_visible else 0,
             box.get_margin_top() if box_visible else 0,
             self._voice_enabled,
+            quake_visible,
         )
 
     def _build_rects(self):
@@ -2804,6 +2946,11 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
             box_w = 290 if self._voice_enabled else 260
             rects.append((self._chat_box.get_margin_start(),
                          self._chat_box.get_margin_top(), box_w, 32))
+        # Include Quake console when revealed — covers the top ~40% of screen
+        if (self._quake_revealer is not None
+                and self._quake_revealer.get_reveal_child()):
+            console_h = int(self.screen_h * 0.4) + 4  # +4 for border
+            rects.append((0, 0, self.screen_w, console_h))
         return rects
 
     def _update_input_regions(self):
@@ -3230,17 +3377,19 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
         target.send_chat(prompt)
 
     def _wake_action_dance(self, target) -> None:
-        """Verb 'danse' — mini disco loop on this single cat. Cycles
-        through the celebratory states (LOVE / ROLLING / GROOMING /
-        FLAT) every 500 ms for 5 seconds, then returns to IDLE.
+        """Verb 'danse' — mini disco loop on this single cat. Uses the
+        dedicated DANCING animation with occasional variation through
+        LOVE / ROLLING / GROOMING / FLAT every 500 ms for 5 seconds,
+        then returns to IDLE.
 
         Reuses the same state list as the global ``eg_disco`` easter
         egg but scoped to one cat so the others keep doing their own
         thing."""
-        dance_states = [CatState.LOVE, CatState.ROLLING,
+        dance_states = [CatState.DANCING, CatState.DANCING,
+                        CatState.LOVE, CatState.ROLLING,
                         CatState.GROOMING, CatState.FLAT]
         target.in_encounter = True
-        target.state = random.choice(dance_states)
+        target.state = CatState.DANCING
         target.frame_index = 0
         target.direction = "south"
         ticks = [10]  # 5 s at 500 ms per tick
@@ -3283,7 +3432,20 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
 
     def _on_entry_key_pressed(self, ctrl, keyval, keycode, state):
         """Hold Space inside the empty chat entry → push-to-talk record.
-        Runs in CAPTURE phase so we intercept before Gtk.Entry inserts ' '."""
+        ² key → toggle Quake console. Escape → close chat bubble.
+        Runs in CAPTURE phase so we intercept before Gtk.Entry inserts chars."""
+        # ² → toggle Quake console (consume the event so ² doesn't
+        # appear in the chat entry text)
+        if keyval == Gdk.KEY_twosuperior:
+            self._toggle_quake_console()
+            return True
+        # Escape → close the chat bubble
+        if keyval == Gdk.KEY_Escape:
+            if self._active_chat_cat:
+                self._active_chat_cat.chat_visible = False
+                self._chat_box.set_visible(False)
+                self._active_chat_cat = None
+            return True
         if keyval != Gdk.KEY_space:
             return False
         # Modifier keys: let Ctrl+Space / Shift+Space pass through untouched
@@ -3308,6 +3470,437 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
             self._stop_voice_recording()
             return True
         return False
+
+
+    # ── Quake-style drop-down console ────────────────────────────────────────
+
+    def _create_quake_console(self, overlay):
+        """Build the Quake console widget tree and add it to *overlay*."""
+        import textwrap as _tw
+
+        revealer = Gtk.Revealer()
+        revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        revealer.set_transition_duration(200)
+        revealer.set_reveal_child(False)
+        revealer.set_valign(Gtk.Align.START)
+        revealer.set_hexpand(True)
+
+        # Main container — force dark background via inline CSS because
+        # GTK4's global CSS doesn't reliably paint Box backgrounds on
+        # all themes / compositors.
+        console_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        console_box.add_css_class("quake-console")
+        _qcss = Gtk.CssProvider()
+        _qcss.load_from_data(b"""
+            .quake-console { background-color: rgba(0,0,0,0.92); }
+            .quake-output  { background-color: rgba(0,0,0,0); color: #33ff33;
+                             font-family: monospace; font-size: 12px; }
+            .quake-input   { background-color: rgba(0,0,0,0); color: #33ff33;
+                             border: none; font-family: monospace; font-size: 12px;
+                             caret-color: #33ff33; }
+            .quake-input:focus { outline: none; box-shadow: none; }
+            .quake-prompt  { color: #33ff33; font-family: monospace; font-size: 12px; }
+            .quake-border  { background-color: #33ff33; min-height: 2px; }
+        """)
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), _qcss,
+            Gtk.STYLE_PROVIDER_PRIORITY_USER)  # USER > APPLICATION, wins
+        # ~40 % screen height
+        console_box.set_size_request(-1, int(self.screen_h * 0.4))
+
+        # Output area (scrolled, non-editable text view)
+        sw = Gtk.ScrolledWindow()
+        sw.set_vexpand(True)
+        sw.set_hexpand(True)
+        sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+
+        tv = Gtk.TextView()
+        tv.set_editable(False)
+        tv.set_cursor_visible(False)
+        tv.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        tv.add_css_class("quake-output")
+        tv.set_left_margin(6)
+        tv.set_right_margin(6)
+        tv.set_top_margin(4)
+        tv.set_bottom_margin(4)
+        sw.set_child(tv)
+        console_box.append(sw)
+
+        # Bottom border
+        border = Gtk.Box()
+        border.add_css_class("quake-border")
+        console_box.append(border)
+
+        # Input row
+        input_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        input_row.set_margin_start(6)
+        input_row.set_margin_end(6)
+        input_row.set_margin_top(2)
+        input_row.set_margin_bottom(4)
+
+        prompt_label = Gtk.Label(label="catai> ")
+        prompt_label.add_css_class("quake-prompt")
+        input_row.append(prompt_label)
+
+        entry = Gtk.Entry()
+        entry.set_hexpand(True)
+        entry.add_css_class("quake-input")
+        entry.connect("activate", self._on_quake_entry_activate)
+
+        # Key controller for history navigation + escape
+        entry_key_ctrl = Gtk.EventControllerKey()
+        entry_key_ctrl.connect("key-pressed", self._on_quake_entry_key)
+        entry.add_controller(entry_key_ctrl)
+
+        input_row.append(entry)
+        console_box.append(input_row)
+
+        revealer.set_child(console_box)
+        overlay.add_overlay(revealer)
+
+        self._quake_revealer = revealer
+        self._quake_output = tv
+        self._quake_entry = entry
+        self._quake_sw = sw
+
+        # Print welcome banner
+        banner = _tw.dedent("""\
+            CATAI Console v1.0 — type 'help' for commands
+            ─────────────────────────────────────────────
+        """)
+        buf = tv.get_buffer()
+        buf.set_text(banner)
+
+    def _toggle_quake_console(self):
+        """Show or hide the Quake console."""
+        if self._quake_revealer is None:
+            return
+        visible = self._quake_revealer.get_reveal_child()
+        if visible:
+            self._quake_revealer.set_reveal_child(False)
+            # Return focus to canvas
+            if self._canvas_window:
+                self._canvas_window.set_focus(None)
+        else:
+            self._quake_revealer.set_reveal_child(True)
+            # Grab focus on entry
+            if self._quake_entry:
+                self._quake_entry.grab_focus()
+            self._quake_history_idx = -1
+
+    def _on_quake_entry_key(self, ctrl, keyval, keycode, state):
+        """Handle special keys in the Quake console entry."""
+        if keyval == Gdk.KEY_Escape:
+            self._toggle_quake_console()
+            return True
+        if keyval == Gdk.KEY_twosuperior:
+            self._toggle_quake_console()
+            return True
+        if keyval == Gdk.KEY_Up:
+            if self._quake_history:
+                if self._quake_history_idx == -1:
+                    self._quake_history_idx = len(self._quake_history) - 1
+                elif self._quake_history_idx > 0:
+                    self._quake_history_idx -= 1
+                self._quake_entry.set_text(self._quake_history[self._quake_history_idx])
+                self._quake_entry.set_position(-1)
+            return True
+        if keyval == Gdk.KEY_Down:
+            if self._quake_history:
+                if self._quake_history_idx == -1:
+                    return True
+                if self._quake_history_idx < len(self._quake_history) - 1:
+                    self._quake_history_idx += 1
+                    self._quake_entry.set_text(self._quake_history[self._quake_history_idx])
+                else:
+                    self._quake_history_idx = -1
+                    self._quake_entry.set_text("")
+                self._quake_entry.set_position(-1)
+            return True
+        # Tab → autocomplete cat names, egg names, commands
+        if keyval == Gdk.KEY_Tab:
+            self._quake_tab_complete()
+            return True
+        return False
+
+    def _quake_tab_complete(self) -> None:
+        """Simple prefix-based tab completion for the Quake console."""
+        text = self._quake_entry.get_text()
+        if not text:
+            return
+
+        # Known commands
+        cmds = ["status", "cats", "meow", "say", "egg", "eggs", "sleep",
+                "wake", "dance", "come", "mood", "move", "season",
+                "notify", "ai", "help", "clear", "quit"]
+
+        parts = text.split()
+        if len(parts) == 1 and not text.endswith(" "):
+            # Complete command name
+            matches = [c for c in cmds if c.startswith(parts[0].lower())]
+            if len(matches) == 1:
+                self._quake_entry.set_text(matches[0] + " ")
+                self._quake_entry.set_position(-1)
+            elif matches:
+                self._quake_print("  ".join(matches))
+        elif len(parts) >= 1:
+            # Complete argument (cat name or egg name)
+            cmd = parts[0].lower()
+            prefix = parts[-1].lower() if len(parts) > 1 else ""
+            cat_cmds = {"meow", "say", "sleep", "wake", "dance",
+                        "come", "mood", "move"}
+            if cmd in cat_cmds:
+                names = [c.config.get("name", "") for c in self.cat_instances]
+                matches = [n for n in names if n.lower().startswith(prefix)]
+            elif cmd == "egg":
+                from catai_linux.easter_eggs import EASTER_EGGS
+                egg_keys = [e["key"] for e in EASTER_EGGS]
+                matches = [k for k in egg_keys if k.startswith(prefix)]
+            elif cmd == "season":
+                seasons = ["winter", "halloween", "christmas", "valentines",
+                           "nye", "spring", "autumn", "summer", "off", "on", "auto"]
+                matches = [s for s in seasons if s.startswith(prefix)]
+            else:
+                return
+
+            if len(matches) == 1:
+                # Replace the last word with the match
+                new_text = " ".join(parts[:-1] + [matches[0]]) if len(parts) > 1 else f"{cmd} {matches[0]}"
+                self._quake_entry.set_text(new_text + " ")
+                self._quake_entry.set_position(-1)
+            elif matches:
+                self._quake_print("  ".join(matches))
+
+    def _quake_resolve_name(self, text: str) -> str:
+        """Resolve cat names to indices in a command string.
+
+        'mood Mandarine' → 'mood 0'
+        'meow Tabby hello' → 'meow 1 hello'
+        """
+        cat_cmds = {"meow", "say", "sleep", "wake", "dance",
+                    "come", "mood", "move", "force_state"}
+        parts = text.split()
+        if len(parts) < 2:
+            return text
+        cmd = parts[0].lower()
+        if cmd not in cat_cmds:
+            return text
+        name = parts[1]
+        # Already an int? Leave it
+        try:
+            int(name)
+            return text
+        except ValueError:
+            pass
+        # Resolve name to index
+        lower = name.lower()
+        for i, c in enumerate(self.cat_instances):
+            if c.config.get("name", "").lower() == lower:
+                parts[1] = str(i)
+                return " ".join(parts)
+        return text  # not found, let the socket return the error
+
+    def _quake_log(self, line: str) -> None:
+        """Append a line to ~/.config/catai/console.log for debugging."""
+        try:
+            import datetime as _dt
+            ts = _dt.datetime.now().strftime("%H:%M:%S")
+            path = os.path.join(CONFIG_DIR, "console.log")
+            with open(path, "a") as f:
+                f.write(f"[{ts}] {line}\n")
+        except Exception:
+            pass
+
+    def _on_quake_entry_activate(self, entry):
+        """Process a command entered in the Quake console."""
+        text = entry.get_text().strip()
+        if not text:
+            return
+        entry.set_text("")
+        self._quake_history_idx = -1
+
+        # Add to history (dedup consecutive)
+        if not self._quake_history or self._quake_history[-1] != text:
+            self._quake_history.append(text)
+        # Cap history size
+        if len(self._quake_history) > 200:
+            self._quake_history = self._quake_history[-200:]
+
+        # Print the command + log
+        self._quake_print(f"catai> {text}")
+        self._quake_log(f"> {text}")
+
+        # Handle special built-in commands
+        if text in ("quit", "exit", "q"):
+            self._toggle_quake_console()
+            return
+        if text == "clear":
+            buf = self._quake_output.get_buffer()
+            buf.set_text("")
+            return
+
+        # AI command — dispatch to background thread
+        parts = text.split(None, 1)
+        if parts[0] == "ai":
+            arg = parts[1] if len(parts) > 1 else ""
+            if not arg.strip():
+                self._quake_print("Usage: ai <votre demande en langage naturel>\n")
+                return
+            self._quake_ai(arg.strip())
+            return
+
+        # Intercept 'help' for a user-friendly version
+        if text.strip().lower() == "help":
+            self._quake_print(
+                "Commandes :\n"
+                "  cats             Liste des chats\n"
+                "  meow <nom> [txt] Bulle de meow\n"
+                "  say <nom> <txt>  Envoyer un message chat\n"
+                "  sleep <nom>      Mettre en dodo\n"
+                "  wake <nom>       Réveiller\n"
+                "  dance <nom>      Faire danser\n"
+                "  come <nom>       Venir au centre\n"
+                "  mood <nom>       Voir l'humeur\n"
+                "  move <nom> x y   Déplacer\n"
+                "  egg <clé>        Easter egg\n"
+                "  eggs             Lister les eggs\n"
+                "  season [nom]     Overlay saisonnier\n"
+                "  ai <texte>       IA interprète\n"
+                "  clear            Effacer\n"
+                "  quit             Fermer\n"
+                "  Tab = complétion, ↑↓ = historique\n"
+            )
+            self._quake_log("< [help]")
+            return
+
+        # High-level aliases that resolve names → socket commands
+        parts = text.split()
+        cmd0 = parts[0].lower() if parts else ""
+        if cmd0 == "sleep" and len(parts) >= 2:
+            text = f"force_state {parts[1]} sleeping_ball"
+        elif cmd0 == "wake" and len(parts) >= 2:
+            text = f"force_state {parts[1]} idle"
+        elif cmd0 == "dance" and len(parts) >= 2:
+            text = f"force_state {parts[1]} love"
+        elif cmd0 == "come" and len(parts) >= 2:
+            text = f"move {parts[1]} {self.screen_w // 2} {self.screen_h // 2}"
+        elif cmd0 == "eggs":
+            text = "list_eggs"
+
+        # Resolve cat names to indices
+        text = self._quake_resolve_name(text)
+
+        # Try API command first
+        resp = self._handle_api_cmd(text)
+        if "ERR: unknown command" in resp:
+            # Fall through to test commands
+            resp = self._handle_test_cmd(text)
+        self._quake_print(f"{resp}\n")
+        self._quake_log(f"< {resp}")
+
+    def _quake_print(self, text):
+        """Append *text* to the Quake console output and auto-scroll."""
+        if self._quake_output is None:
+            return
+        buf = self._quake_output.get_buffer()
+        end_iter = buf.get_end_iter()
+        buf.insert(end_iter, text + "\n")
+
+        # Trim to ~500 lines
+        line_count = buf.get_line_count()
+        if line_count > 500:
+            start = buf.get_start_iter()
+            trim_to = buf.get_iter_at_line(line_count - 500)
+            buf.delete(start, trim_to)
+
+        # Auto-scroll to bottom
+        def _scroll():
+            end = buf.get_end_iter()
+            mark = buf.create_mark(None, end, False)
+            self._quake_output.scroll_mark_onscreen(mark)
+            buf.delete_mark(mark)
+            return False
+        GLib.idle_add(_scroll)
+
+    def _quake_ai(self, user_text):
+        """Run AI command interpretation in a background thread."""
+        import textwrap as _tw
+
+        self._quake_print("Interrogation de l'IA...\n")
+
+        # Fetch current cats for context
+        cats_info = []
+        for i, c in enumerate(self.cat_instances):
+            cats_info.append(
+                f"  index={i} name={c.config.get('name', '?')} "
+                f"state={c.state.value if hasattr(c.state, 'value') else str(c.state)}"
+            )
+        cat_list_str = "\n".join(cats_info) or "  (aucun chat)"
+
+        system_prompt = _tw.dedent(f"""\
+            You are a CATAI command interpreter. Given a natural language request,
+            output ONLY the raw commands to execute, one per line.
+            Do not add explanations or markdown.
+
+            Available commands:
+            - meow <cat_index> <text>
+            - egg <key>
+            - notify [app] [summary]
+            - force_state <cat_index> <state>
+            - season <name>
+            - say <cat_index> <text>
+            - move <cat_index> <x> <y>
+
+            Available states: idle, sleeping_ball, walking, love, rolling, grooming,
+            flat, surprised, jumping, dashing, dying
+
+            Current cats:
+            {cat_list_str}
+
+            Examples:
+            User: "mets tous les chats en dodo"
+            force_state 0 sleeping_ball
+            force_state 1 sleeping_ball
+
+            User: "fait danser Mandarine"
+            force_state 0 love
+        """)
+
+        def _run():
+            try:
+                from catai_linux.chat_backend import create_chat
+                backend = create_chat("claude-haiku-4-5")
+                backend.messages = [{"role": "system", "content": system_prompt}]
+                backend.messages.append({"role": "user", "content": user_text})
+                full = ""
+                for chunk in backend._stream_chunks():
+                    full += chunk
+
+                if not full.strip():
+                    GLib.idle_add(self._quake_print,
+                                  "L'IA n'a retourne aucune commande.\n")
+                    return
+
+                commands = [line.strip() for line in full.strip().splitlines()
+                            if line.strip()]
+
+                def _exec():
+                    for cmd in commands:
+                        self._quake_print(f"[AI] {cmd}")
+                        self._quake_log(f"[AI] {cmd}")
+                        resp = self._handle_api_cmd(cmd)
+                        if "ERR: unknown command" in resp:
+                            resp = self._handle_test_cmd(cmd)
+                        self._quake_print(f"  {resp}")
+                        self._quake_log(f"< {resp}")
+                    self._quake_print("")
+                    return False
+                GLib.idle_add(_exec)
+            except Exception as e:
+                GLib.idle_add(self._quake_print, f"Erreur IA : {e}\n")
+                self._quake_log(f"[AI ERROR] {e}")
+
+        threading.Thread(target=_run, daemon=True).start()
 
     def _on_canvas_right_click(self, gesture, n_press, x, y):
         cat = self._find_cat_at(x, y)
@@ -3393,16 +3986,15 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
                           self._tts_enabled)
                 return
 
-        # Check context menu click
+        # Check context menu click (2 entries: Settings / Quit)
         if self._menu_visible:
             mx, my = self._menu_x, self._menu_y
             if mx <= start_x <= mx + 120 and my <= start_y <= my + 50:
                 gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+                self._menu_visible = False
                 if start_y < my + 25:
-                    self._menu_visible = False
                     self._open_settings()
                 else:
-                    self._menu_visible = False
                     self.quit()
                 return
             self._menu_visible = False
@@ -3564,6 +4156,14 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
             _metrics.shutdown()
         except Exception:
             pass
+        # Release the Whisper CUDA model BEFORE Python/GTK teardown so
+        # ctranslate2 doesn't crash with "CUDA driver shutting down" when
+        # the user Ctrl+C's during the ~2 s preload window.
+        if self._voice_recorder is not None:
+            try:
+                self._voice_recorder._model = None
+            except Exception:
+                pass
         # Tear down the wake-word listener so we release autoaudiosrc
         # and don't leak the worker thread.
         if self._wake is not None:
@@ -4116,8 +4716,18 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
 # ── Entry Point ────────────────────────────────────────────────────────────────
 
 def main():
+    import signal
     gtk_args = [a for a in sys.argv if a not in ("--debug", "--test-socket", "--voice")]
     app = CatAIApp()
+    # Ctrl+C → graceful quit (triggers do_shutdown for proper cleanup
+    # of Whisper semaphores, wake word listener, metrics flush, etc.)
+    # os._exit fallback if quit itself crashes (CUDA teardown race).
+    def _sigint(*_):
+        try:
+            app.quit()
+        except Exception:
+            os._exit(0)
+    signal.signal(signal.SIGINT, _sigint)
     app.run(gtk_args)
 
 if __name__ == "__main__":
