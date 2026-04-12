@@ -578,6 +578,26 @@
           "animations/bothered-by-bee/south/frame_005.png",
           "animations/bothered-by-bee/south/frame_006.png",
           "animations/bothered-by-bee/south/frame_007.png"
+        ],
+        "east": [
+          "animations/bothered-by-bee/east/frame_000.png",
+          "animations/bothered-by-bee/east/frame_001.png",
+          "animations/bothered-by-bee/east/frame_002.png",
+          "animations/bothered-by-bee/east/frame_003.png",
+          "animations/bothered-by-bee/east/frame_004.png",
+          "animations/bothered-by-bee/east/frame_005.png",
+          "animations/bothered-by-bee/east/frame_006.png",
+          "animations/bothered-by-bee/east/frame_007.png"
+        ],
+        "west": [
+          "animations/bothered-by-bee/west/frame_000.png",
+          "animations/bothered-by-bee/west/frame_001.png",
+          "animations/bothered-by-bee/west/frame_002.png",
+          "animations/bothered-by-bee/west/frame_003.png",
+          "animations/bothered-by-bee/west/frame_004.png",
+          "animations/bothered-by-bee/west/frame_005.png",
+          "animations/bothered-by-bee/west/frame_006.png",
+          "animations/bothered-by-bee/west/frame_007.png"
         ]
       },
       "bothered-by-fly": {
@@ -590,6 +610,26 @@
           "animations/bothered-by-fly/south/frame_005.png",
           "animations/bothered-by-fly/south/frame_006.png",
           "animations/bothered-by-fly/south/frame_007.png"
+        ],
+        "east": [
+          "animations/bothered-by-fly/east/frame_000.png",
+          "animations/bothered-by-fly/east/frame_001.png",
+          "animations/bothered-by-fly/east/frame_002.png",
+          "animations/bothered-by-fly/east/frame_003.png",
+          "animations/bothered-by-fly/east/frame_004.png",
+          "animations/bothered-by-fly/east/frame_005.png",
+          "animations/bothered-by-fly/east/frame_006.png",
+          "animations/bothered-by-fly/east/frame_007.png"
+        ],
+        "west": [
+          "animations/bothered-by-fly/west/frame_000.png",
+          "animations/bothered-by-fly/west/frame_001.png",
+          "animations/bothered-by-fly/west/frame_002.png",
+          "animations/bothered-by-fly/west/frame_003.png",
+          "animations/bothered-by-fly/west/frame_004.png",
+          "animations/bothered-by-fly/west/frame_005.png",
+          "animations/bothered-by-fly/west/frame_006.png",
+          "animations/bothered-by-fly/west/frame_007.png"
         ]
       },
       "sleeping-by-fire": {
