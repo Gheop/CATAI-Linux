@@ -44,32 +44,45 @@ if typing.TYPE_CHECKING:
 _app_cache: dict = {}
 
 
+def _ensure_app_imports() -> None:
+    """Populate module globals with lazy-imported names from catai_linux.app.
+
+    Must be called at least once before any code in this module references
+    CatState, pil_to_surface, BOTTOM_MARGIN, RENDER_MS, or BEHAVIOR_MS as
+    bare names.  Module-level ``__getattr__`` only fires for *external*
+    attribute access (``from easter_eggs import CatState``); it does NOT
+    intercept internal global-name lookups, so functions / methods defined
+    in this file would hit ``NameError`` without this helper.
+    """
+    if _app_cache:
+        return  # already resolved
+    from catai_linux.app import (
+        CatState as _CatState,
+        pil_to_surface as _pil_to_surface,
+        BOTTOM_MARGIN as _BOTTOM_MARGIN,
+        RENDER_MS as _RENDER_MS,
+        BEHAVIOR_MS as _BEHAVIOR_MS,
+    )
+    _app_cache.update({
+        "CatState": _CatState,
+        "pil_to_surface": _pil_to_surface,
+        "BOTTOM_MARGIN": _BOTTOM_MARGIN,
+        "RENDER_MS": _RENDER_MS,
+        "BEHAVIOR_MS": _BEHAVIOR_MS,
+    })
+    # Inject into module globals for fast subsequent access.
+    globals().update(_app_cache)
+
+
 def __getattr__(name: str):
     """Lazy import of names from catai_linux.app to break circular imports.
 
-    On first access, the five names (CatState, pil_to_surface,
-    BOTTOM_MARGIN, RENDER_MS, BEHAVIOR_MS) are imported from
-    catai_linux.app and cached in the module dict so subsequent
-    look-ups are direct."""
+    Handles *external* attribute access (e.g. ``from easter_eggs import
+    CatState``).  Internal bare-name lookups inside this module go through
+    ``_ensure_app_imports()`` instead."""
     _LAZY = {"CatState", "pil_to_surface", "BOTTOM_MARGIN", "RENDER_MS", "BEHAVIOR_MS"}
     if name in _LAZY:
-        if not _app_cache:
-            from catai_linux.app import (
-                CatState as _CatState,
-                pil_to_surface as _pil_to_surface,
-                BOTTOM_MARGIN as _BOTTOM_MARGIN,
-                RENDER_MS as _RENDER_MS,
-                BEHAVIOR_MS as _BEHAVIOR_MS,
-            )
-            _app_cache.update({
-                "CatState": _CatState,
-                "pil_to_surface": _pil_to_surface,
-                "BOTTOM_MARGIN": _BOTTOM_MARGIN,
-                "RENDER_MS": _RENDER_MS,
-                "BEHAVIOR_MS": _BEHAVIOR_MS,
-            })
-            # Inject into module globals for fast subsequent access.
-            globals().update(_app_cache)
+        _ensure_app_imports()
         return _app_cache[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
@@ -268,6 +281,7 @@ class EasterEggMixin:
         self._update_input_regions()
 
     def _trigger_easter_egg(self, key):
+        _ensure_app_imports()
         method_name = next((fn for k, _, _, fn in EASTER_EGGS if k == key), None)
         if method_name and hasattr(self, method_name):
             try:
@@ -280,6 +294,7 @@ class EasterEggMixin:
 
     def _release_encounter_lock(self):
         """Clear in_encounter on all cats and return them to IDLE."""
+        _ensure_app_imports()
         for cat in self.cat_instances:
             cat.in_encounter = False
             if cat.state not in (CatState.WALKING,):
@@ -890,6 +905,7 @@ class EasterEggMixin:
             app_name: optional originating application (Slack, Thunderbird...)
             summary: optional notification summary text
         """
+        _ensure_app_imports()
         if not self.cat_instances:
             return
         # Pick the last-active chat cat if any, else a random cat, else the
@@ -1104,6 +1120,7 @@ class EasterEggMixin:
         _on_chat_entry_activate), not a random one — the user clicked on
         THIS specific cat and tried to talk to it, so that's who reads.
         """
+        _ensure_app_imports()
         # Normalize whitespace so the scrolling window reads cleanly
         text = " ".join(full_text.split())
         WINDOW_CHARS = 40
