@@ -3,6 +3,7 @@
 Port of https://github.com/wil-pe/CATAI (macOS) to GTK4.
 Single fullscreen transparent canvas with Cairo rendering.
 """
+from __future__ import annotations
 
 # Force X11 backend — needed for XShape input passthrough + chat bubble positioning
 import os
@@ -10,6 +11,7 @@ os.environ.setdefault("GDK_BACKEND", "x11")
 
 import cairo
 import enum
+import functools
 import gc
 import json
 import logging
@@ -19,6 +21,7 @@ import shutil
 import time
 import sys
 import threading
+from typing import Any
 import uuid
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -321,7 +324,7 @@ def _catset_prompt(char_id, name, lang):
 def _ensure_config_dir():
     os.makedirs(CONFIG_DIR, exist_ok=True)
 
-def load_config():
+def load_config() -> dict[str, Any]:
     _ensure_config_dir()
     if os.path.exists(CONFIG_FILE):
         try:
@@ -341,7 +344,7 @@ def _atomic_write(path, data):
     except OSError as e:
         log.warning("Failed to save %s: %s", path, e)
 
-def save_config(cfg):
+def save_config(cfg: dict[str, Any]) -> None:
     _ensure_config_dir()
     _atomic_write(CONFIG_FILE, cfg)
 
@@ -403,7 +406,7 @@ def load_metadata(cat_dir):
         print(f"ERROR: Cannot load {path}: {e}")
         sys.exit(1)
 
-def _sprite_floor_y(img):
+def _sprite_floor_y(img: Image.Image) -> int:
     """Return Y of the lowest non-transparent pixel in a PIL RGBA image
     (sprite 'floor'). Uses PIL's getbbox() on the alpha channel — one
     C-level scan instead of a pixel-by-pixel Python loop."""
@@ -414,7 +417,7 @@ def _sprite_floor_y(img):
     return bbox[3] - 1  # lower edge, zero-indexed
 
 
-def _sprite_center_x(img):
+def _sprite_center_x(img: Image.Image) -> float:
     """Return X centroid of non-transparent pixels. Uses PIL getbbox()
     as a fast estimate — returns the center of the bounding box rather
     than a true centroid, which is close enough for sprite anchoring
@@ -462,7 +465,7 @@ def _compute_anim_offsets(meta, cat_dir):
     return offsets
 
 
-def pil_to_surface(img, target_w, target_h):
+def pil_to_surface(img: Image.Image, target_w: int, target_h: int) -> tuple[cairo.ImageSurface, bytearray]:
     """Convert PIL Image to cairo.ImageSurface, scaled nearest-neighbor.
     Returns (surface, data_ref) — data_ref MUST be kept alive while surface is used."""
     if img.mode != "RGBA":
@@ -479,6 +482,24 @@ def pil_to_surface(img, target_w, target_h):
     return surface, data  # caller must keep data alive
 
 
+# ── Surface cache ─────────────────────────────────────────────────────────────
+# Caches (cairo.ImageSurface, data_ref) by (path, w, h) so identical sprites
+# at the same scale are loaded once. The data_ref is kept alive by the cache.
+
+_surface_cache: dict[tuple[str, int, int], tuple[cairo.ImageSurface, bytearray]] = {}
+
+
+def pil_to_surface_cached(path: str, target_w: int, target_h: int) -> tuple[cairo.ImageSurface, bytearray]:
+    """Cached wrapper around load_sprite + pil_to_surface."""
+    key = (path, target_w, target_h)
+    cached = _surface_cache.get(key)
+    if cached is not None:
+        return cached
+    result = pil_to_surface(load_sprite(path), target_w, target_h)
+    _surface_cache[key] = result
+    return result
+
+
 def pil_to_texture(img, target_w, target_h):
     """Convert PIL Image to Gdk.MemoryTexture, scaled nearest-neighbor.
     Still needed for settings window previews (Gtk.Picture)."""
@@ -491,7 +512,8 @@ def pil_to_texture(img, target_w, target_h):
                                   gbytes, target_w * 4)
 
 
-def load_sprite(path):
+@functools.lru_cache(maxsize=512)
+def load_sprite(path: str) -> Image.Image:
     """Load a sprite PNG as a PIL RGBA image. Returns a magenta placeholder on error.
     Catset sprites are pre-colored, no tinting needed."""
     try:
@@ -525,9 +547,10 @@ from catai_linux import memory as _memory  # noqa: E402
 
 from catai_linux.chat_backend import (  # noqa: E402
     CLAUDE_MODEL, MEM_MAX,
-    ClaudeChat, create_chat,
+    ChatBackend, ClaudeChat, create_chat,
     claude_available, fetch_ollama_models, _ollama_available,
 )
+from catai_linux.config_schema import validate_config  # noqa: E402
 
 
 from catai_linux.drawing import (  # noqa: E402
@@ -553,42 +576,42 @@ from catai_linux.theme import is_dark_mode as _is_dark_mode  # noqa: E402
 # ── Cat Instance ───────────────────────────────────────────────────────────────
 
 class CatInstance:
-    def __init__(self, config):
-        self.config = config
-        self.rotations = {}      # dir_name -> (cairo.ImageSurface, data_ref)
-        self.animations = {}     # anim_name -> {dir_name -> [(surface, data_ref)]}
-        self.state = CatState.IDLE
-        self.direction = "south"
-        self.frame_index = 0
-        self.idle_ticks = 0
-        self.x = 0.0
-        self.y = 0.0
-        self.dest_x = 0.0
-        self.dest_y = 0.0
-        self.display_w = 0
-        self.display_h = 0
-        self.dragging = False
-        self.drag_start_x = 0.0
-        self.drag_start_y = 0.0
-        self.drag_win_x = 0.0
-        self.drag_win_y = 0.0
-        self.mouse_moved = False
-        self.chat_backend = None
-        self.screen_w = 0
-        self.screen_h = 0
+    def __init__(self, config: dict[str, Any]) -> None:
+        self.config: dict[str, Any] = config
+        self.rotations: dict[str, tuple[cairo.ImageSurface, bytearray]] = {}
+        self.animations: dict[str, dict[str, list[tuple[cairo.ImageSurface, bytearray]]]] = {}
+        self.state: CatState = CatState.IDLE
+        self.direction: str = "south"
+        self.frame_index: int = 0
+        self.idle_ticks: int = 0
+        self.x: float = 0.0
+        self.y: float = 0.0
+        self.dest_x: float = 0.0
+        self.dest_y: float = 0.0
+        self.display_w: int = 0
+        self.display_h: int = 0
+        self.dragging: bool = False
+        self.drag_start_x: float = 0.0
+        self.drag_start_y: float = 0.0
+        self.drag_win_x: float = 0.0
+        self.drag_win_y: float = 0.0
+        self.mouse_moved: bool = False
+        self.chat_backend: ChatBackend | None = None
+        self.screen_w: int = 0
+        self.screen_h: int = 0
         # Per-cat voice output toggle. Controls whether this cat's chat
         # responses go through the TTS hybrid pipeline. Default off so
         # the feature is pure opt-in — toggled via the speaker icon in
         # the chat bubble (see _on_canvas_click) and persisted in the
         # cat's config dict so it survives restarts.
-        self.tts_enabled = bool(config.get("tts_enabled", False))
+        self.tts_enabled: bool = bool(config.get("tts_enabled", False))
         self._app = None
         self._meta = None
         self._cat_dir = ""
         self._anim_offsets = {}         # anim_key -> {direction -> (dy, dx)} in display-px
         self._sprite_bottom_padding = 0 # px of empty rows between sprite feet and box bottom
-        self.is_kitten = False          # True for kittens born from love encounters
-        self.is_apocalypse_clone = False # True for clones spawned by apocalypse mode
+        self.is_kitten: bool = False          # True for kittens born from love encounters
+        self.is_apocalypse_clone: bool = False # True for clones spawned by apocalypse mode
         self._birth_progress = None     # None = fully visible; 0.0..1.0 = birth animation
         self._flip_h = False            # Horizontal flip (override for face-each-other in encounters)
         self._sequence = None           # list[SequenceStep] or None
@@ -604,16 +627,16 @@ class CatInstance:
         self._die_resurrect = 0
         self._sleep_tick = 0
         # Meow bubble state (drawn on canvas)
-        self.meow_text = ""
-        self.meow_visible = False
+        self.meow_text: str = ""
+        self.meow_visible: bool = False
         self._meow_timer_id = None
         # Chat bubble state (drawn on canvas, entry via overlay)
-        self.chat_visible = False
-        self.chat_response = ""
+        self.chat_visible: bool = False
+        self.chat_response: str = ""
         # Encounter state (cat-to-cat conversation)
-        self.in_encounter = False
-        self.encounter_text = ""
-        self.encounter_visible = False
+        self.in_encounter: bool = False
+        self.encounter_text: str = ""
+        self.encounter_visible: bool = False
         # Easter egg per-cat state — initialized here so all dynamic
         # attributes are visible in __init__. Previously scattered as
         # getattr(self, '_foo', default) across easter egg methods.
@@ -626,10 +649,10 @@ class CatInstance:
         # Invisible mood system — loaded/created on setup() once we know
         # the cat's ID. Default sentinel prevents crashes from code paths
         # that touch mood before setup() runs.
-        self.mood = CatMood()
-        self._encounter_cooldown_until = 0.0  # monotonic timestamp
+        self.mood: CatMood = CatMood()
+        self._encounter_cooldown_until: float = 0.0  # monotonic timestamp
 
-    def setup(self, app, meta, cat_dir, dw, dh, model, lang, start_x, screen_w, screen_h):
+    def setup(self, app: CatAIApp, meta: dict[str, Any], cat_dir: str, dw: int, dh: int, model: str, lang: str, start_x: float, screen_w: int, screen_h: int) -> None:
         self._app = app
         self.display_w = dw
         self.display_h = dh
@@ -696,7 +719,7 @@ class CatInstance:
         if len(mem) > 1:
             self.chat_backend.messages.extend(mem[1:])
 
-    def load_assets(self, meta, cat_dir, lazy=True):
+    def load_assets(self, meta: dict[str, Any], cat_dir: str, lazy: bool = True) -> None:
         """Load sprites as cairo.ImageSurface. Rotations + running anim in a
         background thread so startup doesn't block the main thread/clicks.
         Remaining animations also load in background after."""
@@ -709,8 +732,7 @@ class CatInstance:
             # 1. Rotations first (cat becomes visible & clickable as soon as these are ready)
             rots = {}
             for dir_name, rel_path in meta["frames"]["rotations"].items():
-                pil = load_sprite(os.path.join(cat_dir, rel_path))
-                rots[dir_name] = pil_to_surface(pil, dw, dh)
+                rots[dir_name] = pil_to_surface_cached(os.path.join(cat_dir, rel_path), dw, dh)
             GLib.idle_add(lambda: self.rotations.update(rots) or False)
 
             # 2. Running anim (needed for WALKING)
@@ -718,7 +740,7 @@ class CatInstance:
                 walk_data = {}
                 for dir_name, frame_paths in meta["frames"]["animations"][walk_key].items():
                     walk_data[dir_name] = [
-                        pil_to_surface(load_sprite(os.path.join(cat_dir, p)), dw, dh)
+                        pil_to_surface_cached(os.path.join(cat_dir, p), dw, dh)
                         for p in frame_paths
                     ]
                 GLib.idle_add(lambda d=walk_data: self.animations.update({walk_key: d}) or False)
@@ -730,7 +752,7 @@ class CatInstance:
                     anim_data = {}
                     for dir_name, frame_paths in dirs.items():
                         anim_data[dir_name] = [
-                            pil_to_surface(load_sprite(os.path.join(cat_dir, p)), dw, dh)
+                            pil_to_surface_cached(os.path.join(cat_dir, p), dw, dh)
                             for p in frame_paths
                         ]
                     GLib.idle_add(lambda an=anim_name, ad=anim_data: self.animations.update({an: ad}) or False)
@@ -742,7 +764,7 @@ class CatInstance:
                     anim_data = {}
                     for dir_name, frame_paths in dirs.items():
                         anim_data[dir_name] = [
-                            pil_to_surface(load_sprite(os.path.join(cat_dir, p)), dw, dh)
+                            pil_to_surface_cached(os.path.join(cat_dir, p), dw, dh)
                             for p in frame_paths
                         ]
                     GLib.idle_add(lambda an=anim_name, ad=anim_data: self.animations.update({an: ad}) or False)
@@ -774,7 +796,7 @@ class CatInstance:
                 return frames[self.frame_index % len(frames)]
         return self._fallback_surface()
 
-    def render_tick(self):
+    def render_tick(self) -> None:
         """Update position/animation state. No window management needed."""
         if self.dragging:
             return
@@ -1048,7 +1070,7 @@ class CatInstance:
         max_y = self.screen_h - self.display_h - top_offset - BOTTOM_MARGIN + self._sprite_bottom_padding
         self.y = max(0, min(self.y, max_y))
 
-    def behavior_tick(self):
+    def behavior_tick(self) -> None:
         # Mood stats always tick, even when busy — a cat dragged around
         # still gets tired, a cat in a chat bubble still gets hungry over
         # time. The tick itself is dirt cheap.
@@ -1144,7 +1166,7 @@ class CatInstance:
         if self._app:
             self._app._active_chat_cat = None
 
-    def send_chat(self, text):
+    def send_chat(self, text: str) -> None:
         if not self.chat_backend:
             # Background init still running — show a friendly hint and drop the text
             self.chat_response = "..."
@@ -1422,7 +1444,7 @@ class CatInstance:
         self._meow_timer_id = None
         return False
 
-    def apply_scale(self, new_w, new_h, meta=None, cat_dir=None):
+    def apply_scale(self, new_w: int, new_h: int, meta: dict[str, Any] | None = None, cat_dir: str | None = None) -> None:
         m = meta or self._meta
         d = cat_dir or self._cat_dir
         self.display_w = new_w
@@ -1448,7 +1470,7 @@ class CatInstance:
         except Exception:
             self._sprite_bottom_padding = 0
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         if self.chat_backend:
             self.chat_backend.cancel()
         if self._meow_timer_id:
@@ -1460,7 +1482,7 @@ class CatInstance:
         self._app = None
         self.chat_backend = None
 
-    def hit_test(self, mx, my):
+    def hit_test(self, mx: float, my: float) -> bool:
         """Check if point (mx, my) is inside this cat's bounding rect."""
         return (self.x <= mx <= self.x + self.display_w and
                 self.y <= my <= self.y + self.display_h)
@@ -2548,20 +2570,20 @@ class LoveEncounter:
 # ── Main Application ───────────────────────────────────────────────────────────
 
 class CatAIApp(EasterEggMixin, Gtk.Application):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(application_id=None,
                          flags=Gio.ApplicationFlags.NON_UNIQUE)
-        self.cat_instances = []
-        self.cat_configs = []
-        self.cat_scale = DEFAULT_SCALE
-        self.screen_w = 1920
-        self.screen_h = 1080
-        self.selected_model = ""
-        self.settings_ctrl = None
+        self.cat_instances: list[CatInstance] = []
+        self.cat_configs: list[dict[str, Any]] = []
+        self.cat_scale: float = DEFAULT_SCALE
+        self.screen_w: int = 1920
+        self.screen_h: int = 1080
+        self.selected_model: str = ""
+        self.settings_ctrl: SettingsWindow | None = None
         self._menu_visible = False
         self._menu_x = 0
         self._menu_y = 0
-        self._active_chat_cat = None
+        self._active_chat_cat: CatInstance | None = None
         self._menu_timer = None
         self._canvas_window = None
         self._canvas_area = None
@@ -2673,7 +2695,7 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
             self.screen_h = max_h
         log.info("Monitors detected: %d %r", len(self._monitor_rects), self._monitor_rects)
 
-        cfg = load_config()
+        cfg = validate_config(load_config())
         self.cat_scale = cfg.get("scale", DEFAULT_SCALE)
         self.selected_model = cfg.get("model", "gemma3:1b")
         L10n.lang = cfg.get("lang", "fr")
@@ -4820,6 +4842,9 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
         for cat in self.cat_instances:
             cat.cleanup()
         self.cat_instances.clear()
+        # Release sprite / surface caches
+        _surface_cache.clear()
+        load_sprite.cache_clear()
         self._chat_box.set_visible(False)
         if self._canvas_window:
             unregister_window(self._canvas_window)
