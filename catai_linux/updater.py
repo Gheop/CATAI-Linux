@@ -206,7 +206,9 @@ def install_update_blocking() -> bool:
         # PEP 668 retry
         stderr = result.stderr or ""
         if "externally-managed-environment" in stderr:
-            log.info("updater: PEP 668 system, retrying with --break-system-packages")
+            log.warning("updater: PEP 668 system — retrying with --break-system-packages. "
+                        "This bypasses the system Python protection. If you prefer a venv, "
+                        "set auto_update to 'off' in config.json and pip-upgrade manually.")
             cmd = base_cmd + ["--break-system-packages"]
             result = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=300,
