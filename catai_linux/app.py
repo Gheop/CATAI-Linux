@@ -2893,7 +2893,7 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
                 rects.append((enc_bx, enc_by, enc_bw, enc_bh))
         # Include context menu if visible
         if self._menu_visible:
-            rects.append((self._menu_x, self._menu_y, 120, 75))
+            rects.append((self._menu_x, self._menu_y, 120, 50))
         # Include easter egg menu (covers whole screen so clicks anywhere dismiss)
         if self._easter_menu_visible:
             rects.append((0, 0, self.screen_w, self.screen_h))
@@ -3386,12 +3386,19 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
 
     def _on_entry_key_pressed(self, ctrl, keyval, keycode, state):
         """Hold Space inside the empty chat entry → push-to-talk record.
-        ² key → toggle Quake console.
+        ² key → toggle Quake console. Escape → close chat bubble.
         Runs in CAPTURE phase so we intercept before Gtk.Entry inserts chars."""
         # ² → toggle Quake console (consume the event so ² doesn't
         # appear in the chat entry text)
         if keyval == Gdk.KEY_twosuperior:
             self._toggle_quake_console()
+            return True
+        # Escape → close the chat bubble
+        if keyval == Gdk.KEY_Escape:
+            if self._active_chat_cat:
+                self._active_chat_cat.chat_visible = False
+                self._chat_box.set_visible(False)
+                self._active_chat_cat = None
             return True
         if keyval != Gdk.KEY_space:
             return False
@@ -3432,9 +3439,26 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
         revealer.set_valign(Gtk.Align.START)
         revealer.set_hexpand(True)
 
-        # Main container
+        # Main container — force dark background via inline CSS because
+        # GTK4's global CSS doesn't reliably paint Box backgrounds on
+        # all themes / compositors.
         console_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         console_box.add_css_class("quake-console")
+        _qcss = Gtk.CssProvider()
+        _qcss.load_from_data(b"""
+            .quake-console { background-color: rgba(0,0,0,0.92); }
+            .quake-output  { background-color: rgba(0,0,0,0); color: #33ff33;
+                             font-family: monospace; font-size: 12px; }
+            .quake-input   { background-color: rgba(0,0,0,0); color: #33ff33;
+                             border: none; font-family: monospace; font-size: 12px;
+                             caret-color: #33ff33; }
+            .quake-input:focus { outline: none; box-shadow: none; }
+            .quake-prompt  { color: #33ff33; font-family: monospace; font-size: 12px; }
+            .quake-border  { background-color: #33ff33; min-height: 2px; }
+        """)
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), _qcss,
+            Gtk.STYLE_PROVIDER_PRIORITY_USER)  # USER > APPLICATION, wins
         # ~40 % screen height
         console_box.set_size_request(-1, int(self.screen_h * 0.4))
 
@@ -3778,16 +3802,14 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
                           self._tts_enabled)
                 return
 
-        # Check context menu click (3 entries: Settings / Console / Quit)
+        # Check context menu click (2 entries: Settings / Quit)
         if self._menu_visible:
             mx, my = self._menu_x, self._menu_y
-            if mx <= start_x <= mx + 120 and my <= start_y <= my + 75:
+            if mx <= start_x <= mx + 120 and my <= start_y <= my + 50:
                 gesture.set_state(Gtk.EventSequenceState.CLAIMED)
                 self._menu_visible = False
                 if start_y < my + 25:
                     self._open_settings()
-                elif start_y < my + 50:
-                    self._toggle_quake_console()
                 else:
                     self.quit()
                 return
