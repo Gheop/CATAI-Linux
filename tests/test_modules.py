@@ -1220,6 +1220,7 @@ def test_import_smoke() -> None:
         "catai_linux.constants",
         "catai_linux.encounters",
         "catai_linux.settings_window",
+        "catai_linux.shell",
         "catai_linux.app",
     ]
     for m in modules:
@@ -1887,6 +1888,33 @@ def _run_section(name: str, fn) -> None:
               flush=True)
 
 
+# ── catai_linux.shell ──────────────────────────────────────────────────────
+
+def test_shell() -> None:
+    print("\n[shell]", flush=True)
+    from catai_linux.shell import CatAIShell, main as shell_main, _parse_cat_name
+
+    test("CatAIShell class exists", callable(CatAIShell))
+    test("main function exists", callable(shell_main))
+
+    # _parse_cat_name with index
+    cats = [
+        {"index": 0, "name": "Mandarine"},
+        {"index": 1, "name": "Pixel"},
+        {"index": 2, "name": "Nyx"},
+    ]
+    test("parse cat name by index '1'", _parse_cat_name("1", cats) == 1)
+    test("parse cat name by name 'Pixel'", _parse_cat_name("Pixel", cats) == 1)
+    test("parse cat name case insensitive 'nyx'", _parse_cat_name("nyx", cats) == 2)
+    test("parse cat name unknown returns None", _parse_cat_name("unknown", cats) is None)
+    test("parse cat index out of range returns None", _parse_cat_name("99", cats) is None)
+
+    # Shell instantiation (no socket)
+    shell = CatAIShell(sock_path="/nonexistent/catai.sock")
+    test("shell prompt contains 'catai>'", "catai>" in shell.prompt)
+    test("do_quit returns True", shell.do_quit("") is True)
+
+
 def main() -> int:
     print("=== CATAI Unit Tests (headless) ===\n", flush=True)
     test_import_smoke()
@@ -1913,6 +1941,7 @@ def main() -> int:
     _run_section("pil_to_surface", test_pil_to_surface)
     _run_section("sprite_cache", test_sprite_cache)
     _run_section("wake_word", test_wake_word)
+    _run_section("shell", test_shell)
     print(f"\n=== Results: {PASS} passed, {FAIL} failed ===\n", flush=True)
     return 0 if FAIL == 0 else 1
 
