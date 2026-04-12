@@ -63,6 +63,7 @@ catai_linux = [
     "nyan_cat.png", "nyan_rainbow.png",
     "sounds/*.mp3", "sounds/NOTICE.md",
     "icons/*.png",
+    "locales/**/*.mo",
 ]
 
 [tool.ruff]

@@ -1,0 +1,71 @@
+# Spanish translations for CATAI.
+msgid ""
+msgstr ""
+"Project-Id-Version: catai 0.9.0\n"
+"Language: es\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "title"
+msgstr ":: AJUSTES ::"
+
+msgid "cats"
+msgstr "MIS GATOS"
+
+msgid "name"
+msgstr "Nombre:"
+
+msgid "size"
+msgstr "TAMAÑO"
+
+msgid "model"
+msgstr "MODELO IA"
+
+msgid "quit"
+msgstr "Salir"
+
+msgid "settings"
+msgstr "Ajustes..."
+
+msgid "talk"
+msgstr "Habla al gato..."
+
+msgid "hi"
+msgstr "¡Miau! ~(=^..^=)~"
+
+msgid "loading"
+msgstr "Cargando..."
+
+msgid "no_ollama"
+msgstr "(Ollama no disponible)"
+
+msgid "err"
+msgstr "Mrrp... sin conexión"
+
+msgid "err_auth"
+msgstr "Mrrp... token expirado, ejecuta 'claude' para renovar"
+
+msgid "refreshing_auth"
+msgstr "Renovando token de Claude..."
+
+msgid "lang_label"
+msgstr "IDIOMA"
+
+msgid "autostart"
+msgstr "Iniciar al arrancar"
+
+msgid "encounters"
+msgstr "Encuentros entre gatos"
+
+msgid "rm_rf_jk"
+msgstr "¡Es broma! 😹"
+
+msgid "capslock_yell"
+msgstr "¿POR QUÉ GRITAS?!"
+
+msgid "petting_purr"
+msgstr "*ronroneo* 💕"
+
+msgid "notification_react"
+msgstr "¿Qué? 🔔"

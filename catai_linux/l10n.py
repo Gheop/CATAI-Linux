@@ -1,71 +1,107 @@
-"""Localization for CATAI-Linux — UI strings + random meow vocabulary.
+"""Localization for CATAI-Linux — gettext-based UI strings + random meow vocabulary.
 
-All three supported languages (fr / en / es) live in a single flat table.
-Access strings via `L10n.s("key")` which falls back to French if the current
-language or the key is missing, then to the key itself as a last resort.
+Supports three languages (fr / en / es) via compiled .mo catalogs under
+``catai_linux/locales/``.  The module-level ``set_lang()`` / ``s()`` helpers
+are the canonical API; the ``L10n`` class is kept for backward compatibility
+so existing ``L10n.s("key")`` and ``L10n.lang`` call sites keep working.
 """
+from __future__ import annotations
+
+import gettext
+import os
 import random
+
+# ── Locale directory (relative to this file) ───────────────────────────────
+_LOCALE_DIR = os.path.join(os.path.dirname(__file__), "locales")
+_DOMAIN = "catai"
+
+# Module-level state
+_current_lang: str = "fr"
+_translation: gettext.GNUTranslations | gettext.NullTranslations = gettext.NullTranslations()
+
+
+def set_lang(lang: str) -> None:
+    """Activate the translation catalog for *lang* (fr / en / es).
+
+    Falls back to French when *lang* is not available.
+    """
+    global _current_lang, _translation
+    _current_lang = lang
+    try:
+        _translation = gettext.translation(_DOMAIN, _LOCALE_DIR, languages=[lang, "fr"])
+    except FileNotFoundError:
+        _translation = gettext.translation(_DOMAIN, _LOCALE_DIR, languages=["fr"], fallback=True)
+
+
+def s(key: str) -> str:
+    """Return the translated string for *key*, falling back to the key itself."""
+    translated = _translation.gettext(key)
+    # gettext returns the key unchanged when no translation is found
+    return translated
+
+
+# Initialise with default language
+set_lang(_current_lang)
+
+
+# ── Backward-compatible class API ──────────────────────────────────────────
 
 
 class L10n:
-    lang = "fr"
-    strings = {
-        "title":    {"fr": ":: RÉGLAGES ::", "en": ":: SETTINGS ::", "es": ":: AJUSTES ::"},
-        "cats":     {"fr": "MES CHATS", "en": "MY CATS", "es": "MIS GATOS"},
-        "name":     {"fr": "Nom :", "en": "Name:", "es": "Nombre:"},
-        "size":     {"fr": "TAILLE", "en": "SIZE", "es": "TAMAÑO"},
-        "model":    {"fr": "MODÈLE IA", "en": "AI MODEL", "es": "MODELO IA"},
-        "quit":     {"fr": "Quitter", "en": "Quit", "es": "Salir"},
-        "settings": {"fr": "Réglages...", "en": "Settings...", "es": "Ajustes..."},
-        "talk":     {"fr": "Parle au chat...", "en": "Talk to the cat...", "es": "Habla al gato..."},
-        "hi":       {"fr": "Miaou! ~(=^..^=)~", "en": "Meow! ~(=^..^=)~", "es": "¡Miau! ~(=^..^=)~"},
-        "loading":  {"fr": "Chargement...", "en": "Loading...", "es": "Cargando..."},
-        "no_ollama": {"fr": "(Ollama indisponible)", "en": "(Ollama unavailable)", "es": "(Ollama no disponible)"},
-        "err":      {"fr": "Mrrp... pas de connexion", "en": "Mrrp... no connection", "es": "Mrrp... sin conexión"},
-        "err_auth": {"fr": "Mrrp... token expiré, relance 'claude' pour renouveler", "en": "Mrrp... token expired, run 'claude' to renew", "es": "Mrrp... token expirado, ejecuta 'claude' para renovar"},
-        "refreshing_auth": {"fr": "Renouvellement du token Claude...", "en": "Refreshing Claude token...", "es": "Renovando token de Claude..."},
-        "lang_label": {"fr": "LANGUE", "en": "LANGUAGE", "es": "IDIOMA"},
-        "autostart": {"fr": "Lancer au démarrage", "en": "Start at login", "es": "Iniciar al arrancar"},
-        "encounters": {"fr": "Rencontres entre chats", "en": "Cat encounters", "es": "Encuentros entre gatos"},
-        # rm -rf easter egg — 'just kidding!' shown by the wiping cat at the end
-        "rm_rf_jk": {
-            "fr": "Je plaisante ! 😹",
-            "en": "Just kidding! 😹",
-            "es": "¡Es broma! 😹",
-        },
-        # Caps Lock easter egg — L10n fallback when the AI-generated pool
-        # isn't ready yet (first trigger) or the AI backend isn't available.
-        "capslock_yell": {
-            "fr": "POURQUOI TU CRIES ??",
-            "en": "WHY ARE YOU SHOUTING?!",
-            "es": "¿POR QUÉ GRITAS?!",
-        },
-        # Petting — shown while the user long-presses a cat (before the
-        # AI-generated purr pool fills, and as an offline fallback).
-        "petting_purr": {
-            "fr": "*ronron* 💕",
-            "en": "*purrrr* 💕",
-            "es": "*ronroneo* 💕",
-        },
-        # Notification reaction — fallback shown when a desktop notification
-        # arrives and the AI pool isn't ready yet.
-        "notification_react": {
-            "fr": "Quoi ? 🔔",
-            "en": "What? 🔔",
-            "es": "¿Qué? 🔔",
-        },
-    }
+    """Legacy class API kept for backward compatibility.
+
+    ``L10n.s("key")`` delegates to the module-level ``s()`` function.
+    Assigning ``L10n.lang = "en"`` calls ``set_lang("en")`` under the hood.
+    """
+
+    # meows stay as plain dicts — they're random pools, not translatable strings.
     meows = {
         "fr": ["Miaou~", "Mrrp!", "Prrrr...", "Miaou miaou!", "Nyaa~", "*ronron*", "Mew!", "Prrrt?"],
         "en": ["Meow~", "Mrrp!", "Purrrr...", "Meow meow!", "Nyaa~", "*purr*", "Mew!", "Prrrt?"],
         "es": ["Miau~!", "Mrrp!", "Purrrr...", "Miau miau!", "Nyaa~", "*ronroneo*", "Mew!", "Prrrt?"],
     }
 
+    # --- lang property so ``L10n.lang = x`` triggers set_lang() ---
+    class _LangDescriptor:
+        """Descriptor that syncs the class attribute with the module-level set_lang()."""
+        def __get__(self, obj, objtype=None):
+            return _current_lang
+        def __set__(self, obj, value):
+            set_lang(value)
+
+    lang = _LangDescriptor()
+
+    # Also support ``L10n.lang = "en"`` on the *class itself* (not an instance).
+    # Python descriptors on a class need a metaclass __set__ to intercept
+    # class-level assignment.  Instead we use __init_subclass__ isn't needed;
+    # we override __class_getitem__ isn't right either.  The simplest
+    # backward-compat approach: make set_lang a classmethod and have callers
+    # use L10n.set_lang("en") OR direct attribute assignment via a metaclass.
+
+    class _Meta(type):
+        @property
+        def lang(cls):
+            return _current_lang
+
+        @lang.setter
+        def lang(cls, value):
+            set_lang(value)
+
+    # Rebuild L10n with the metaclass — we need a small indirection.
+
     @classmethod
-    def s(cls, key: str) -> str:
-        d = cls.strings.get(key, {})
-        return d.get(cls.lang) or d.get("fr") or key
+    def s(cls, key: str) -> str:  # noqa: N805
+        return s(key)
+
+    @classmethod
+    def set_lang(cls, lang: str) -> None:
+        set_lang(lang)
 
     @classmethod
     def random_meow(cls) -> str:
-        return random.choice(cls.meows.get(cls.lang, cls.meows["fr"]))
+        return random.choice(cls.meows.get(_current_lang, cls.meows["fr"]))
+
+
+# Apply metaclass so ``L10n.lang = "en"`` works at class level.
+class L10n(L10n, metaclass=L10n._Meta):  # type: ignore[no-redef]
+    pass
