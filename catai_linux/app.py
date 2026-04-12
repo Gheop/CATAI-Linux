@@ -2833,6 +2833,8 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
         )
         box = getattr(self, '_chat_box', None)
         box_visible = bool(box and box.get_visible())
+        quake_visible = (self._quake_revealer is not None
+                         and self._quake_revealer.get_reveal_child())
         return (
             cat_keys,
             self._menu_visible, self._menu_x, self._menu_y,
@@ -2841,6 +2843,7 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
             box.get_margin_start() if box_visible else 0,
             box.get_margin_top() if box_visible else 0,
             self._voice_enabled,
+            quake_visible,
         )
 
     def _build_rects(self):
@@ -2899,6 +2902,11 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
             box_w = 290 if self._voice_enabled else 260
             rects.append((self._chat_box.get_margin_start(),
                          self._chat_box.get_margin_top(), box_w, 32))
+        # Include Quake console when revealed — covers the top ~40% of screen
+        if (self._quake_revealer is not None
+                and self._quake_revealer.get_reveal_child()):
+            console_h = int(self.screen_h * 0.4) + 4  # +4 for border
+            rects.append((0, 0, self.screen_w, console_h))
         return rects
 
     def _update_input_regions(self):

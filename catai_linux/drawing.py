@@ -138,7 +138,8 @@ CSS = b"""
     color: #805020;
 }
 .quake-console {
-    background: rgba(0, 0, 0, 0.85);
+    background-color: rgba(0, 0, 0, 0.85);
+    color: #33ff33;
 }
 .quake-output {
     color: #33ff33;
