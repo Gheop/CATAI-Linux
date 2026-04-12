@@ -3571,7 +3571,88 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
                     self._quake_entry.set_text("")
                 self._quake_entry.set_position(-1)
             return True
+        # Tab → autocomplete cat names, egg names, commands
+        if keyval == Gdk.KEY_Tab:
+            self._quake_tab_complete()
+            return True
         return False
+
+    def _quake_tab_complete(self) -> None:
+        """Simple prefix-based tab completion for the Quake console."""
+        text = self._quake_entry.get_text()
+        if not text:
+            return
+
+        # Known commands
+        cmds = ["status", "cats", "meow", "say", "egg", "eggs", "sleep",
+                "wake", "dance", "come", "mood", "move", "season",
+                "notify", "ai", "help", "clear", "quit"]
+
+        parts = text.split()
+        if len(parts) == 1 and not text.endswith(" "):
+            # Complete command name
+            matches = [c for c in cmds if c.startswith(parts[0].lower())]
+            if len(matches) == 1:
+                self._quake_entry.set_text(matches[0] + " ")
+                self._quake_entry.set_position(-1)
+            elif matches:
+                self._quake_print("  ".join(matches))
+        elif len(parts) >= 1:
+            # Complete argument (cat name or egg name)
+            cmd = parts[0].lower()
+            prefix = parts[-1].lower() if len(parts) > 1 else ""
+            cat_cmds = {"meow", "say", "sleep", "wake", "dance",
+                        "come", "mood", "move"}
+            if cmd in cat_cmds:
+                names = [c.config.get("name", "") for c in self.cat_instances]
+                matches = [n for n in names if n.lower().startswith(prefix)]
+            elif cmd == "egg":
+                from catai_linux.easter_eggs import EASTER_EGGS
+                egg_keys = [e["key"] for e in EASTER_EGGS]
+                matches = [k for k in egg_keys if k.startswith(prefix)]
+            elif cmd == "season":
+                seasons = ["winter", "halloween", "christmas", "valentines",
+                           "nye", "spring", "autumn", "summer", "off", "on", "auto"]
+                matches = [s for s in seasons if s.startswith(prefix)]
+            else:
+                return
+
+            if len(matches) == 1:
+                # Replace the last word with the match
+                new_text = " ".join(parts[:-1] + [matches[0]]) if len(parts) > 1 else f"{cmd} {matches[0]}"
+                self._quake_entry.set_text(new_text + " ")
+                self._quake_entry.set_position(-1)
+            elif matches:
+                self._quake_print("  ".join(matches))
+
+    def _quake_resolve_name(self, text: str) -> str:
+        """Resolve cat names to indices in a command string.
+
+        'mood Mandarine' → 'mood 0'
+        'meow Tabby hello' → 'meow 1 hello'
+        """
+        cat_cmds = {"meow", "say", "sleep", "wake", "dance",
+                    "come", "mood", "move", "force_state"}
+        parts = text.split()
+        if len(parts) < 2:
+            return text
+        cmd = parts[0].lower()
+        if cmd not in cat_cmds:
+            return text
+        name = parts[1]
+        # Already an int? Leave it
+        try:
+            int(name)
+            return text
+        except ValueError:
+            pass
+        # Resolve name to index
+        lower = name.lower()
+        for i, c in enumerate(self.cat_instances):
+            if c.config.get("name", "").lower() == lower:
+                parts[1] = str(i)
+                return " ".join(parts)
+        return text  # not found, let the socket return the error
 
     def _quake_log(self, line: str) -> None:
         """Append a line to ~/.config/catai/console.log for debugging."""
@@ -3621,6 +3702,47 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
                 return
             self._quake_ai(arg.strip())
             return
+
+        # Intercept 'help' for a user-friendly version
+        if text.strip().lower() == "help":
+            self._quake_print(
+                "Commandes :\n"
+                "  cats             Liste des chats\n"
+                "  meow <nom> [txt] Bulle de meow\n"
+                "  say <nom> <txt>  Envoyer un message chat\n"
+                "  sleep <nom>      Mettre en dodo\n"
+                "  wake <nom>       Réveiller\n"
+                "  dance <nom>      Faire danser\n"
+                "  come <nom>       Venir au centre\n"
+                "  mood <nom>       Voir l'humeur\n"
+                "  move <nom> x y   Déplacer\n"
+                "  egg <clé>        Easter egg\n"
+                "  eggs             Lister les eggs\n"
+                "  season [nom]     Overlay saisonnier\n"
+                "  ai <texte>       IA interprète\n"
+                "  clear            Effacer\n"
+                "  quit             Fermer\n"
+                "  Tab = complétion, ↑↓ = historique\n"
+            )
+            self._quake_log("< [help]")
+            return
+
+        # High-level aliases that resolve names → socket commands
+        parts = text.split()
+        cmd0 = parts[0].lower() if parts else ""
+        if cmd0 == "sleep" and len(parts) >= 2:
+            text = f"force_state {parts[1]} sleeping_ball"
+        elif cmd0 == "wake" and len(parts) >= 2:
+            text = f"force_state {parts[1]} idle"
+        elif cmd0 == "dance" and len(parts) >= 2:
+            text = f"force_state {parts[1]} love"
+        elif cmd0 == "come" and len(parts) >= 2:
+            text = f"move {parts[1]} {self.screen_w // 2} {self.screen_h // 2}"
+        elif cmd0 == "eggs":
+            text = "list_eggs"
+
+        # Resolve cat names to indices
+        text = self._quake_resolve_name(text)
 
         # Try API command first
         resp = self._handle_api_cmd(text)
@@ -3719,15 +3841,18 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
                 def _exec():
                     for cmd in commands:
                         self._quake_print(f"[AI] {cmd}")
+                        self._quake_log(f"[AI] {cmd}")
                         resp = self._handle_api_cmd(cmd)
                         if "ERR: unknown command" in resp:
                             resp = self._handle_test_cmd(cmd)
                         self._quake_print(f"  {resp}")
+                        self._quake_log(f"< {resp}")
                     self._quake_print("")
                     return False
                 GLib.idle_add(_exec)
             except Exception as e:
                 GLib.idle_add(self._quake_print, f"Erreur IA : {e}\n")
+                self._quake_log(f"[AI ERROR] {e}")
 
         threading.Thread(target=_run, daemon=True).start()
 
