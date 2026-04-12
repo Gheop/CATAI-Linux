@@ -193,6 +193,42 @@ MIT
 
 ## Changelog
 
+### v1.0.0 — Le grand ménage (2026-04-12)
+
+CATAI-Linux atteint la **v1.0** — le code est maintenant modulaire,
+testé, documenté et prêt pour les contributions.
+
+#### Architecture : app.py de 6800 à 4124 lignes (-39%)
+- `catai_linux/constants.py` (209 lignes) — `CatState` enum, animations,
+  personnalités, séquences, toutes les constantes scalaires extraites
+- `catai_linux/encounters.py` (391 lignes) — `CatEncounter` +
+  `LoveEncounter` classes
+- `catai_linux/settings_window.py` (755 lignes) — `SettingsWindow`
+  classe complète
+- (déjà en v0.9.0) `catai_linux/easter_eggs.py` (1535 lignes) — 30
+  easter eggs en mixin
+
+#### Audit post-v0.9.0
+- 3 attributs mixin (`_apocalypse_queue`, `_apocalypse_spawning`,
+  `_matrix_ticks`) ajoutés à `CatAIApp.__init__` — étaient créés
+  dynamiquement via `hasattr()`
+- 3 modules ajoutés au smoke test (`easter_eggs`, `config_schema`,
+  `theme`)
+- Pattern `getattr` nettoyé dans `chat_backend.py`
+- Fix bug `voice_model` reset à `"base"` à chaque lancement — la
+  contrainte `choices` dans le config schema était trop restrictive
+
+#### DevX
+- **Makefile unifié** : `make lint`, `make test`, `make e2e`, `make run`,
+  `make messages` (compile gettext), `make release`, `make clean`
+- **CONTRIBUTING.md** — guide pour ajouter un easter egg, un character
+  pack, un voice command, une traduction
+
+#### Chiffres
+- **407 tests** passent (0 failures)
+- **12 modules Python** extraits de `app.py` au total
+- **ruff clean** sur tout le codebase
+
 ### v0.9.0 — Architecture : modular, typed, cached, i18n (2026-04-12)
 
 Suite logique de l'audit v0.8.0 — 6 pistes d'amélioration structurelles.
