@@ -1919,6 +1919,7 @@ def test_new_animations() -> None:
     print("\n[new_animations]", flush=True)
     from catai_linux.constants import CatState, ANIM_KEYS, ONE_SHOT_STATES
 
+    # ── Batch 1 (already integrated) ────────────────────────────────────
     # New states exist in the enum
     test("CatState.CHASING_BUTTERFLY exists", CatState.CHASING_BUTTERFLY.value == "chasing_butterfly")
     test("CatState.PLAYING_BALL exists", CatState.PLAYING_BALL.value == "playing_ball")
@@ -1939,18 +1940,43 @@ def test_new_animations() -> None:
     test("PLAYING_BALL is one-shot", CatState.PLAYING_BALL in ONE_SHOT_STATES)
     test("DANCING is one-shot", CatState.DANCING in ONE_SHOT_STATES)
 
-    # Metadata includes new animations for all cats
+    # ── Batch 2 (11 new animations) ─────────────────────────────────────
+    batch2 = {
+        "STRETCHING":      ("stretching",       "stretching"),
+        "YAWNING":         ("yawning",          "yawning"),
+        "POUNCING":        ("pouncing",         "pouncing"),
+        "SITTING_WITH_BIRD": ("sitting_with_bird", "sitting-with-bird"),
+        "FISHING":         ("fishing",          "fishing"),
+        "SNEAKING":        ("sneaking",         "sneaking"),
+        "HELLO_KITTY":     ("hello_kitty",      "hello-kitty"),
+        "BANDAGED":        ("bandaged",         "bandaged"),
+        "PIROUETTE":       ("pirouette",        "pirouette"),
+        "ROLLING_ON_BACK": ("rolling_on_back",  "rolling-on-back"),
+        "BOTHERED_BY_BEE": ("bothered_by_bee",  "bothered-by-bee"),
+    }
+
+    for enum_name, (enum_val, anim_key) in batch2.items():
+        cs = getattr(CatState, enum_name)
+        test(f"CatState.{enum_name} exists", cs.value == enum_val)
+        test(f"{enum_name} in ANIM_KEYS", cs in ANIM_KEYS)
+        test(f"{anim_key} key", ANIM_KEYS[cs] == anim_key)
+        test(f"{enum_name} is one-shot", cs in ONE_SHOT_STATES)
+
+    # Metadata includes all animations for all 6 cats
     import json
     from pathlib import Path
     cats_dir = Path(__file__).resolve().parent.parent / "catai_linux"
+    all_anim_keys = (
+        ["chasing-butterfly", "playing-ball", "dancing"]
+        + [v[1] for v in batch2.values()]
+    )
     for cat in ["cat_orange", "cat01", "cat02", "cat03", "cat04", "cat05"]:
         meta_path = cats_dir / cat / "metadata.json"
         with open(meta_path) as f:
             meta = json.load(f)
         anims = meta["frames"]["animations"]
-        test(f"{cat} has chasing-butterfly", "chasing-butterfly" in anims)
-        test(f"{cat} has playing-ball", "playing-ball" in anims)
-        test(f"{cat} has dancing", "dancing" in anims)
+        for anim_key in all_anim_keys:
+            test(f"{cat} has {anim_key}", anim_key in anims)
 
 
 def main() -> int:

@@ -967,6 +967,34 @@ class CatInstance:
                 self.state = CatState.DANCING
                 self.frame_index = 0
                 self.direction = "south"
+            elif r < 1.0:
+                # Batch-2 rare idle animations — pick one at random.
+                # Bandaged only triggers when happiness < 20; pouncing
+                # and sneaking use east/west directions.
+                if self.mood.happiness < 20:
+                    pick = CatState.BANDAGED
+                    d = "south"
+                else:
+                    rare_anims = [
+                        CatState.STRETCHING,
+                        CatState.YAWNING,
+                        CatState.POUNCING,
+                        CatState.SITTING_WITH_BIRD,
+                        CatState.FISHING,
+                        CatState.SNEAKING,
+                        CatState.HELLO_KITTY,
+                        CatState.PIROUETTE,
+                        CatState.ROLLING_ON_BACK,
+                        CatState.BOTHERED_BY_BEE,
+                    ]
+                    pick = random.choice(rare_anims)
+                    if pick in (CatState.POUNCING, CatState.SNEAKING):
+                        d = random.choice(["east", "west"])
+                    else:
+                        d = "south"
+                self.state = pick
+                self.frame_index = 0
+                self.direction = d
             # drama_queen no longer random — only triggered by wall crash or angry attack
         elif self.state == CatState.SLEEPING_BALL:
             self.idle_ticks += 1
