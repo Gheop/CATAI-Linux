@@ -191,6 +191,58 @@ MIT
 
 ## Changelog
 
+### v0.9.0 — Architecture : modular, typed, cached, i18n (2026-04-12)
+
+Suite logique de l'audit v0.8.0 — 6 pistes d'amélioration structurelles.
+
+#### Piste 3 — Easter eggs → module dédié
+- 30 easter eggs + menu + drawing extraits de `app.py` vers
+  `catai_linux/easter_eggs.py` (1535 lignes). Pattern mixin :
+  `CatAIApp(EasterEggMixin, Gtk.Application)`. `app.py` passe de
+  6797 à 5357 lignes (-1440). Zéro changement de logique.
+
+#### Piste 1 — Type hints
+- `from __future__ import annotations` sur `app.py`
+- `CatInstance.__init__` et 8 méthodes publiques annotées
+- `CatAIApp.__init__` attributes clés annotés
+- Fonctions module-level (`load_config`, `save_config`,
+  `pil_to_surface`, `load_sprite`, etc.) annotées
+
+#### Piste 7 — Config validation
+- Nouveau module `catai_linux/config_schema.py` (~140 lignes)
+- `CONFIG_SCHEMA` dict avec type/default/min/max/choices pour
+  les 18 clés de config
+- `validate_config()` remplit les défauts, clamp les numériques,
+  valide les choix, log les clés inconnues, ne raise jamais
+- Branché dans `do_activate` : `cfg = validate_config(load_config())`
+
+#### Piste 6 — gettext i18n
+- 23 clés de traduction (FR/EN/ES) migrées du dict inline vers de
+  vrais catalogues gettext `.po` + `.mo` compilés dans
+  `catai_linux/locales/`
+- `L10n` backward-compat préservé via une métaclasse : `L10n.lang =
+  "en"` déclenche le rechargement gettext. `L10n.s("key")` et
+  `L10n.random_meow()` inchangés côté API.
+- `.mo` inclus dans le wheel via `pyproject.toml`
+
+#### Piste 5 — Cache sprites LRU
+- `@functools.lru_cache(maxsize=512)` sur `load_sprite` (PIL Image)
+- `_surface_cache` dict + `pil_to_surface_cached` wrapper (cairo
+  surfaces cachées par `(path, w, h)`)
+- Quand 6 chats partagent le même catset, le sprite n'est chargé et
+  converti qu'une fois au lieu de 6. Clear au shutdown.
+
+#### Piste 2 — Tests > 30 %
+- 48 nouvelles assertions : config schema (15), easter eggs data
+  (10), CatInstance init (11), pil_to_surface swap (7),
+  sprite cache (5)
+- Total **401 passed / 0 failed** (up from 353)
+
+#### Piste 4 — Async I/O : reportée
+Les threads daemon actuels + `GLib.idle_add` sont idiomatiques en
+GTK4. Passer à asyncio nécessiterait un bridge `gbulb`/`asyncio-glib`
+avec une maintenance incertaine. Risque/effort disproportionné.
+
 ### v0.8.0 — Audit profond : dead code, bugs, sécurité, perfs (2026-04-12)
 
 Audit complet du codebase après la série v0.7.x. Zéro nouvelle feature,

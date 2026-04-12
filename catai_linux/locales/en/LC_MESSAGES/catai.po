@@ -1,0 +1,71 @@
+# English translations for CATAI.
+msgid ""
+msgstr ""
+"Project-Id-Version: catai 0.9.0\n"
+"Language: en\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "title"
+msgstr ":: SETTINGS ::"
+
+msgid "cats"
+msgstr "MY CATS"
+
+msgid "name"
+msgstr "Name:"
+
+msgid "size"
+msgstr "SIZE"
+
+msgid "model"
+msgstr "AI MODEL"
+
+msgid "quit"
+msgstr "Quit"
+
+msgid "settings"
+msgstr "Settings..."
+
+msgid "talk"
+msgstr "Talk to the cat..."
+
+msgid "hi"
+msgstr "Meow! ~(=^..^=)~"
+
+msgid "loading"
+msgstr "Loading..."
+
+msgid "no_ollama"
+msgstr "(Ollama unavailable)"
+
+msgid "err"
+msgstr "Mrrp... no connection"
+
+msgid "err_auth"
+msgstr "Mrrp... token expired, run 'claude' to renew"
+
+msgid "refreshing_auth"
+msgstr "Refreshing Claude token..."
+
+msgid "lang_label"
+msgstr "LANGUAGE"
+
+msgid "autostart"
+msgstr "Start at login"
+
+msgid "encounters"
+msgstr "Cat encounters"
+
+msgid "rm_rf_jk"
+msgstr "Just kidding! 😹"
+
+msgid "capslock_yell"
+msgstr "WHY ARE YOU SHOUTING?!"
+
+msgid "petting_purr"
+msgstr "*purrrr* 💕"
+
+msgid "notification_react"
+msgstr "What? 🔔"

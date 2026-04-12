@@ -1481,6 +1481,189 @@ def test_activity() -> None:
          broken._idle_proxy is False)
 
 
+# ── catai_linux.config_schema ────────────────────────────────────────────────
+
+def test_config_schema() -> None:
+    print("\n[config_schema]", flush=True)
+    from catai_linux.config_schema import validate_config, CONFIG_SCHEMA
+
+    # Empty config -> all defaults filled
+    out = validate_config({})
+    test("empty config fills all defaults",
+         all(k in out for k in CONFIG_SCHEMA))
+    test("default scale is 1.5", out["scale"] == 1.5)
+    test("default lang is 'fr'", out["lang"] == "fr")
+    test("default auto_update is 'auto'", out["auto_update"] == "auto")
+    test("default encounters is True", out["encounters"] is True)
+
+    # scale below min -> clamped to 0.5
+    out = validate_config({"scale": 0.1})
+    test("scale below min clamped to 0.5", out["scale"] == 0.5)
+
+    # scale above max -> clamped to 4.0
+    out = validate_config({"scale": 10.0})
+    test("scale above max clamped to 4.0", out["scale"] == 4.0)
+
+    # lang invalid -> default "fr"
+    out = validate_config({"lang": "klingon"})
+    test("invalid lang falls back to 'fr'", out["lang"] == "fr")
+
+    # auto_update invalid -> default "auto"
+    out = validate_config({"auto_update": "yolo"})
+    test("invalid auto_update falls back to 'auto'", out["auto_update"] == "auto")
+
+    # unknown key -> preserved (forward compat)
+    with mock.patch("catai_linux.config_schema.log") as mock_log:
+        out = validate_config({"future_key": 42})
+        test("unknown key preserved", out["future_key"] == 42)
+        test("unknown key logs warning",
+             any("unknown key" in str(c) for c in mock_log.warning.call_args_list))
+
+    # bool field with non-bool -> coerced
+    out = validate_config({"encounters": 1})
+    test("non-bool coerced to bool", out["encounters"] is True)
+    out = validate_config({"encounters": 0})
+    test("non-bool 0 coerced to False", out["encounters"] is False)
+
+    # cats key preserved
+    cats_data = [{"name": "Tabby", "skin": "cat01"}]
+    out = validate_config({"cats": cats_data})
+    test("cats list preserved", out["cats"] == cats_data)
+
+    # valid scale passes through
+    out = validate_config({"scale": 2.0})
+    test("valid scale passes through", out["scale"] == 2.0)
+
+
+# ── catai_linux.easter_eggs ──────────────────────────────────────────────────
+
+def test_easter_eggs_data() -> None:
+    print("\n[easter_eggs_data]", flush=True)
+    from catai_linux.easter_eggs import MAGIC_EGG_PHRASES, EASTER_EGGS, EasterEggMixin
+
+    # MAGIC_EGG_PHRASES is a non-empty dict
+    test("MAGIC_EGG_PHRASES is non-empty dict",
+         isinstance(MAGIC_EGG_PHRASES, dict) and len(MAGIC_EGG_PHRASES) > 0)
+
+    # Build set of EASTER_EGGS keys
+    egg_keys = {e[0] for e in EASTER_EGGS}
+
+    # Every value in MAGIC_EGG_PHRASES maps to a key in EASTER_EGGS
+    unmapped = {v for v in MAGIC_EGG_PHRASES.values() if v not in egg_keys}
+    test("all phrase values map to an EASTER_EGGS key",
+         len(unmapped) == 0, f"unmapped: {unmapped}")
+
+    # EASTER_EGGS is a non-empty list of tuples
+    test("EASTER_EGGS is non-empty list",
+         isinstance(EASTER_EGGS, list) and len(EASTER_EGGS) > 0)
+
+    # Each entry is a tuple with (key, emoji, label, method_name)
+    test("EASTER_EGGS entries are 4-tuples",
+         all(isinstance(e, tuple) and len(e) == 4 for e in EASTER_EGGS))
+
+    # All keys have "key" and "emoji" (index 0 and 1)
+    test("all entries have non-empty key and emoji",
+         all(e[0] and e[1] for e in EASTER_EGGS))
+
+    # All EASTER_EGGS keys are unique
+    test("EASTER_EGGS keys are unique",
+         len(egg_keys) == len(EASTER_EGGS))
+
+    # EasterEggMixin has an eg_* method for every EASTER_EGGS entry
+    missing_methods = [e[3] for e in EASTER_EGGS if not hasattr(EasterEggMixin, e[3])]
+    test("EasterEggMixin has all eg_* methods",
+         len(missing_methods) == 0, f"missing: {missing_methods}")
+
+    # method_name matches "eg_" + key pattern
+    test("method names start with eg_",
+         all(e[3].startswith("eg_") for e in EASTER_EGGS))
+
+    # At least 20 easter eggs exist
+    test("at least 20 easter eggs", len(EASTER_EGGS) >= 20)
+
+    # At least 30 magic phrases exist
+    test("at least 30 magic phrases", len(MAGIC_EGG_PHRASES) >= 30)
+
+
+# ── CatInstance init ─────────────────────────────────────────────────────────
+
+def test_cat_instance_init() -> None:
+    print("\n[cat_instance_init]", flush=True)
+    from catai_linux.app import CatInstance, CatState
+
+    cat = CatInstance({"name": "Test", "skin": "cat_orange"})
+
+    test("state is IDLE", cat.state == CatState.IDLE)
+    test("direction is 'south'", cat.direction == "south")
+    test("frame_index is 0", cat.frame_index == 0)
+    test("x is 0.0", cat.x == 0.0)
+    test("y is 0.0", cat.y == 0.0)
+    test("dragging is False", cat.dragging is False)
+    test("chat_visible is False", cat.chat_visible is False)
+    test("meow_visible is False", cat.meow_visible is False)
+    test("in_encounter is False", cat.in_encounter is False)
+    test("is_kitten is False", cat.is_kitten is False)
+    test("config is set", cat.config["name"] == "Test")
+
+
+# ── pil_to_surface ───────────────────────────────────────────────────────────
+
+def test_pil_to_surface() -> None:
+    print("\n[pil_to_surface]", flush=True)
+    from catai_linux.app import pil_to_surface
+    from PIL import Image
+
+    # Create a 4x4 solid red RGBA image
+    img = Image.new("RGBA", (4, 4), (255, 0, 0, 255))
+    surface, data = pil_to_surface(img, 4, 4)
+
+    test("surface width is 4", surface.get_width() == 4)
+    test("surface height is 4", surface.get_height() == 4)
+    test("data is a bytearray", isinstance(data, bytearray))
+
+    # Verify RGBA->BGRA swap: original red (255,0,0,255) should become
+    # (B=0,G=0,R=255,A=255) in cairo ARGB32 little-endian format
+    test("BGRA swap: byte 0 is 0 (blue from original)", data[0] == 0)
+    test("BGRA swap: byte 2 is 255 (red moved to byte 2)", data[2] == 255)
+    test("BGRA swap: alpha preserved at byte 3", data[3] == 255)
+    test("data length matches 4*4*4", len(data) == 4 * 4 * 4)
+
+
+# ── sprite cache ─────────────────────────────────────────────────────────────
+
+def test_sprite_cache() -> None:
+    print("\n[sprite_cache]", flush=True)
+    from catai_linux.app import pil_to_surface_cached, _surface_cache
+    from PIL import Image
+
+    # Clear cache, verify it's empty
+    _surface_cache.clear()
+    test("cache is empty after clear", len(_surface_cache) == 0)
+
+    # Create a temp PNG
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+        tmp_path = f.name
+        img = Image.new("RGBA", (8, 8), (0, 255, 0, 255))
+        img.save(tmp_path)
+
+    try:
+        # Load via pil_to_surface_cached
+        surf1, data1 = pil_to_surface_cached(tmp_path, 8, 8)
+        test("cache has 1 entry after first load", len(_surface_cache) == 1)
+
+        # Call again -> cache hit (same id())
+        surf2, data2 = pil_to_surface_cached(tmp_path, 8, 8)
+        test("cache hit returns same surface", surf1 is surf2)
+
+        # Different size -> cache miss
+        surf3, data3 = pil_to_surface_cached(tmp_path, 16, 16)
+        test("different size is a cache miss", surf3 is not surf1)
+        test("cache has 2 entries after new size", len(_surface_cache) == 2)
+    finally:
+        os.unlink(tmp_path)
+        _surface_cache.clear()
+
+
 def test_wake_word() -> None:
     print("\n[wake_word]", flush=True)
     from catai_linux import wake_word
@@ -1718,6 +1901,11 @@ def main() -> int:
     _run_section("reactions", test_reactions)
     _run_section("mood", test_mood)
     _run_section("activity", test_activity)
+    _run_section("config_schema", test_config_schema)
+    _run_section("easter_eggs_data", test_easter_eggs_data)
+    _run_section("cat_instance_init", test_cat_instance_init)
+    _run_section("pil_to_surface", test_pil_to_surface)
+    _run_section("sprite_cache", test_sprite_cache)
     _run_section("wake_word", test_wake_word)
     print(f"\n=== Results: {PASS} passed, {FAIL} failed ===\n", flush=True)
     return 0 if FAIL == 0 else 1
