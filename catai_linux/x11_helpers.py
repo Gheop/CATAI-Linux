@@ -239,100 +239,123 @@ def apply_above_all() -> bool:
 
 
 # ── Global hotkey grab ───────────────────────────────────────────────────────
+#
+# We open a SEPARATE Xlib connection for the key grab because GDK4
+# owns the main X connection and consumes all events through its own
+# GSource before our XCheckTypedEvent can see them. A dedicated
+# connection means KeyPress events from XGrabKey land in OUR event
+# queue, not GDK's.
 
+_grab_lib = None    # separate ctypes handle (same libX11, different state)
+_grab_dpy = None    # XDisplay* for the grab connection
 _grabbed_keycode: int | None = None
 
 
-def grab_key_global(keycode: int) -> bool:
-    """Grab a key globally via XGrabKey so it's intercepted no matter
-    which window has focus. Used for the ² Quake console toggle.
-
-    Returns True if the grab succeeded. Call ``ungrab_key_global`` on
-    shutdown to release."""
-    global _grabbed_keycode
-    if not (_init_xlib() and _xdpy):
+def _init_grab_connection() -> bool:
+    """Open a dedicated X display connection for global hotkey grabs."""
+    global _grab_lib, _grab_dpy
+    if _grab_dpy is not None:
+        return True
+    if _grab_lib is not None and _grab_lib is False:
         return False
     try:
-        dpy = ctypes.c_void_p(_xdpy)
-        _xlib.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
-        _xlib.XDefaultRootWindow.restype = ctypes.c_ulong
-        root = _xlib.XDefaultRootWindow(dpy)
+        import os
+        lib = ctypes.cdll.LoadLibrary("libX11.so.6")
+        lib.XOpenDisplay.argtypes = [ctypes.c_char_p]
+        lib.XOpenDisplay.restype = ctypes.c_void_p
+        display_name = os.environ.get("DISPLAY", "").encode() or None
+        dpy = lib.XOpenDisplay(display_name)
+        if not dpy:
+            _grab_lib = False
+            return False
+        _grab_lib = lib
+        _grab_dpy = dpy
+        log.debug("Grab: opened separate X connection %#x", dpy)
+        return True
+    except Exception:
+        log.debug("Grab: XOpenDisplay failed", exc_info=True)
+        _grab_lib = False
+        return False
 
-        # XGrabKey(display, keycode, modifiers, grab_window,
-        #          owner_events, pointer_mode, keyboard_mode)
-        _xlib.XGrabKey.argtypes = [
+
+def grab_key_global(keycode: int) -> bool:
+    """Grab a key globally via XGrabKey on a dedicated X connection so
+    it's intercepted no matter which window has focus (even other apps).
+
+    Returns True if the grab succeeded."""
+    global _grabbed_keycode
+    if not _init_grab_connection():
+        return False
+    try:
+        _grab_lib.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+        _grab_lib.XDefaultRootWindow.restype = ctypes.c_ulong
+        root = _grab_lib.XDefaultRootWindow(_grab_dpy)
+
+        _grab_lib.XGrabKey.argtypes = [
             ctypes.c_void_p, ctypes.c_int, ctypes.c_uint,
             ctypes.c_ulong, ctypes.c_int, ctypes.c_int, ctypes.c_int,
         ]
-        AnyModifier = (1 << 15)  # GrabAny
+        AnyModifier = (1 << 15)
         GrabModeAsync = 1
-        # Grab with no modifier + grab with any modifier (so Caps Lock
-        # / Num Lock states don't block the hotkey)
         for mod in (0, AnyModifier):
-            _xlib.XGrabKey(dpy, keycode, mod, root, True,
-                           GrabModeAsync, GrabModeAsync)
-        _xlib.XFlush(ctypes.c_void_p(_xdpy))
+            _grab_lib.XGrabKey(_grab_dpy, keycode, mod, root, True,
+                               GrabModeAsync, GrabModeAsync)
+        _grab_lib.XFlush.argtypes = [ctypes.c_void_p]
+        _grab_lib.XFlush(_grab_dpy)
         _grabbed_keycode = keycode
-        log.debug("XGrabKey OK for keycode %d", keycode)
+        log.warning("HOTKEY: XGrabKey OK for keycode %d", keycode)
         return True
     except Exception:
-        log.debug("XGrabKey failed", exc_info=True)
+        log.warning("HOTKEY: XGrabKey failed", exc_info=True)
         return False
 
 
 def ungrab_key_global() -> None:
-    """Release the global key grab."""
-    global _grabbed_keycode
-    if _grabbed_keycode is None or not (_init_xlib() and _xdpy):
+    """Release the global key grab and close the dedicated connection."""
+    global _grabbed_keycode, _grab_dpy
+    if _grabbed_keycode is None or _grab_dpy is None:
         return
     try:
-        dpy = ctypes.c_void_p(_xdpy)
-        root = _xlib.XDefaultRootWindow(dpy)
-        _xlib.XUngrabKey.argtypes = [
+        root = _grab_lib.XDefaultRootWindow(_grab_dpy)
+        _grab_lib.XUngrabKey.argtypes = [
             ctypes.c_void_p, ctypes.c_int, ctypes.c_uint, ctypes.c_ulong,
         ]
         AnyModifier = (1 << 15)
         for mod in (0, AnyModifier):
-            _xlib.XUngrabKey(dpy, _grabbed_keycode, mod, root)
-        _xlib.XFlush(ctypes.c_void_p(_xdpy))
-        _grabbed_keycode = None
+            _grab_lib.XUngrabKey(_grab_dpy, _grabbed_keycode, mod, root)
+        _grab_lib.XFlush(_grab_dpy)
+        _grab_lib.XCloseDisplay.argtypes = [ctypes.c_void_p]
+        _grab_lib.XCloseDisplay(_grab_dpy)
     except Exception:
-        log.debug("XUngrabKey failed", exc_info=True)
+        log.debug("XUngrabKey/XCloseDisplay failed", exc_info=True)
+    _grabbed_keycode = None
+    _grab_dpy = None
 
 
 def poll_grabbed_key() -> bool:
-    """Check if the grabbed key was pressed since last poll. Non-blocking.
+    """Non-blocking check: was the grabbed key pressed since last poll?
 
-    Uses XCheckTypedEvent to peek at KeyPress events on the root window.
-    Returns True if the grabbed key was fired. Must be called from a
-    GLib timer (~100 ms) so we don't miss events."""
-    if _grabbed_keycode is None or not (_init_xlib() and _xdpy):
+    Reads events from the DEDICATED grab connection (not GDK's).
+    Returns True if the hotkey fired."""
+    if _grabbed_keycode is None or _grab_dpy is None:
         return False
     try:
-        dpy = ctypes.c_void_p(_xdpy)
-
-        # XEvent is a union of 192 bytes on 64-bit (24 longs)
         class XEvent(ctypes.Structure):
             _fields_ = [("data", ctypes.c_ulong * 24)]
 
-        _xlib.XCheckTypedEvent.argtypes = [
-            ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(XEvent),
-        ]
-        _xlib.XCheckTypedEvent.restype = ctypes.c_int
+        _grab_lib.XPending.argtypes = [ctypes.c_void_p]
+        _grab_lib.XPending.restype = ctypes.c_int
+        if _grab_lib.XPending(_grab_dpy) == 0:
+            return False
 
+        _grab_lib.XNextEvent.argtypes = [ctypes.c_void_p, ctypes.POINTER(XEvent)]
         ev = XEvent()
+        _grab_lib.XNextEvent(_grab_dpy, ctypes.byref(ev))
+
+        event_type = int(ev.data[0])
         KeyPress = 2
-        if _xlib.XCheckTypedEvent(dpy, KeyPress, ctypes.byref(ev)):
-            # XKeyEvent: type(0), serial(1), send_event(2), display(3),
-            #            window(4), root(5), subwindow(6), time(7),
-            #            x(8), y(9), x_root(10), y_root(11),
-            #            state(12), keycode(13), ...
-            pressed_keycode = int(ev.data[13]) & 0xFFFF
-            if pressed_keycode == _grabbed_keycode:
-                return True
-            # Not our key — put it back
-            _xlib.XPutBackEvent.argtypes = [ctypes.c_void_p, ctypes.POINTER(XEvent)]
-            _xlib.XPutBackEvent(dpy, ctypes.byref(ev))
+        if event_type == KeyPress:
+            return True
         return False
     except Exception:
         return False
