@@ -16,6 +16,8 @@ Port of [CATAI](https://github.com/wil-pe/CATAI) (macOS/Swift) to Linux.
 
 ![Animation sequences — dashing, drama queen, wall climb](screenshot3.png)
 
+![Voice command "raconte" — a cat tells a story](screenshot_raconte.png)
+
 ## Features
 
 - **Desktop companion** -- Cats roam freely across your screen with pixel-perfect animations
