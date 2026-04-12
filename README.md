@@ -16,7 +16,7 @@ Port of [CATAI](https://github.com/wil-pe/CATAI) (macOS/Swift) to Linux.
 
 ![Animation sequences — dashing, drama queen, wall climb](screenshot3.png)
 
-![Voice command "raconte" — a cat tells a story](screenshot_raconte.png)
+![Voice command "tell" — a cat tells a story](screenshot_raconte.png)
 
 ## Features
 
@@ -26,7 +26,7 @@ Port of [CATAI](https://github.com/wil-pe/CATAI) (macOS/Swift) to Linux.
 - **AI chat** -- Click a cat to open a pixel-art chat bubble, powered by [Claude](https://claude.ai) or [Ollama](https://ollama.ai)
 - **Voice chat** 🎤 (optional) -- Hold the mic button or simply hold **Space** to talk to your cats. 100% local transcription via [faster-whisper](https://github.com/SYSTRAN/faster-whisper), GPU-accelerated if you have CUDA
 - **Wake word** 👂 (optional) -- Each cat answers to its own renameable first name. Say "Mandarine" or "Tabby" out loud and the matching cat opens its chat bubble + starts listening. Powered by [Vosk](https://alphacephei.com/vosk/) (offline, ~41 MB FR model, Apache-2.0)
-- **Voice commands** 🗣️ -- Chain a verb after a cat's name to pilot it directly: *"Mandarine dors"* (sleep), *"Tabby viens"* (come to cursor), *"Ombre raconte"* (tell a story), *"Noisette danse"* (mini-disco), plus *saute* and *roule*. No chat bubble, just instant action.
+- **Voice commands** 🗣️ -- Chain a verb after a cat's name to control it directly: *"Mandarine sleep"*, *"Tabby come"* (to cursor), *"Ombre tell"* (tell a story), *"Noisette dance"* (mini-disco), plus *jump* and *roll*. No chat bubble, just instant action.
 - **Rich animations** -- 23 animation states including running, dashing, sleeping, grooming, climbing, wall grab, ledge climbing, dying & resurrection, and more
 - **Animation sequences** -- Multi-step scripted behaviors: wall adventures, ledge climbing, dash crashes, dramatic deaths with resurrection
 - **Visual overlays** -- Floating ZzZ, hearts, speed lines, hurt stars, skulls, sparkles above cats during animations
@@ -44,12 +44,12 @@ Each character is a pre-colored sprite with a unique personality:
 
 | Sprite | Name (default) | Personality | Specialty |
 |--------|---------------|-------------|-----------|
-| 🟠 Orange | Mandarine | Espiègle et joueur | Bêtises et mouvement |
-| 🟤 Tabby | Tabby | Curieux et aventurier | Explorer chaque recoin |
-| ⬛ Dark | Ombre | Mystérieux et silencieux | Paroles rares mais profondes |
-| 🟫 Brown | Noisette | Doux et réconfortant | Câlins et bonne humeur |
-| 🩶 Grey | Brume | Sage et philosophe | Pensées profondes sur la vie |
-| 🖤 Black | Minuit | Élégant et nocturne | Histoires mystérieuses |
+| 🟠 Orange | Mandarine | Mischievous and playful | Pranks and movement |
+| 🟤 Tabby | Tabby | Curious and adventurous | Exploring every corner |
+| ⬛ Dark | Ombre | Mysterious and silent | Rare but profound words |
+| 🟫 Brown | Noisette | Gentle and comforting | Cuddles and good vibes |
+| 🩶 Grey | Brume | Wise and philosophical | Deep thoughts about life |
+| 🖤 Black | Minuit | Elegant and nocturnal | Mysterious stories |
 
 Names and languages adapt to your selected language (FR / EN / ES).
 
@@ -203,291 +203,289 @@ MIT
 - Clean Ctrl+C exit handling
 - Console I/O logging for debugging
 
-### v1.0.0 — Le grand ménage (2026-04-12)
+### v1.0.0 — The big cleanup (2026-04-12)
 
-CATAI-Linux atteint la **v1.0** — le code est maintenant modulaire,
-testé, documenté et prêt pour les contributions.
+CATAI-Linux reaches **v1.0** — the codebase is now modular, tested,
+documented, and ready for contributions.
 
-#### Architecture : app.py de 6800 à 4124 lignes (-39%)
-- `catai_linux/constants.py` (209 lignes) — `CatState` enum, animations,
-  personnalités, séquences, toutes les constantes scalaires extraites
-- `catai_linux/encounters.py` (391 lignes) — `CatEncounter` +
+#### Architecture: app.py from 6800 to 4124 lines (-39%)
+- `catai_linux/constants.py` (209 lines) — `CatState` enum, animations,
+  personalities, sequences, all scalar constants extracted
+- `catai_linux/encounters.py` (391 lines) — `CatEncounter` +
   `LoveEncounter` classes
-- `catai_linux/settings_window.py` (755 lignes) — `SettingsWindow`
-  classe complète
-- (déjà en v0.9.0) `catai_linux/easter_eggs.py` (1535 lignes) — 30
-  easter eggs en mixin
+- `catai_linux/settings_window.py` (755 lines) — full `SettingsWindow`
+  class
+- (already in v0.9.0) `catai_linux/easter_eggs.py` (1535 lines) — 30
+  easter eggs as a mixin
 
-#### Audit post-v0.9.0
-- 3 attributs mixin (`_apocalypse_queue`, `_apocalypse_spawning`,
-  `_matrix_ticks`) ajoutés à `CatAIApp.__init__` — étaient créés
-  dynamiquement via `hasattr()`
-- 3 modules ajoutés au smoke test (`easter_eggs`, `config_schema`,
+#### Post-v0.9.0 audit
+- 3 mixin attributes (`_apocalypse_queue`, `_apocalypse_spawning`,
+  `_matrix_ticks`) added to `CatAIApp.__init__` — were previously
+  created dynamically via `hasattr()`
+- 3 modules added to the smoke test (`easter_eggs`, `config_schema`,
   `theme`)
-- Pattern `getattr` nettoyé dans `chat_backend.py`
-- Fix bug `voice_model` reset à `"base"` à chaque lancement — la
-  contrainte `choices` dans le config schema était trop restrictive
+- `getattr` pattern cleaned up in `chat_backend.py`
+- Fixed `voice_model` resetting to `"base"` on every launch — the
+  `choices` constraint in the config schema was too restrictive
 
 #### DevX
-- **Makefile unifié** : `make lint`, `make test`, `make e2e`, `make run`,
+- **Unified Makefile**: `make lint`, `make test`, `make e2e`, `make run`,
   `make messages` (compile gettext), `make release`, `make clean`
-- **CONTRIBUTING.md** — guide pour ajouter un easter egg, un character
-  pack, un voice command, une traduction
+- **CONTRIBUTING.md** — guide for adding an easter egg, a character
+  pack, a voice command, or a translation
 
-#### Chiffres
-- **407 tests** passent (0 failures)
-- **12 modules Python** extraits de `app.py` au total
-- **ruff clean** sur tout le codebase
+#### Numbers
+- **407 tests** pass (0 failures)
+- **12 Python modules** extracted from `app.py` in total
+- **ruff clean** across the entire codebase
 
-### v0.9.0 — Architecture : modular, typed, cached, i18n (2026-04-12)
+### v0.9.0 — Architecture: modular, typed, cached, i18n (2026-04-12)
 
-Suite logique de l'audit v0.8.0 — 6 pistes d'amélioration structurelles.
+Logical follow-up to the v0.8.0 audit — 6 structural improvement tracks.
 
-#### Piste 3 — Easter eggs → module dédié
-- 30 easter eggs + menu + drawing extraits de `app.py` vers
-  `catai_linux/easter_eggs.py` (1535 lignes). Pattern mixin :
-  `CatAIApp(EasterEggMixin, Gtk.Application)`. `app.py` passe de
-  6797 à 5357 lignes (-1440). Zéro changement de logique.
+#### Track 3 — Easter eggs to dedicated module
+- 30 easter eggs + menu + drawing extracted from `app.py` into
+  `catai_linux/easter_eggs.py` (1535 lines). Mixin pattern:
+  `CatAIApp(EasterEggMixin, Gtk.Application)`. `app.py` goes from
+  6797 to 5357 lines (-1440). Zero logic changes.
 
-#### Piste 1 — Type hints
-- `from __future__ import annotations` sur `app.py`
-- `CatInstance.__init__` et 8 méthodes publiques annotées
-- `CatAIApp.__init__` attributes clés annotés
-- Fonctions module-level (`load_config`, `save_config`,
-  `pil_to_surface`, `load_sprite`, etc.) annotées
+#### Track 1 — Type hints
+- `from __future__ import annotations` on `app.py`
+- `CatInstance.__init__` and 8 public methods annotated
+- Key `CatAIApp.__init__` attributes annotated
+- Module-level functions (`load_config`, `save_config`,
+  `pil_to_surface`, `load_sprite`, etc.) annotated
 
-#### Piste 7 — Config validation
-- Nouveau module `catai_linux/config_schema.py` (~140 lignes)
-- `CONFIG_SCHEMA` dict avec type/default/min/max/choices pour
-  les 18 clés de config
-- `validate_config()` remplit les défauts, clamp les numériques,
-  valide les choix, log les clés inconnues, ne raise jamais
-- Branché dans `do_activate` : `cfg = validate_config(load_config())`
+#### Track 7 — Config validation
+- New module `catai_linux/config_schema.py` (~140 lines)
+- `CONFIG_SCHEMA` dict with type/default/min/max/choices for
+  all 18 config keys
+- `validate_config()` fills defaults, clamps numerics, validates
+  choices, logs unknown keys, never raises
+- Wired into `do_activate`: `cfg = validate_config(load_config())`
 
-#### Piste 6 — gettext i18n
-- 23 clés de traduction (FR/EN/ES) migrées du dict inline vers de
-  vrais catalogues gettext `.po` + `.mo` compilés dans
+#### Track 6 — gettext i18n
+- 23 translation keys (FR/EN/ES) migrated from inline dict to
+  real gettext `.po` + `.mo` catalogs compiled in
   `catai_linux/locales/`
-- `L10n` backward-compat préservé via une métaclasse : `L10n.lang =
-  "en"` déclenche le rechargement gettext. `L10n.s("key")` et
-  `L10n.random_meow()` inchangés côté API.
-- `.mo` inclus dans le wheel via `pyproject.toml`
+- `L10n` backward-compat preserved via a metaclass: `L10n.lang =
+  "en"` triggers gettext reload. `L10n.s("key")` and
+  `L10n.random_meow()` unchanged API-side.
+- `.mo` files included in the wheel via `pyproject.toml`
 
-#### Piste 5 — Cache sprites LRU
-- `@functools.lru_cache(maxsize=512)` sur `load_sprite` (PIL Image)
+#### Track 5 — LRU sprite cache
+- `@functools.lru_cache(maxsize=512)` on `load_sprite` (PIL Image)
 - `_surface_cache` dict + `pil_to_surface_cached` wrapper (cairo
-  surfaces cachées par `(path, w, h)`)
-- Quand 6 chats partagent le même catset, le sprite n'est chargé et
-  converti qu'une fois au lieu de 6. Clear au shutdown.
+  surfaces cached by `(path, w, h)`)
+- When 6 cats share the same catset, the sprite is loaded and
+  converted only once instead of 6 times. Cleared at shutdown.
 
-#### Piste 2 — Tests > 30 %
-- 48 nouvelles assertions : config schema (15), easter eggs data
+#### Track 2 — Tests > 30%
+- 48 new assertions: config schema (15), easter eggs data
   (10), CatInstance init (11), pil_to_surface swap (7),
   sprite cache (5)
 - Total **401 passed / 0 failed** (up from 353)
 
-#### Piste 4 — Async I/O : reportée
-Les threads daemon actuels + `GLib.idle_add` sont idiomatiques en
-GTK4. Passer à asyncio nécessiterait un bridge `gbulb`/`asyncio-glib`
-avec une maintenance incertaine. Risque/effort disproportionné.
+#### Track 4 — Async I/O: deferred
+The current daemon threads + `GLib.idle_add` are idiomatic in GTK4.
+Switching to asyncio would require a `gbulb`/`asyncio-glib` bridge
+with uncertain maintenance. Disproportionate risk/effort.
 
-### v0.8.0 — Audit profond : dead code, bugs, sécurité, perfs (2026-04-12)
+### v0.8.0 — Deep audit: dead code, bugs, security, performance (2026-04-12)
 
-Audit complet du codebase après la série v0.7.x. Zéro nouvelle feature,
-100% qualité.
+Full codebase audit after the v0.7.x series. Zero new features,
+100% quality.
 
-#### Code mort supprimé
-- `_CatsetMarker` + `_CATSET_COLOR_DEF` (vestige du color-tinting v0.3.0)
-- `self.color_def` + paramètre `color_def_obj` dans `CatInstance.__init__`
-- `_check_deps()` méthode vide + appel dans `do_activate`
-- `active_ids` (legacy `color_id` set) dans `SettingsWindow._build`
-- `self._entry_window` (attribut jamais lu)
-- `import re` inline dans `send_chat()` → déplacé au top-level
-- `from math import log` inline dans `memory.py` → `import math` top-level
+#### Dead code removed
+- `_CatsetMarker` + `_CATSET_COLOR_DEF` (remnant from v0.3.0 color-tinting)
+- `self.color_def` + `color_def_obj` parameter in `CatInstance.__init__`
+- `_check_deps()` empty method + call in `do_activate`
+- `active_ids` (legacy `color_id` set) in `SettingsWindow._build`
+- `self._entry_window` (attribute never read)
+- `import re` inline in `send_chat()` — moved to top-level
+- `from math import log` inline in `memory.py` — moved to `import math` top-level
 
-#### Bugs corrigés
-- **`for/else` piège** dans `_apply_sequence_offset_compensation` — le
-  `else` du `for` s'exécutait quand la boucle ne breakait pas, pas quand
-  `_sequence` était `None`. Remplacé par un `if/else` explicite avec
-  `min()` bound-safe.
-- **Double `now = time.monotonic()`** dans `_check_encounters` — la
-  deuxième affectation écrasait inutilement la première.
-- **Attributs dynamiques** sur `CatInstance` — `_state_tick`,
+#### Bugs fixed
+- **`for/else` trap** in `_apply_sequence_offset_compensation` — the
+  `else` clause ran when the loop didn't break, not when `_sequence`
+  was `None`. Replaced with an explicit `if/else` with bound-safe
+  `min()`.
+- **Double `now = time.monotonic()`** in `_check_encounters` — the
+  second assignment needlessly overwrote the first.
+- **Dynamic attributes** on `CatInstance` — `_state_tick`,
   `_die_threshold`, `_die_resurrect`, `_sleep_tick`, `_petting_active`,
   `_hidden`, `_boss_scale`, `_beam_ticks`, `_rm_rf_active`,
-  `_nyan_active` sont maintenant tous initialisés explicitement dans
-  `__init__`, pas via `getattr()` dispersés dans 4000 lignes.
+  `_nyan_active` are now all explicitly initialized in `__init__`,
+  not via scattered `getattr()` calls across 4000 lines.
 
-#### Sécurité
-- **Test socket déplacé** de `/tmp/catai_test.sock` vers
-  `$XDG_RUNTIME_DIR/catai_test.sock` + `os.chmod(path, 0o600)` après
-  bind. Avant, n'importe quel user du système pouvait y envoyer des
-  commandes (force_state, quit, type_chat, etc.).
-- **Timeout DoS sur les sockets** — `conn.settimeout(5.0)` ajouté sur
-  les deux sockets (API + test) après `setblocking(True)`. Un client
-  malveillant qui connecte sans envoyer ne bloque plus le GTK main loop
-  indéfiniment.
-- **Log d'avertissement visible** dans l'auto-updater avant d'utiliser
-  `--break-system-packages` (PEP 668 fallback). Choix de design
-  conscient, mais maintenant l'utilisateur le voit dans ses logs.
-- **Commentaire explicite** dans `chat_backend.py` sur le choix de ne
-  pas refuser de lire les credentials en cas de permissions trop
-  ouvertes (trade-off : casser l'app vs alerter l'user).
+#### Security
+- **Test socket moved** from `/tmp/catai_test.sock` to
+  `$XDG_RUNTIME_DIR/catai_test.sock` + `os.chmod(path, 0o600)` after
+  bind. Previously, any user on the system could send commands
+  (force_state, quit, type_chat, etc.).
+- **Socket DoS timeout** — `conn.settimeout(5.0)` added on both
+  sockets (API + test) after `setblocking(True)`. A malicious client
+  connecting without sending no longer blocks the GTK main loop
+  indefinitely.
+- **Visible warning log** in the auto-updater before using
+  `--break-system-packages` (PEP 668 fallback). Conscious design
+  choice, but now the user sees it in the logs.
+- **Explicit comment** in `chat_backend.py` about the choice not to
+  refuse reading credentials with overly open permissions (trade-off:
+  breaking the app vs alerting the user).
 
-#### Optimisations
-- **`pil_to_surface`** — l'échange RGBA→BGRA passe par `PIL.Image.split()`
-  + `merge()` natif au lieu d'une boucle Python par pixel. ~50x plus
-  rapide sur un sprite 80×80.
-- **`_sprite_floor_y` + `_sprite_center_x`** — passent par
-  `PIL.Image.getbbox()` sur le canal alpha au lieu d'un scan pixel par
-  pixel. De O(w×h) Python à un seul appel C-level.
-- **Metrics** — `track()` accumule maintenant en mémoire et flush tous
-  les 30 s (+ au shutdown) au lieu de faire load()+save() à chaque
-  appel. Économise 2-3 écritures disque par seconde pendant un chat
-  actif.
-- **`memory.py`** — `from math import log` sorti de la boucle hot-path
-  vers un `import math` top-level.
+#### Optimizations
+- **`pil_to_surface`** — RGBA-to-BGRA swap now uses `PIL.Image.split()`
+  + native `merge()` instead of a per-pixel Python loop. ~50x faster
+  on an 80x80 sprite.
+- **`_sprite_floor_y` + `_sprite_center_x`** — now use
+  `PIL.Image.getbbox()` on the alpha channel instead of a per-pixel
+  scan. From O(w*h) Python to a single C-level call.
+- **Metrics** — `track()` now accumulates in memory and flushes every
+  30 s (+ at shutdown) instead of load()+save() on every call. Saves
+  2-3 disk writes per second during active chat.
+- **`memory.py`** — `from math import log` moved out of the hot-path
+  loop to a top-level `import math`.
 
-#### Non inclus (trop risqué pour cette passe)
-- Rename `cat01` → `cat_01` (convention de nommage) — nécessite une
-  migration des données utilisateur. Reporté.
-- Extraction de `SettingsWindow` et `CatEncounter` dans des modules
-  séparés — `app.py` fait 6700+ lignes mais le refactoring structurel
-  risque des régressions en cascade. Reporté.
+#### Not included (too risky for this pass)
+- Rename `cat01` to `cat_01` (naming convention) — requires a user
+  data migration. Deferred.
+- Extract `SettingsWindow` and `CatEncounter` into separate modules
+  — `app.py` is 6700+ lines but structural refactoring risks
+  cascading regressions. Deferred.
 
-### v0.7.5 — Fix browser pop-up sneaky (2026-04-11)
+### v0.7.5 — Fix sneaky browser pop-up (2026-04-11)
 
-**Bug surprise** : quand le token Claude OAuth était complètement
-expiré (pas juste l'access token mais aussi le refresh token), notre
-helper `_refresh_claude_token` lançait `claude -p ok` qui se rabattait
-sur le flow d'auth interactif et **ouvrait une fenêtre browser sur la
-page Claude marketing/login** sans prévenir, en plein milieu de
-n'importe quelle action de fond (encounter, reaction pool, drift,
-extraction de mémoire, etc.).
+**Surprise bug**: when the Claude OAuth token was fully expired (not
+just the access token but also the refresh token), our
+`_refresh_claude_token` helper ran `claude -p ok` which fell back to
+the interactive auth flow and **opened a browser window to the Claude
+marketing/login page** without warning, right in the middle of any
+background action (encounter, reaction pool, drift, memory extraction,
+etc.).
 
-**Fix** : on lance maintenant `claude -p ok` dans un environnement
-*headless-only* en strippant `DISPLAY`, `WAYLAND_DISPLAY` et `BROWSER`,
-plus en forçant `BROWSER=/bin/false`. Le CLI ne peut plus pop de
-browser. Si le refresh échoue vraiment, le chat lève proprement
-`err_auth` et la bulle affiche un message poli — l'utilisateur peut
-re-auth manuellement avec `claude -p ok` depuis un vrai terminal
-quand il en a envie.
+**Fix**: `claude -p ok` now runs in a *headless-only* environment by
+stripping `DISPLAY`, `WAYLAND_DISPLAY`, and `BROWSER`, plus forcing
+`BROWSER=/bin/false`. The CLI can no longer pop a browser. If the
+refresh truly fails, the chat cleanly raises `err_auth` and the bubble
+shows a polite message — the user can re-auth manually with
+`claude -p ok` from a real terminal whenever they want.
 
-5 nouveaux unit tests qui mockent `subprocess.run` et asserent que
-l'env passé strip bien tout ce qu'il faut. Total 353 passed / 0 failed.
+5 new unit tests that mock `subprocess.run` and assert that the
+passed environment strips everything it should. Total 353 passed / 0 failed.
 
-### v0.7.4 — Voice commands directes (2026-04-11)
+### v0.7.4 — Direct voice commands (2026-04-11)
 
-Extension du wake word : au lieu d'ouvrir un chat à chaque fois qu'on
-appelle un chat par son prénom, on peut maintenant lui chaîner un
-**verbe** pour le piloter directement, sans bulle de chat ni écoute
-push-to-talk. Six verbes français pour commencer.
+Wake word extension: instead of opening a chat every time you call a
+cat by name, you can now chain a **verb** to control it directly,
+without a chat bubble or push-to-talk listening. Six French verbs to
+start with.
 
 | Phrase | Action |
 |---|---|
-| *« Mandarine »* | Comportement précédent : ouvre le chat + démarre une PTT 6 s |
-| *« Mandarine dors »* | Le chat se met en SLEEPING_BALL immédiatement |
-| *« Mandarine viens »* | Le chat marche jusqu'au curseur de la souris |
-| *« Mandarine raconte »* | Ouvre le chat et injecte un prompt « raconte-moi une anecdote » à l'IA |
-| *« Mandarine danse »* | Mini-disco loop sur ce chat (LOVE/ROLLING/GROOMING alternance, 5 sec) |
-| *« Mandarine saute »* | Animation JUMPING |
-| *« Mandarine roule »* | Animation ROLLING |
+| *"Mandarine"* | Previous behavior: opens chat + starts a 6 s PTT |
+| *"Mandarine dors"* | Cat enters SLEEPING_BALL immediately |
+| *"Mandarine viens"* | Cat walks to the mouse cursor |
+| *"Mandarine raconte"* | Opens chat and injects a "tell me a story" prompt to the AI |
+| *"Mandarine danse"* | Mini-disco loop on that cat (LOVE/ROLLING/GROOMING alternation, 5 sec) |
+| *"Mandarine saute"* | JUMPING animation |
+| *"Mandarine roule"* | ROLLING animation |
 
-Détails techniques :
+Technical details:
 
-- **Grammaire Vosk étendue** — les 6 verbes sont ajoutés à la grammaire
-  fermée du recognizer en plus des prénoms. Vosk compose librement, donc
-  *« Mandarine dors »* est transcrit en un seul résultat.
-- **Parser look-ahead 2 tokens** — après avoir matché un prénom, on
-  cherche un verbe dans les 2 tokens suivants. Permet à l'utilisateur de
-  hésiter (« euh Mandarine, dors ») mais évite les faux positifs sur des
-  verbes très éloignés.
-- **`viens` utilise XQueryPointer** — nouveau helper Xlib ctypes
-  `get_mouse_position()` qui lit la position absolue du curseur sans
-  fork. Fallback à un point random sur monitor 0 si la query échoue.
-- **`raconte` localisé** — le prompt envoyé au LLM est traduit en FR/EN/ES
-  selon `L10n.lang`, donc la langue de la réponse suit ta config.
-- **`danse` scopé à un seul chat** — réutilise la liste d'états
-  célébratoires de l'easter egg `eg_disco` mais ne met que le chat appelé
-  en mode danse, les autres continuent leur vie. Auto-cleanup après 5 s.
-- **Backward compat** — l'ancienne signature `on_wake(cat_id)` reste
-  supportée par un fallback `TypeError` dans `_fire`. Tous les
-  consumers existants continuent de marcher.
-- **23 nouveaux unit tests** : COMMAND_VERBS, parsing, look-ahead,
-  callback dispatch, legacy compat, get_mouse_position safety. Total
-  348 passed / 0 failed.
+- **Extended Vosk grammar** — the 6 verbs are added to the recognizer's
+  closed grammar alongside the cat names. Vosk composes freely, so
+  *"Mandarine dors"* is transcribed as a single result.
+- **2-token look-ahead parser** — after matching a cat name, the parser
+  looks for a verb in the next 2 tokens. Allows the user to hesitate
+  ("uh Mandarine, dors") while avoiding false positives on verbs that
+  are too far away.
+- **`viens` uses XQueryPointer** — new Xlib ctypes helper
+  `get_mouse_position()` that reads the absolute cursor position without
+  forking. Falls back to a random point on monitor 0 if the query fails.
+- **`raconte` is localized** — the prompt sent to the LLM is translated
+  to FR/EN/ES based on `L10n.lang`, so the response language follows
+  your config.
+- **`danse` scoped to a single cat** — reuses the celebratory state list
+  from the `eg_disco` easter egg but only puts the called cat into dance
+  mode; the others carry on. Auto-cleanup after 5 s.
+- **Backward compat** — the old `on_wake(cat_id)` signature is still
+  supported via a `TypeError` fallback in `_fire`. All existing
+  consumers keep working.
+- **23 new unit tests**: COMMAND_VERBS, parsing, look-ahead, callback
+  dispatch, legacy compat, get_mouse_position safety. Total 348
+  passed / 0 failed.
 
-Pas de nouvelle dépendance — Vosk était déjà dans `[voice]`.
+No new dependencies — Vosk was already in `[voice]`.
 
-### v0.7.3 — Cleanup subprocess X11 (2026-04-11)
+### v0.7.3 — X11 subprocess cleanup (2026-04-11)
 
-Suite à la discussion autour du portage Wayland natif (#7) : tant que
-GNOME Mutter ne supporte pas `wlr-layer-shell` (issue ouverte depuis
-2019, sans signe de mouvement), CATAI reste obligatoirement en
-**Xwayland sur GNOME** parce que `XShape` n'a pas d'équivalent sans
-layer-shell. Du coup on a fait un cleanup intermédiaire pour gagner
-en propreté côté code sans toucher à l'architecture.
+Following the discussion around native Wayland porting (#7): as long
+as GNOME Mutter doesn't support `wlr-layer-shell` (open issue since
+2019, no sign of movement), CATAI must stay on **Xwayland on GNOME**
+because `XShape` has no equivalent without layer-shell. So we did an
+intermediate cleanup to improve code quality without changing the
+architecture.
 
-- **`xprintidle` subprocess viré** — l'idle detection passe par
-  `org.gnome.Mutter.IdleMonitor` D-Bus via `Gio.DBusProxy` (PyGObject
-  natif, zéro nouvelle dep). Fallback subprocess `xprintidle` sur
-  setups non-GNOME, fallback `0` sinon. Coût d'un appel : ~0.1 ms vs
-  ~5-15 ms pour une fork().
-- **`xprop` subprocess pour fullscreen viré** — `_is_any_fullscreen()`
-  passe par 2 appels `XGetWindowProperty` directs en ctypes
-  (`_NET_ACTIVE_WINDOW` puis `_NET_WM_STATE`). ~50 µs au total contre
-  ~30 ms pour les 2 fork() précédents. Le poll fullscreen tourne à
-  0.67 Hz donc l'économie cumulée est ~20 ms/sec.
-- **`xdotool getwindowgeometry` viré** — la détection du Y offset GNOME
-  top bar passe par `XTranslateCoordinates` direct en ctypes. One-shot
-  au boot, mais une fork() en moins.
-- **Fallbacks subprocess morts retirés** — `_run_x11()` et les
-  fallbacks `xdotool windowmove` / `wmctrl` / `xprop -set` étaient
-  inatteignables en pratique (libX11 toujours dispo). 30 lignes de
-  plomberie en moins.
-- **Module `subprocess` retiré complètement de `app.py`** — un fichier
-  de moins à parcourir pour comprendre les dépendances externes.
-- **3 deps runtime virées** : `xdotool`, `xprop`, `xprintidle` ne sont
-  plus jamais appelées. Tu peux désinstaller ces packages sans rien
-  casser. Toujours requis pour `make e2e` (le harnais de test, pas
-  l'app elle-même).
+- **`xprintidle` subprocess removed** — idle detection now goes through
+  `org.gnome.Mutter.IdleMonitor` D-Bus via `Gio.DBusProxy` (native
+  PyGObject, zero new deps). Subprocess `xprintidle` fallback on
+  non-GNOME setups, fallback `0` otherwise. Call cost: ~0.1 ms vs
+  ~5-15 ms for a fork().
+- **`xprop` subprocess for fullscreen removed** — `_is_any_fullscreen()`
+  now uses 2 direct `XGetWindowProperty` ctypes calls
+  (`_NET_ACTIVE_WINDOW` then `_NET_WM_STATE`). ~50 us total vs ~30 ms
+  for the previous 2 fork() calls. Fullscreen polling runs at 0.67 Hz
+  so the cumulative saving is ~20 ms/sec.
+- **`xdotool getwindowgeometry` removed** — GNOME top bar Y offset
+  detection now uses direct `XTranslateCoordinates` ctypes call.
+  One-shot at boot, but one fewer fork().
+- **Dead subprocess fallbacks removed** — `_run_x11()` and the
+  `xdotool windowmove` / `wmctrl` / `xprop -set` fallbacks were
+  unreachable in practice (libX11 is always available). 30 fewer lines
+  of plumbing.
+- **`subprocess` module removed entirely from `app.py`** — one fewer
+  file to scan for understanding external dependencies.
+- **3 runtime deps removed**: `xdotool`, `xprop`, `xprintidle` are
+  never called anymore. You can uninstall these packages without
+  breaking anything. Still required for `make e2e` (the test harness,
+  not the app itself).
 
-Aucun changement fonctionnel visible. Économie CPU : ~6 fork()
-supprimés par seconde, sub-1% de charge. Plus important : code plus
-propre, plus testable, future-proof contre la dépréciation progressive
-de la session X11 sur GNOME.
+No visible functional changes. CPU savings: ~6 fork() calls removed
+per second, sub-1% load. More importantly: cleaner, more testable
+code, future-proof against the gradual deprecation of X11 sessions
+on GNOME.
 
 ### v0.7.2 — Bubble truncation fix (2026-04-11)
 
-- **Fix** — les réponses de Claude/Ollama étaient parfois tronquées avec
-  « … » en plein milieu d'une phrase parce que la bulle de chat était
-  capée à 8 lignes alors que `max_tokens=256` produit jusqu'à ~14 lignes
-  au width courant. Cap relevé à 16 lignes (`drawing.py` + `app.py` en
-  lockstep). Plus aucune réponse normale ne devrait se faire couper.
+- **Fix** — Claude/Ollama responses were sometimes truncated with "..."
+  in the middle of a sentence because the chat bubble was capped at 8
+  lines while `max_tokens=256` produces up to ~14 lines at the current
+  width. Cap raised to 16 lines (`drawing.py` + `app.py` in lockstep).
+  No normal response should get cut off anymore.
 
-### v0.7.1 — Wake word par prénom de chat (2026-04-11)
+### v0.7.1 — Wake word by cat name (2026-04-11)
 
-Issue #4 Tier 2 : appeler un chat par son **prénom** ouvre son chat
-bubble et démarre une écoute push-to-talk automatique. Pas besoin de
-toucher le clavier ni la souris.
+Issue #4 Tier 2: calling a cat by its **name** opens its chat bubble
+and starts automatic push-to-talk listening. No need to touch the
+keyboard or mouse.
 
-- **Wake word renommable à la volée** — chaque chat répond à son
-  propre prénom (`Mandarine`, `Tabby`, `Ombre`, …). Renommer un chat
-  depuis Settings → la grammaire est rebâtie immédiatement, l'ancien
-  nom oublié, le nouveau actif. Aucun retraining.
-- **Backend Vosk** (Apache-2.0, 100 % offline). Modèle FR small
-  (~41 MB) téléchargé en arrière-plan au premier lancement, mis en
-  cache dans `~/.cache/catai/vosk/`. Idle ~3-8 % CPU.
-- **Coexistence avec le push-to-talk existant** — le pipeline wake
-  word libère `autoaudiosrc` automatiquement avant chaque
-  enregistrement Whisper, puis le récupère ensuite.
-- **Opt-in** — désactivé par défaut, case à cocher dans la section
-  Voice du panneau Settings. Une seconde case règle le miaou de
-  confirmation. Pas de vosk installé ? Pas de souci, le module
-  no-op silencieusement et le reste de la voix continue de marcher.
-- Nouvelle dépendance optionnelle dans l'extra `[voice]` :
-  `vosk>=0.3.45`. Métriques `wake_words_triggered` (par chat) si
-  les stats locales sont activées.
+- **Renameable wake word on the fly** — each cat responds to its own
+  name (`Mandarine`, `Tabby`, `Ombre`, ...). Rename a cat from
+  Settings and the grammar is rebuilt immediately, the old name
+  forgotten, the new one active. No retraining needed.
+- **Vosk backend** (Apache-2.0, 100% offline). FR small model (~41 MB)
+  downloaded in the background on first launch, cached in
+  `~/.cache/catai/vosk/`. Idle ~3-8% CPU.
+- **Coexistence with existing push-to-talk** — the wake word pipeline
+  automatically releases `autoaudiosrc` before each Whisper recording,
+  then reclaims it afterward.
+- **Opt-in** — disabled by default, checkbox in the Voice section of
+  the Settings panel. A second checkbox controls the confirmation meow.
+  Vosk not installed? No problem, the module silently no-ops and the
+  rest of voice keeps working.
+- New optional dependency in the `[voice]` extra: `vosk>=0.3.45`.
+  `wake_words_triggered` metrics (per cat) if local stats are enabled.
 
 ### v0.7.0 — Mémoire et écosystème (2026-04-11)
 
@@ -507,7 +505,7 @@ integration. Five PRs landed (#26-#30) closing issues #5 and #9.
 - **Inter-cat gossip** (#30) — when two cats encounter each other on
   the canvas (the existing love encounter trigger), they each pick
   one random fact from their memory pile and add it to the other
-  cat's memory, prefixed with `<cat name> m'a raconté: `. Recipients
+  cat's memory, prefixed with `<cat name> told me: `. Recipients
   later surface that fact as second-hand knowledge. Effect: chat
   with Mandarine for an hour → she remembers your name → she meets
   Ombre → Ombre also knows.
@@ -559,13 +557,13 @@ version is ready for the next launch. (#24, #25)
   Python), all failure modes silent so a network blip can't break
   the running app. New code activates only on the NEXT launch.
 
-### v0.6.1 — Les chats parlent (2026-04-11)
+### v0.6.1 — Cats can talk (2026-04-11)
 
 Closes the loop with v0.4.0 voice input: **cats now speak their chat
 responses out loud**. Hybrid pipeline mixes real CC0 cat sound samples
 (meow, purr, mrrp, hiss) with Piper TTS for the text portions, so
-'*ronron* Bonjour mon ami!' plays a real purr sample then a French
-voice saying 'Bonjour mon ami', not a human pronouncing 'ronron'
+'*purr* Hello my friend!' plays a real purr sample then a synthesized
+voice saying 'Hello my friend', not a human pronouncing 'purr'
 phonetically. (#23)
 
 - **TTS hybrid pipeline** — new `catai_linux/tts.py` splits each
@@ -591,7 +589,7 @@ phonetically. (#23)
   more falling petals every time you restart CATAI.
 - **Smarter prompt** — system prompt now requires AT LEAST one full
   real sentence per response and forbids `*stage directions*` and
-  emoji, so the TTS never reads 's'étire' phonetically.
+  emoji, so the TTS never reads stage directions phonetically.
 - **Robustness fixes** — every TTS playback runs in an isolated
   `gst-launch-1.0` subprocess to avoid in-process GStreamer state
   contamination, and pressing the mic button stops any in-flight
@@ -599,7 +597,7 @@ phonetically. (#23)
   to the top edge when the cat is near the screen top, and the
   text wraps around the speaker icon instead of running under it.
 
-### v0.6.0 — Les chats prennent vie (2026-04-11)
+### v0.6.0 — Cats come alive (2026-04-11)
 
 Major interactivity + visual update. Five self-contained features landed
 together — petting, moods, drift, theme sync, seasonal overlays, 3 more
@@ -710,7 +708,7 @@ you, v0.5.0 works the same, just lighter and cleaner under the hood.
 - **GPU auto-detection** — CUDA is used automatically if available (float16), otherwise CPU int8. Tested on RTX 2050 / 5090.
 - **Whisper model picker in Settings** — 7 models from `tiny` (39 MB, CPU) to `large-v3` (1.5 GB, GPU), each annotated with size and recommended device. Changes take effect immediately, no restart needed.
 - **Model preload at startup** — if the selected Whisper model is already cached, it loads into memory in the background while the cats spawn, so the first recording is instant (no 1–3 s wait).
-- **Token refresh feedback** — when the Claude OAuth token needs refreshing mid-conversation, the chat bubble now shows an animated braille spinner with "Renouvellement du token Claude..." instead of a silent stall.
+- **Token refresh feedback** — when the Claude OAuth token needs refreshing mid-conversation, the chat bubble now shows an animated braille spinner with "Refreshing Claude token..." instead of a silent stall.
 - **Instant click on startup** — fixed a 4–5 s freeze where clicking on a cat did nothing during the first seconds. All heavy per-cat setup (sprite loading, animation offsets, pixel-scan floor detection, chat backend creation) now runs in background threads so the main event loop is responsive from t=0.
 - **Soft dependency** — the voice feature is opt-in. Install with `pip install catai-linux[voice]`, then enable via `--voice` CLI flag or Settings checkbox. The mic button only appears when enabled, and the feature degrades gracefully if `faster-whisper` is not installed.
 - **Settings window** — auto-sized to fit screen height (max 900 px, min 480 px), scrollable for smaller displays.
