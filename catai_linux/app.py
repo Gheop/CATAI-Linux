@@ -3573,6 +3573,17 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
             return True
         return False
 
+    def _quake_log(self, line: str) -> None:
+        """Append a line to ~/.config/catai/console.log for debugging."""
+        try:
+            import datetime as _dt
+            ts = _dt.datetime.now().strftime("%H:%M:%S")
+            path = os.path.join(CONFIG_DIR, "console.log")
+            with open(path, "a") as f:
+                f.write(f"[{ts}] {line}\n")
+        except Exception:
+            pass
+
     def _on_quake_entry_activate(self, entry):
         """Process a command entered in the Quake console."""
         text = entry.get_text().strip()
@@ -3588,8 +3599,9 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
         if len(self._quake_history) > 200:
             self._quake_history = self._quake_history[-200:]
 
-        # Print the command
+        # Print the command + log
         self._quake_print(f"catai> {text}")
+        self._quake_log(f"> {text}")
 
         # Handle special built-in commands
         if text in ("quit", "exit", "q"):
@@ -3616,6 +3628,7 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
             # Fall through to test commands
             resp = self._handle_test_cmd(text)
         self._quake_print(f"{resp}\n")
+        self._quake_log(f"< {resp}")
 
     def _quake_print(self, text):
         """Append *text* to the Quake console output and auto-scroll."""
