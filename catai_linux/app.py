@@ -1796,9 +1796,92 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
                     GLib.timeout_add(10,
                         lambda: self.eg_notification(app_name, summary) or False)
                 return "OK notify queued"
+            if cmd == "cats":
+                items = []
+                for i, c in enumerate(self.cat_instances):
+                    items.append({
+                        "name": c.config.get("name", "?"),
+                        "char_id": c.config.get("char_id", "?"),
+                        "x": int(c.x), "y": int(c.y),
+                        "state": c.state.value if hasattr(c.state, "value") else str(c.state),
+                        "index": i,
+                    })
+                return "OK " + json.dumps(items)
+            if cmd == "force_state":
+                if len(parts) < 3:
+                    return "ERR: usage: force_state <idx> <state_name>"
+                try:
+                    idx = int(parts[1])
+                except ValueError:
+                    return "ERR: cat idx must be int"
+                if not (0 <= idx < len(self.cat_instances)):
+                    return "ERR: cat idx out of range"
+                cat = self.cat_instances[idx]
+                state_name = parts[2]
+                try:
+                    cat.state = CatState(state_name)
+                except ValueError:
+                    return f"ERR: unknown state {state_name}"
+                cat.frame_index = 0
+                cat.idle_ticks = 0
+                cat._sequence = None
+                cat._sequence_index = 0
+                cat._sequence_pause_ticks = 0
+                return f"OK cat {idx} -> {state_name}"
+            if cmd == "say":
+                if len(parts) < 3:
+                    return "ERR: usage: say <idx> <text>"
+                try:
+                    idx = int(parts[1])
+                except ValueError:
+                    return "ERR: cat idx must be int"
+                if not (0 <= idx < len(self.cat_instances)):
+                    return "ERR: cat idx out of range"
+                cat = self.cat_instances[idx]
+                text = " ".join(parts[2:])
+                cat.send_chat(text)
+                return f"OK sent: {text}"
+            if cmd == "move":
+                if len(parts) < 4:
+                    return "ERR: usage: move <idx> <x> <y>"
+                try:
+                    idx = int(parts[1])
+                except ValueError:
+                    return "ERR: cat idx must be int"
+                if not (0 <= idx < len(self.cat_instances)):
+                    return "ERR: cat idx out of range"
+                cat = self.cat_instances[idx]
+                try:
+                    cat.dest_x, cat.dest_y = int(parts[2]), int(parts[3])
+                except ValueError:
+                    return "ERR: invalid coordinates"
+                cat.state = CatState.WALKING
+                cat.frame_index = 0
+                return f"OK cat {idx} walking to {parts[2]},{parts[3]}"
+            if cmd == "mood":
+                if len(parts) < 2:
+                    return "ERR: usage: mood <idx>"
+                try:
+                    idx = int(parts[1])
+                except ValueError:
+                    return "ERR: cat idx must be int"
+                if not (0 <= idx < len(self.cat_instances)):
+                    return "ERR: cat idx out of range"
+                cat = self.cat_instances[idx]
+                mood_data = {}
+                if hasattr(cat, "mood"):
+                    m = cat.mood
+                    mood_data = {
+                        "happiness": getattr(m, "happiness", None),
+                        "energy": getattr(m, "energy", None),
+                        "social": getattr(m, "social", None),
+                    }
+                return "OK " + json.dumps(mood_data)
+            if cmd == "season":
+                return self._cmd_season(parts)
             if cmd == "help":
-                return ("OK commands: status list_cats list_eggs "
-                        "meow egg notify help")
+                return ("OK commands: status list_cats list_eggs cats "
+                        "meow egg notify force_state say move mood season help")
             return f"ERR: unknown command '{cmd}' (try 'help')"
         except Exception as e:
             log.exception("api cmd %r crashed", cmd)
@@ -2469,6 +2552,12 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
             key_ctrl.connect("key-pressed", self._on_entry_key_pressed)
             key_ctrl.connect("key-released", self._on_entry_key_released)
             self._chat_entry.add_controller(key_ctrl)
+
+        # ² key (twosuperior on AZERTY) → open catai-shell in a terminal
+        if self._api_enabled:
+            shell_key_ctrl = Gtk.EventControllerKey()
+            shell_key_ctrl.connect("key-pressed", self._on_shell_key_pressed)
+            self._chat_entry.add_controller(shell_key_ctrl)
 
         if self._voice_enabled:
             self._voice_btn = Gtk.Button()
@@ -3307,6 +3396,26 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
         if self._voice_recorder and self._voice_recorder._recording:
             self._stop_voice_recording()
             return True
+        return False
+
+    def _on_shell_key_pressed(self, ctrl, keyval, keycode, state):
+        """² key (twosuperior on AZERTY) → spawn catai-shell in a terminal."""
+        if keyval != Gdk.KEY_twosuperior:
+            return False
+        import subprocess as _sp
+        shell_cmd = shutil.which("catai-shell") or "python3 -m catai_linux.shell"
+        for term_cmd in [
+            ["gnome-terminal", "--", *shell_cmd.split()],
+            ["xterm", "-e", *shell_cmd.split()],
+        ]:
+            if shutil.which(term_cmd[0]):
+                try:
+                    _sp.Popen(term_cmd, start_new_session=True)
+                    log.debug("Launched shell: %s", term_cmd)
+                    return True
+                except Exception:
+                    log.debug("Failed to launch %s", term_cmd[0])
+        log.warning("No terminal emulator found for catai-shell")
         return False
 
     def _on_canvas_right_click(self, gesture, n_press, x, y):
