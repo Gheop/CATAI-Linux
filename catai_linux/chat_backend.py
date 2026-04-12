@@ -99,6 +99,10 @@ def _read_claude_oauth_raw() -> dict | None:
         if os.path.exists(CLAUDE_CREDS):
             mode = os.stat(CLAUDE_CREDS).st_mode
             if mode & 0o077:
+                # Warn but don't refuse to read — the alternative (failing
+                # to start the AI backend entirely) is worse for a desktop
+                # pet app. The user should fix permissions manually if this
+                # warning appears in the logs.
                 log.warning("Credentials file %s is accessible by others (mode %o)", CLAUDE_CREDS, mode)
         with open(CLAUDE_CREDS) as f:
             return json.load(f).get("claudeAiOauth")

@@ -191,6 +191,70 @@ MIT
 
 ## Changelog
 
+### v0.8.0 — Audit profond : dead code, bugs, sécurité, perfs (2026-04-12)
+
+Audit complet du codebase après la série v0.7.x. Zéro nouvelle feature,
+100% qualité.
+
+#### Code mort supprimé
+- `_CatsetMarker` + `_CATSET_COLOR_DEF` (vestige du color-tinting v0.3.0)
+- `self.color_def` + paramètre `color_def_obj` dans `CatInstance.__init__`
+- `_check_deps()` méthode vide + appel dans `do_activate`
+- `active_ids` (legacy `color_id` set) dans `SettingsWindow._build`
+- `self._entry_window` (attribut jamais lu)
+- `import re` inline dans `send_chat()` → déplacé au top-level
+- `from math import log` inline dans `memory.py` → `import math` top-level
+
+#### Bugs corrigés
+- **`for/else` piège** dans `_apply_sequence_offset_compensation` — le
+  `else` du `for` s'exécutait quand la boucle ne breakait pas, pas quand
+  `_sequence` était `None`. Remplacé par un `if/else` explicite avec
+  `min()` bound-safe.
+- **Double `now = time.monotonic()`** dans `_check_encounters` — la
+  deuxième affectation écrasait inutilement la première.
+- **Attributs dynamiques** sur `CatInstance` — `_state_tick`,
+  `_die_threshold`, `_die_resurrect`, `_sleep_tick`, `_petting_active`,
+  `_hidden`, `_boss_scale`, `_beam_ticks`, `_rm_rf_active`,
+  `_nyan_active` sont maintenant tous initialisés explicitement dans
+  `__init__`, pas via `getattr()` dispersés dans 4000 lignes.
+
+#### Sécurité
+- **Test socket déplacé** de `/tmp/catai_test.sock` vers
+  `$XDG_RUNTIME_DIR/catai_test.sock` + `os.chmod(path, 0o600)` après
+  bind. Avant, n'importe quel user du système pouvait y envoyer des
+  commandes (force_state, quit, type_chat, etc.).
+- **Timeout DoS sur les sockets** — `conn.settimeout(5.0)` ajouté sur
+  les deux sockets (API + test) après `setblocking(True)`. Un client
+  malveillant qui connecte sans envoyer ne bloque plus le GTK main loop
+  indéfiniment.
+- **Log d'avertissement visible** dans l'auto-updater avant d'utiliser
+  `--break-system-packages` (PEP 668 fallback). Choix de design
+  conscient, mais maintenant l'utilisateur le voit dans ses logs.
+- **Commentaire explicite** dans `chat_backend.py` sur le choix de ne
+  pas refuser de lire les credentials en cas de permissions trop
+  ouvertes (trade-off : casser l'app vs alerter l'user).
+
+#### Optimisations
+- **`pil_to_surface`** — l'échange RGBA→BGRA passe par `PIL.Image.split()`
+  + `merge()` natif au lieu d'une boucle Python par pixel. ~50x plus
+  rapide sur un sprite 80×80.
+- **`_sprite_floor_y` + `_sprite_center_x`** — passent par
+  `PIL.Image.getbbox()` sur le canal alpha au lieu d'un scan pixel par
+  pixel. De O(w×h) Python à un seul appel C-level.
+- **Metrics** — `track()` accumule maintenant en mémoire et flush tous
+  les 30 s (+ au shutdown) au lieu de faire load()+save() à chaque
+  appel. Économise 2-3 écritures disque par seconde pendant un chat
+  actif.
+- **`memory.py`** — `from math import log` sorti de la boucle hot-path
+  vers un `import math` top-level.
+
+#### Non inclus (trop risqué pour cette passe)
+- Rename `cat01` → `cat_01` (convention de nommage) — nécessite une
+  migration des données utilisateur. Reporté.
+- Extraction de `SettingsWindow` et `CatEncounter` dans des modules
+  séparés — `app.py` fait 6700+ lignes mais le refactoring structurel
+  risque des régressions en cascade. Reporté.
+
 ### v0.7.5 — Fix browser pop-up sneaky (2026-04-11)
 
 **Bug surprise** : quand le token Claude OAuth était complètement

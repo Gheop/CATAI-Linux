@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import sqlite3
@@ -251,8 +252,7 @@ class MemoryStore:
                 continue
             # Jaccard-ish: |intersection| / log(|fact| + 1) so we don't
             # over-favor very long facts that contain everything.
-            from math import log
-            score = len(overlap) / log(len(f_tokens) + 1.5)
+            score = len(overlap) / math.log(len(f_tokens) + 1.5)
             scored.append((score, row_id, content))
         scored.sort(reverse=True)
         top = scored[:n]

@@ -7,7 +7,7 @@ import subprocess
 import sys
 import time
 
-SOCK_PATH = "/tmp/catai_test.sock"
+SOCK_PATH = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "catai_test.sock")
 SHOT_DIR = "/tmp/catai_e2e"
 os.makedirs(SHOT_DIR, exist_ok=True)
 

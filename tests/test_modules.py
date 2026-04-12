@@ -1025,18 +1025,23 @@ def test_metrics() -> None:
     with tempfile.TemporaryDirectory() as td:
         orig = metrics.STATS_FILE
         metrics.STATS_FILE = os.path.join(td, "stats.json")
+        # Reset the in-memory cache so this test starts clean
+        metrics._data_cache = None
+        metrics._dirty = False
         try:
             # Disabled state: track is a no-op
             metrics.set_enabled(False)
             metrics.track("chat_sent", cat_id="cat01")
+            metrics.flush()
             test("track is no-op when disabled",
                  not os.path.exists(metrics.STATS_FILE))
 
-            # Enable + track
+            # Enable + track (flush before reading to push cache to disk)
             metrics.set_enabled(True)
             metrics.track("chat_sent", cat_id="cat01")
             metrics.track("chat_sent", cat_id="cat02")
             metrics.track("chat_sent", cat_id="cat01")
+            metrics.flush()
             data = metrics.load()
             test("chats_sent counts to 3", data["chats_sent"] == 3)
             test("per_cat[cat01].chats == 2",
@@ -1048,6 +1053,7 @@ def test_metrics() -> None:
             metrics.track("egg_triggered", key="nyan")
             metrics.track("egg_triggered", key="nyan")
             metrics.track("egg_triggered", key="apocalypse")
+            metrics.flush()
             data = metrics.load()
             test("eggs nyan=2 apocalypse=1",
                  data["easter_eggs_triggered"]
@@ -1058,6 +1064,7 @@ def test_metrics() -> None:
             metrics.track("love_encounter", kind="love")
             metrics.track("love_encounter", kind="surprised")
             metrics.track("love_encounter", kind="angry")
+            metrics.flush()
             data = metrics.load()
             test("love_encounters love=2 surprised=1 angry=1",
                  data["love_encounters"]
@@ -1068,6 +1075,7 @@ def test_metrics() -> None:
             metrics.track("pet_session", cat_id="cat01")
             metrics.track("pet_session", cat_id="cat01")
             metrics.track("pet_session", cat_id="cat02")
+            metrics.flush()
             data = metrics.load()
             test("kittens_born == 1", data["kittens_born"] == 1)
             test("pet_sessions == 3", data["pet_sessions"] == 3)
@@ -1083,12 +1091,15 @@ def test_metrics() -> None:
                  top_eggs[0] == ("nyan", 2))
 
             # Unknown event is silently ignored
+            metrics.flush()
             before = metrics.load()
             metrics.track("unknown_event")
+            metrics.flush()
             test("unknown event doesn't crash or change state",
                  metrics.load()["chats_sent"] == before["chats_sent"])
 
             # Corrupted stats file → reset to defaults on load
+            metrics._data_cache = None  # force re-read from disk
             with open(metrics.STATS_FILE, "w") as f:
                 f.write("not json {")
             recovered = metrics.load()
@@ -1097,6 +1108,7 @@ def test_metrics() -> None:
                  and recovered.get("chats_sent") == 0)
 
             # Reset wipes everything
+            metrics._data_cache = None
             metrics.reset()
             data = metrics.load()
             test("reset → chats_sent back to 0",
@@ -1105,6 +1117,8 @@ def test_metrics() -> None:
             metrics.set_enabled(False)
         finally:
             metrics.STATS_FILE = orig
+            metrics._data_cache = None
+            metrics._dirty = False
             metrics.set_enabled(False)
 
 

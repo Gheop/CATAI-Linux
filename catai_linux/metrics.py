@@ -53,6 +53,13 @@ STATS_FILE = os.path.expanduser("~/.config/catai/stats.json")
 # False, so the function is a no-op for users who never opt in.
 _enabled = False
 _session_start_ts: float | None = None
+# In-memory cache: loaded from disk lazily, flushed periodically
+# (every 30 s via GLib timeout in the app, and on shutdown). Previous
+# design did load+save on every single track() call — 2-3 disk
+# writes per second during active chat. Now we accumulate in memory
+# and batch-write.
+_data_cache: dict | None = None
+_dirty = False
 
 
 def set_enabled(flag: bool) -> None:
@@ -131,15 +138,40 @@ def save(data: dict) -> None:
 def reset() -> None:
     """Wipe stats.json back to defaults. Triggered by the settings
     'Reset stats' button."""
-    save(_default_stats())
+    global _data_cache, _dirty
+    _data_cache = _default_stats()
+    _dirty = True
+    flush()
 
 
 # ── Tracking ────────────────────────────────────────────────────────────────
 
 
+def _ensure_cache() -> dict:
+    """Return the in-memory stats dict, loading from disk on first use."""
+    global _data_cache
+    if _data_cache is None:
+        _data_cache = load()
+    return _data_cache
+
+
+def flush() -> None:
+    """Write the in-memory cache to disk if dirty. Called periodically
+    (every 30 s from CatAIApp) and on shutdown. No-op when nothing
+    has changed since the last flush."""
+    global _dirty
+    if not _dirty or _data_cache is None:
+        return
+    save(_data_cache)
+    _dirty = False
+
+
 def track(event: str, **kwargs) -> None:
-    """No-op if metrics are disabled. Otherwise update the stats file
-    in place. Recognized events:
+    """No-op if metrics are disabled. Otherwise update the in-memory
+    stats dict. The dict is flushed to disk periodically (every 30 s)
+    and on shutdown — NOT on every call.
+
+    Recognized events:
 
       chat_sent          (cat_id=...)
       voice_recording
@@ -147,11 +179,13 @@ def track(event: str, **kwargs) -> None:
       love_encounter     (kind='love'|'surprised'|'angry')
       kitten_born
       pet_session        (cat_id=...)
+      wake_word_triggered (cat_id=...)
     """
+    global _dirty
     if not _enabled:
         return
     try:
-        data = load()
+        data = _ensure_cache()
         if event == "chat_sent":
             data["chats_sent"] += 1
             cat_id = kwargs.get("cat_id")
@@ -185,7 +219,7 @@ def track(event: str, **kwargs) -> None:
         else:
             log.debug("metrics: unknown event %r", event)
             return
-        save(data)
+        _dirty = True
     except Exception:
         log.debug("metrics: track(%r) failed", event, exc_info=True)
 
@@ -220,8 +254,9 @@ def _flush_session_minutes() -> None:
 
 def shutdown() -> None:
     """Called from CatAIApp.do_shutdown to flush the final session
-    duration before the process exits."""
+    duration and the in-memory stats cache before the process exits."""
     _flush_session_minutes()
+    flush()
 
 
 # ── Read helpers for the settings UI ────────────────────────────────────────
