@@ -3972,6 +3972,14 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
             _metrics.shutdown()
         except Exception:
             pass
+        # Release the Whisper CUDA model BEFORE Python/GTK teardown so
+        # ctranslate2 doesn't crash with "CUDA driver shutting down" when
+        # the user Ctrl+C's during the ~2 s preload window.
+        if self._voice_recorder is not None:
+            try:
+                self._voice_recorder._model = None
+            except Exception:
+                pass
         # Tear down the wake-word listener so we release autoaudiosrc
         # and don't leak the worker thread.
         if self._wake is not None:
@@ -4529,7 +4537,13 @@ def main():
     app = CatAIApp()
     # Ctrl+C → graceful quit (triggers do_shutdown for proper cleanup
     # of Whisper semaphores, wake word listener, metrics flush, etc.)
-    signal.signal(signal.SIGINT, lambda *_: app.quit())
+    # os._exit fallback if quit itself crashes (CUDA teardown race).
+    def _sigint(*_):
+        try:
+            app.quit()
+        except Exception:
+            os._exit(0)
+    signal.signal(signal.SIGINT, _sigint)
     app.run(gtk_args)
 
 if __name__ == "__main__":
