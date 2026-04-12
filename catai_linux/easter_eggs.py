@@ -26,6 +26,9 @@ import cairo
 from gi.repository import Gdk, GLib, Pango, PangoCairo
 from PIL import Image
 
+from catai_linux.constants import (
+    CatState, BOTTOM_MARGIN, RENDER_MS, BEHAVIOR_MS,
+)
 from catai_linux.l10n import L10n
 from catai_linux import metrics as _metrics
 from catai_linux.reactions import ReactionPool
@@ -36,7 +39,7 @@ from catai_linux.x11_helpers import (
 
 if typing.TYPE_CHECKING:
     from catai_linux.app import (  # noqa: F401
-        CatAIApp, CatState, pil_to_surface, BOTTOM_MARGIN, RENDER_MS, BEHAVIOR_MS,
+        CatAIApp, pil_to_surface,
     )
     from catai_linux.cat import CatInstance  # noqa: F401
 
@@ -48,27 +51,18 @@ def _ensure_app_imports() -> None:
     """Populate module globals with lazy-imported names from catai_linux.app.
 
     Must be called at least once before any code in this module references
-    CatState, pil_to_surface, BOTTOM_MARGIN, RENDER_MS, or BEHAVIOR_MS as
-    bare names.  Module-level ``__getattr__`` only fires for *external*
-    attribute access (``from easter_eggs import CatState``); it does NOT
-    intercept internal global-name lookups, so functions / methods defined
-    in this file would hit ``NameError`` without this helper.
+    pil_to_surface as a bare name.  Module-level ``__getattr__`` only fires
+    for *external* attribute access; it does NOT intercept internal
+    global-name lookups, so functions / methods defined in this file would
+    hit ``NameError`` without this helper.
     """
     if _app_cache:
         return  # already resolved
     from catai_linux.app import (
-        CatState as _CatState,
         pil_to_surface as _pil_to_surface,
-        BOTTOM_MARGIN as _BOTTOM_MARGIN,
-        RENDER_MS as _RENDER_MS,
-        BEHAVIOR_MS as _BEHAVIOR_MS,
     )
     _app_cache.update({
-        "CatState": _CatState,
         "pil_to_surface": _pil_to_surface,
-        "BOTTOM_MARGIN": _BOTTOM_MARGIN,
-        "RENDER_MS": _RENDER_MS,
-        "BEHAVIOR_MS": _BEHAVIOR_MS,
     })
     # Inject into module globals for fast subsequent access.
     globals().update(_app_cache)
@@ -78,9 +72,9 @@ def __getattr__(name: str):
     """Lazy import of names from catai_linux.app to break circular imports.
 
     Handles *external* attribute access (e.g. ``from easter_eggs import
-    CatState``).  Internal bare-name lookups inside this module go through
-    ``_ensure_app_imports()`` instead."""
-    _LAZY = {"CatState", "pil_to_surface", "BOTTOM_MARGIN", "RENDER_MS", "BEHAVIOR_MS"}
+    pil_to_surface``).  Internal bare-name lookups inside this module go
+    through ``_ensure_app_imports()`` instead."""
+    _LAZY = {"pil_to_surface"}
     if name in _LAZY:
         _ensure_app_imports()
         return _app_cache[name]
