@@ -4525,9 +4525,11 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
 
 def main():
     import signal
-    signal.signal(signal.SIGINT, signal.SIG_DFL)  # Ctrl+C → clean exit, no traceback
     gtk_args = [a for a in sys.argv if a not in ("--debug", "--test-socket", "--voice")]
     app = CatAIApp()
+    # Ctrl+C → graceful quit (triggers do_shutdown for proper cleanup
+    # of Whisper semaphores, wake word listener, metrics flush, etc.)
+    signal.signal(signal.SIGINT, lambda *_: app.quit())
     app.run(gtk_args)
 
 if __name__ == "__main__":
