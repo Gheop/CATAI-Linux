@@ -1397,6 +1397,12 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
         # Activity monitor — polled from behavior_tick, drives AFK sleep
         self._activity = ActivityMonitor()
         self._afk_sleep_active = False  # cats currently mass-sleeping from AFK
+        # Quake-style drop-down console (² key)
+        self._quake_revealer = None
+        self._quake_output = None   # Gtk.TextView
+        self._quake_entry = None    # Gtk.Entry
+        self._quake_history: list[str] = []
+        self._quake_history_idx = -1
 
     def do_activate(self):
         _setup_logging()
@@ -2553,11 +2559,10 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
             key_ctrl.connect("key-released", self._on_entry_key_released)
             self._chat_entry.add_controller(key_ctrl)
 
-        # ² key (twosuperior on AZERTY) → open catai-shell in a terminal
-        if self._api_enabled:
-            shell_key_ctrl = Gtk.EventControllerKey()
-            shell_key_ctrl.connect("key-pressed", self._on_shell_key_pressed)
-            self._chat_entry.add_controller(shell_key_ctrl)
+        # ² key (twosuperior on AZERTY) → toggle Quake console
+        quake_key_ctrl = Gtk.EventControllerKey()
+        quake_key_ctrl.connect("key-pressed", self._on_shell_key_pressed)
+        win.add_controller(quake_key_ctrl)
 
         if self._voice_enabled:
             self._voice_btn = Gtk.Button()
@@ -2579,6 +2584,9 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
             self._chat_box.append(self._voice_btn)
 
         overlay.add_overlay(self._chat_box)
+
+        # Quake drop-down console (² key)
+        self._create_quake_console(overlay)
 
         win.set_child(overlay)
 
@@ -3399,24 +3407,286 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
         return False
 
     def _on_shell_key_pressed(self, ctrl, keyval, keycode, state):
-        """² key (twosuperior on AZERTY) → spawn catai-shell in a terminal."""
+        """² key (twosuperior on AZERTY) → toggle Quake console."""
         if keyval != Gdk.KEY_twosuperior:
             return False
-        import subprocess as _sp
-        shell_cmd = shutil.which("catai-shell") or "python3 -m catai_linux.shell"
-        for term_cmd in [
-            ["gnome-terminal", "--", *shell_cmd.split()],
-            ["xterm", "-e", *shell_cmd.split()],
-        ]:
-            if shutil.which(term_cmd[0]):
-                try:
-                    _sp.Popen(term_cmd, start_new_session=True)
-                    log.debug("Launched shell: %s", term_cmd)
+        self._toggle_quake_console()
+        return True
+
+    # ── Quake-style drop-down console ────────────────────────────────────────
+
+    def _create_quake_console(self, overlay):
+        """Build the Quake console widget tree and add it to *overlay*."""
+        import textwrap as _tw
+
+        revealer = Gtk.Revealer()
+        revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        revealer.set_transition_duration(200)
+        revealer.set_reveal_child(False)
+        revealer.set_valign(Gtk.Align.START)
+        revealer.set_hexpand(True)
+
+        # Main container
+        console_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        console_box.add_css_class("quake-console")
+        # ~40 % screen height
+        console_box.set_size_request(-1, int(self.screen_h * 0.4))
+
+        # Output area (scrolled, non-editable text view)
+        sw = Gtk.ScrolledWindow()
+        sw.set_vexpand(True)
+        sw.set_hexpand(True)
+        sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+
+        tv = Gtk.TextView()
+        tv.set_editable(False)
+        tv.set_cursor_visible(False)
+        tv.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        tv.add_css_class("quake-output")
+        tv.set_left_margin(6)
+        tv.set_right_margin(6)
+        tv.set_top_margin(4)
+        tv.set_bottom_margin(4)
+        sw.set_child(tv)
+        console_box.append(sw)
+
+        # Bottom border
+        border = Gtk.Box()
+        border.add_css_class("quake-border")
+        console_box.append(border)
+
+        # Input row
+        input_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        input_row.set_margin_start(6)
+        input_row.set_margin_end(6)
+        input_row.set_margin_top(2)
+        input_row.set_margin_bottom(4)
+
+        prompt_label = Gtk.Label(label="catai> ")
+        prompt_label.add_css_class("quake-prompt")
+        input_row.append(prompt_label)
+
+        entry = Gtk.Entry()
+        entry.set_hexpand(True)
+        entry.add_css_class("quake-input")
+        entry.connect("activate", self._on_quake_entry_activate)
+
+        # Key controller for history navigation + escape
+        entry_key_ctrl = Gtk.EventControllerKey()
+        entry_key_ctrl.connect("key-pressed", self._on_quake_entry_key)
+        entry.add_controller(entry_key_ctrl)
+
+        input_row.append(entry)
+        console_box.append(input_row)
+
+        revealer.set_child(console_box)
+        overlay.add_overlay(revealer)
+
+        self._quake_revealer = revealer
+        self._quake_output = tv
+        self._quake_entry = entry
+        self._quake_sw = sw
+
+        # Print welcome banner
+        banner = _tw.dedent("""\
+            CATAI Console v1.0 — type 'help' for commands
+            ─────────────────────────────────────────────
+        """)
+        buf = tv.get_buffer()
+        buf.set_text(banner)
+
+    def _toggle_quake_console(self):
+        """Show or hide the Quake console."""
+        if self._quake_revealer is None:
+            return
+        visible = self._quake_revealer.get_reveal_child()
+        if visible:
+            self._quake_revealer.set_reveal_child(False)
+            # Return focus to canvas
+            if self._canvas_window:
+                self._canvas_window.set_focus(None)
+        else:
+            self._quake_revealer.set_reveal_child(True)
+            # Grab focus on entry
+            if self._quake_entry:
+                self._quake_entry.grab_focus()
+            self._quake_history_idx = -1
+
+    def _on_quake_entry_key(self, ctrl, keyval, keycode, state):
+        """Handle special keys in the Quake console entry."""
+        if keyval == Gdk.KEY_Escape:
+            self._toggle_quake_console()
+            return True
+        if keyval == Gdk.KEY_twosuperior:
+            self._toggle_quake_console()
+            return True
+        if keyval == Gdk.KEY_Up:
+            if self._quake_history:
+                if self._quake_history_idx == -1:
+                    self._quake_history_idx = len(self._quake_history) - 1
+                elif self._quake_history_idx > 0:
+                    self._quake_history_idx -= 1
+                self._quake_entry.set_text(self._quake_history[self._quake_history_idx])
+                self._quake_entry.set_position(-1)
+            return True
+        if keyval == Gdk.KEY_Down:
+            if self._quake_history:
+                if self._quake_history_idx == -1:
                     return True
-                except Exception:
-                    log.debug("Failed to launch %s", term_cmd[0])
-        log.warning("No terminal emulator found for catai-shell")
+                if self._quake_history_idx < len(self._quake_history) - 1:
+                    self._quake_history_idx += 1
+                    self._quake_entry.set_text(self._quake_history[self._quake_history_idx])
+                else:
+                    self._quake_history_idx = -1
+                    self._quake_entry.set_text("")
+                self._quake_entry.set_position(-1)
+            return True
         return False
+
+    def _on_quake_entry_activate(self, entry):
+        """Process a command entered in the Quake console."""
+        text = entry.get_text().strip()
+        if not text:
+            return
+        entry.set_text("")
+        self._quake_history_idx = -1
+
+        # Add to history (dedup consecutive)
+        if not self._quake_history or self._quake_history[-1] != text:
+            self._quake_history.append(text)
+        # Cap history size
+        if len(self._quake_history) > 200:
+            self._quake_history = self._quake_history[-200:]
+
+        # Print the command
+        self._quake_print(f"catai> {text}")
+
+        # Handle special built-in commands
+        if text in ("quit", "exit", "q"):
+            self._toggle_quake_console()
+            return
+        if text == "clear":
+            buf = self._quake_output.get_buffer()
+            buf.set_text("")
+            return
+
+        # AI command — dispatch to background thread
+        parts = text.split(None, 1)
+        if parts[0] == "ai":
+            arg = parts[1] if len(parts) > 1 else ""
+            if not arg.strip():
+                self._quake_print("Usage: ai <votre demande en langage naturel>\n")
+                return
+            self._quake_ai(arg.strip())
+            return
+
+        # Try API command first
+        resp = self._handle_api_cmd(text)
+        if "ERR: unknown command" in resp:
+            # Fall through to test commands
+            resp = self._handle_test_cmd(text)
+        self._quake_print(f"{resp}\n")
+
+    def _quake_print(self, text):
+        """Append *text* to the Quake console output and auto-scroll."""
+        if self._quake_output is None:
+            return
+        buf = self._quake_output.get_buffer()
+        end_iter = buf.get_end_iter()
+        buf.insert(end_iter, text + "\n")
+
+        # Trim to ~500 lines
+        line_count = buf.get_line_count()
+        if line_count > 500:
+            start = buf.get_start_iter()
+            trim_to = buf.get_iter_at_line(line_count - 500)
+            buf.delete(start, trim_to)
+
+        # Auto-scroll to bottom
+        def _scroll():
+            end = buf.get_end_iter()
+            mark = buf.create_mark(None, end, False)
+            self._quake_output.scroll_mark_onscreen(mark)
+            buf.delete_mark(mark)
+            return False
+        GLib.idle_add(_scroll)
+
+    def _quake_ai(self, user_text):
+        """Run AI command interpretation in a background thread."""
+        import textwrap as _tw
+
+        self._quake_print("Interrogation de l'IA...\n")
+
+        # Fetch current cats for context
+        cats_info = []
+        for i, c in enumerate(self.cat_instances):
+            cats_info.append(
+                f"  index={i} name={c.config.get('name', '?')} "
+                f"state={c.state.value if hasattr(c.state, 'value') else str(c.state)}"
+            )
+        cat_list_str = "\n".join(cats_info) or "  (aucun chat)"
+
+        system_prompt = _tw.dedent(f"""\
+            You are a CATAI command interpreter. Given a natural language request,
+            output ONLY the raw commands to execute, one per line.
+            Do not add explanations or markdown.
+
+            Available commands:
+            - meow <cat_index> <text>
+            - egg <key>
+            - notify [app] [summary]
+            - force_state <cat_index> <state>
+            - season <name>
+            - say <cat_index> <text>
+            - move <cat_index> <x> <y>
+
+            Available states: idle, sleeping_ball, walking, love, rolling, grooming,
+            flat, surprised, jumping, dashing, dying
+
+            Current cats:
+            {cat_list_str}
+
+            Examples:
+            User: "mets tous les chats en dodo"
+            force_state 0 sleeping_ball
+            force_state 1 sleeping_ball
+
+            User: "fait danser Mandarine"
+            force_state 0 love
+        """)
+
+        def _run():
+            try:
+                from catai_linux.chat_backend import create_chat
+                backend = create_chat("claude-haiku-4-5")
+                backend.messages = [{"role": "system", "content": system_prompt}]
+                backend.messages.append({"role": "user", "content": user_text})
+                full = ""
+                for chunk in backend._stream_chunks():
+                    full += chunk
+
+                if not full.strip():
+                    GLib.idle_add(self._quake_print,
+                                  "L'IA n'a retourne aucune commande.\n")
+                    return
+
+                commands = [line.strip() for line in full.strip().splitlines()
+                            if line.strip()]
+
+                def _exec():
+                    for cmd in commands:
+                        self._quake_print(f"[AI] {cmd}")
+                        resp = self._handle_api_cmd(cmd)
+                        if "ERR: unknown command" in resp:
+                            resp = self._handle_test_cmd(cmd)
+                        self._quake_print(f"  {resp}")
+                    self._quake_print("")
+                    return False
+                GLib.idle_add(_exec)
+            except Exception as e:
+                GLib.idle_add(self._quake_print, f"Erreur IA : {e}\n")
+
+        threading.Thread(target=_run, daemon=True).start()
 
     def _on_canvas_right_click(self, gesture, n_press, x, y):
         cat = self._find_cat_at(x, y)
