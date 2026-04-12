@@ -340,6 +340,9 @@ from catai_linux.x11_helpers import (  # noqa: E402
     update_input_shape as _update_input_shape,
     get_window_y_offset as _x11_window_y_offset,
     get_mouse_position as _x11_mouse_position,
+    grab_key_global as _grab_key_global,
+    ungrab_key_global as _ungrab_key_global,
+    poll_grabbed_key as _poll_grabbed_key,
 )
 
 from catai_linux.reactions import ReactionPool  # noqa: E402
@@ -2559,10 +2562,16 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
             key_ctrl.connect("key-released", self._on_entry_key_released)
             self._chat_entry.add_controller(key_ctrl)
 
-        # ² key (twosuperior on AZERTY) → toggle Quake console
-        quake_key_ctrl = Gtk.EventControllerKey()
-        quake_key_ctrl.connect("key-pressed", self._on_shell_key_pressed)
-        win.add_controller(quake_key_ctrl)
+        # ² key (twosuperior on AZERTY) → toggle Quake console via
+        # global X11 key grab. XGrabKey intercepts the keypress no matter
+        # which window has focus (even other apps). A 100 ms GLib timer
+        # polls for the event and toggles the console.
+        # Keycode 49 = ² on most AZERTY layouts (same physical key as
+        # backtick/tilde on QWERTY — row 0, leftmost).
+        if _grab_key_global(49):
+            self._timers.append(
+                GLib.timeout_add(100, self._poll_quake_hotkey)
+            )
 
         if self._voice_enabled:
             self._voice_btn = Gtk.Button()
@@ -3406,11 +3415,12 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
             return True
         return False
 
-    def _on_shell_key_pressed(self, ctrl, keyval, keycode, state):
-        """² key (twosuperior on AZERTY) → toggle Quake console."""
-        if keyval != Gdk.KEY_twosuperior:
-            return False
-        self._toggle_quake_console()
+    def _poll_quake_hotkey(self) -> bool:
+        """GLib timer callback (~100 ms): check if the globally-grabbed
+        ² key was pressed and toggle the Quake console. Returns True to
+        keep the timer alive."""
+        if _poll_grabbed_key():
+            self._toggle_quake_console()
         return True
 
     # ── Quake-style drop-down console ────────────────────────────────────────
@@ -3941,6 +3951,11 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
         # Flush metrics session minutes — no-op if metrics disabled
         try:
             _metrics.shutdown()
+        except Exception:
+            pass
+        # Release the global ² key grab
+        try:
+            _ungrab_key_global()
         except Exception:
             pass
         # Tear down the wake-word listener so we release autoaudiosrc

@@ -238,6 +238,106 @@ def apply_above_all() -> bool:
     return True
 
 
+# ── Global hotkey grab ───────────────────────────────────────────────────────
+
+_grabbed_keycode: int | None = None
+
+
+def grab_key_global(keycode: int) -> bool:
+    """Grab a key globally via XGrabKey so it's intercepted no matter
+    which window has focus. Used for the ² Quake console toggle.
+
+    Returns True if the grab succeeded. Call ``ungrab_key_global`` on
+    shutdown to release."""
+    global _grabbed_keycode
+    if not (_init_xlib() and _xdpy):
+        return False
+    try:
+        dpy = ctypes.c_void_p(_xdpy)
+        _xlib.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+        _xlib.XDefaultRootWindow.restype = ctypes.c_ulong
+        root = _xlib.XDefaultRootWindow(dpy)
+
+        # XGrabKey(display, keycode, modifiers, grab_window,
+        #          owner_events, pointer_mode, keyboard_mode)
+        _xlib.XGrabKey.argtypes = [
+            ctypes.c_void_p, ctypes.c_int, ctypes.c_uint,
+            ctypes.c_ulong, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+        ]
+        AnyModifier = (1 << 15)  # GrabAny
+        GrabModeAsync = 1
+        # Grab with no modifier + grab with any modifier (so Caps Lock
+        # / Num Lock states don't block the hotkey)
+        for mod in (0, AnyModifier):
+            _xlib.XGrabKey(dpy, keycode, mod, root, True,
+                           GrabModeAsync, GrabModeAsync)
+        _xlib.XFlush(ctypes.c_void_p(_xdpy))
+        _grabbed_keycode = keycode
+        log.debug("XGrabKey OK for keycode %d", keycode)
+        return True
+    except Exception:
+        log.debug("XGrabKey failed", exc_info=True)
+        return False
+
+
+def ungrab_key_global() -> None:
+    """Release the global key grab."""
+    global _grabbed_keycode
+    if _grabbed_keycode is None or not (_init_xlib() and _xdpy):
+        return
+    try:
+        dpy = ctypes.c_void_p(_xdpy)
+        root = _xlib.XDefaultRootWindow(dpy)
+        _xlib.XUngrabKey.argtypes = [
+            ctypes.c_void_p, ctypes.c_int, ctypes.c_uint, ctypes.c_ulong,
+        ]
+        AnyModifier = (1 << 15)
+        for mod in (0, AnyModifier):
+            _xlib.XUngrabKey(dpy, _grabbed_keycode, mod, root)
+        _xlib.XFlush(ctypes.c_void_p(_xdpy))
+        _grabbed_keycode = None
+    except Exception:
+        log.debug("XUngrabKey failed", exc_info=True)
+
+
+def poll_grabbed_key() -> bool:
+    """Check if the grabbed key was pressed since last poll. Non-blocking.
+
+    Uses XCheckTypedEvent to peek at KeyPress events on the root window.
+    Returns True if the grabbed key was fired. Must be called from a
+    GLib timer (~100 ms) so we don't miss events."""
+    if _grabbed_keycode is None or not (_init_xlib() and _xdpy):
+        return False
+    try:
+        dpy = ctypes.c_void_p(_xdpy)
+
+        # XEvent is a union of 192 bytes on 64-bit (24 longs)
+        class XEvent(ctypes.Structure):
+            _fields_ = [("data", ctypes.c_ulong * 24)]
+
+        _xlib.XCheckTypedEvent.argtypes = [
+            ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(XEvent),
+        ]
+        _xlib.XCheckTypedEvent.restype = ctypes.c_int
+
+        ev = XEvent()
+        KeyPress = 2
+        if _xlib.XCheckTypedEvent(dpy, KeyPress, ctypes.byref(ev)):
+            # XKeyEvent: type(0), serial(1), send_event(2), display(3),
+            #            window(4), root(5), subwindow(6), time(7),
+            #            x(8), y(9), x_root(10), y_root(11),
+            #            state(12), keycode(13), ...
+            pressed_keycode = int(ev.data[13]) & 0xFFFF
+            if pressed_keycode == _grabbed_keycode:
+                return True
+            # Not our key — put it back
+            _xlib.XPutBackEvent.argtypes = [ctypes.c_void_p, ctypes.POINTER(XEvent)]
+            _xlib.XPutBackEvent(dpy, ctypes.byref(ev))
+        return False
+    except Exception:
+        return False
+
+
 # ── Direct Xlib queries (replace xprop / xdotool subprocess polls) ──────────
 
 
