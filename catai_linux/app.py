@@ -4524,6 +4524,8 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
 # ── Entry Point ────────────────────────────────────────────────────────────────
 
 def main():
+    import signal
+    signal.signal(signal.SIGINT, signal.SIG_DFL)  # Ctrl+C → clean exit, no traceback
     gtk_args = [a for a in sys.argv if a not in ("--debug", "--test-socket", "--voice")]
     app = CatAIApp()
     app.run(gtk_args)
