@@ -487,9 +487,10 @@ def draw_chat_bubble(ctx, text: str, cat_x: float, cat_y: float,
 
 
 def draw_context_menu(ctx, mx: float, my: float,
-                      label_settings: str, label_quit: str) -> None:
+                      label_settings: str, label_quit: str,
+                      label_console: str = "Console ²") -> None:
     """Draw a right-click context menu on the canvas."""
-    bw, bh = 120, 50
+    bw, bh = 120, 75
     pad = 8
     ctx.set_source_rgba(*THEME["bubble_bg_translucent"])
     ctx.rectangle(mx, my, bw, bh)
@@ -499,9 +500,12 @@ def draw_context_menu(ctx, mx: float, my: float,
     ctx.set_line_width(2)
     ctx.rectangle(mx, my, bw, bh)
     ctx.stroke()
-    # Separator
+    # Separators
     ctx.move_to(mx + pad, my + 25)
     ctx.line_to(mx + bw - pad, my + 25)
+    ctx.stroke()
+    ctx.move_to(mx + pad, my + 50)
+    ctx.line_to(mx + bw - pad, my + 50)
     ctx.stroke()
     # Text
     ctx.set_source_rgba(*THEME["bubble_text"])
@@ -510,6 +514,8 @@ def draw_context_menu(ctx, mx: float, my: float,
     ctx.move_to(mx + pad, my + 17)
     ctx.show_text(label_settings)
     ctx.move_to(mx + pad, my + 42)
+    ctx.show_text(label_console)
+    ctx.move_to(mx + pad, my + 67)
     ctx.show_text(label_quit)
 
 
