@@ -65,6 +65,17 @@ from catai_linux.constants import (  # noqa: E402
     CATSET_PERSONALITIES,  # re-exported for catai_linux.reactions
 )
 
+# Decorative one-shot animations that should loop 3× (3 seconds)
+# instead of playing once (1 second). Makes them actually visible.
+_LOOPING_ANIMS = frozenset({
+    CatState.DANCING, CatState.PLAYING_BALL, CatState.FISHING,
+    CatState.SITTING_WITH_BIRD, CatState.HELLO_KITTY,
+    CatState.BOTHERED_BY_BEE, CatState.BOTHERED_BY_FLY,
+    CatState.SLEEPING_BY_FIRE, CatState.WALKING_IN_PUDDLE,
+    CatState.CHASING_BUTTERFLY, CatState.ROLLING_ON_BACK,
+    CatState.STRETCHING, CatState.YAWNING,
+})
+
 CONFIG_DIR = os.path.expanduser("~/.config/catai")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
@@ -774,7 +785,15 @@ class CatInstance:
                 if not frames:
                     self._end_current_step()
                 elif self.frame_index >= len(frames) - 1:
-                    self._end_current_step()
+                    # Decorative animations loop 3× so they're visible
+                    # longer (8 frames × 3 = 3 seconds at 8 FPS instead
+                    # of 1 second). The _state_tick counter tracks loops.
+                    if self.state in _LOOPING_ANIMS and self._state_tick < 2:
+                        self._state_tick += 1
+                        self.frame_index = 0
+                    else:
+                        self._state_tick = 0
+                        self._end_current_step()
                 else:
                     self.frame_index += 1
 
@@ -936,66 +955,50 @@ class CatInstance:
                 self.state = CatState.JUMPING
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.75:
-                # Climbing is now much more common to counter wall slides
-                self.state = CatState.CLIMBING
-                self.frame_index = 0
-                self.direction = random.choice(["east", "west"])
-            elif r < 0.78:
+            elif r < 0.68:
                 self.state = CatState.ANGRY
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.80:
-                # Wall adventure (slide down) — rare
-                self._start_sequence("wall_adventure")
-            elif r < 0.85:
-                # Ledge adventure ends with climbing up — more common
-                self._start_sequence("ledge_adventure")
-            elif r < 0.88:
-                self._start_sequence("dash_crash")
-            elif r < 0.91:
-                self._start_sequence("full_jump")
-            elif r < 0.93:
-                self.state = CatState.CHASING_BUTTERFLY
+            elif r < 0.70:
+                # Climbing — rare (was 10%, pushed cats to bottom)
+                self.state = CatState.CLIMBING
                 self.frame_index = 0
                 self.direction = random.choice(["east", "west"])
-            elif r < 0.95:
-                self.state = CatState.PLAYING_BALL
-                self.frame_index = 0
-                self.direction = "south"
-            elif r < 0.97:
-                self.state = CatState.DANCING
-                self.frame_index = 0
-                self.direction = "south"
+            elif r < 0.72:
+                # Wall adventure — very rare
+                self._start_sequence("wall_adventure")
+            elif r < 0.74:
+                self._start_sequence("ledge_adventure")
+            elif r < 0.76:
+                self._start_sequence("dash_crash")
+            elif r < 0.78:
+                self._start_sequence("full_jump")
             elif r < 1.0:
-                # Batch-2 rare idle animations — pick one at random.
-                # Bandaged only triggers when happiness < 20; pouncing
-                # and sneaking use east/west directions.
+                # All new animations get ~22% total (~1.2% each).
+                # Much more visible than before.
+                all_new = [
+                    (CatState.CHASING_BUTTERFLY, "ew"),
+                    (CatState.PLAYING_BALL, "s"),
+                    (CatState.DANCING, "s"),
+                    (CatState.STRETCHING, "s"),
+                    (CatState.YAWNING, "s"),
+                    (CatState.POUNCING, "ew"),
+                    (CatState.SITTING_WITH_BIRD, "s"),
+                    (CatState.FISHING, "s"),
+                    (CatState.SNEAKING, "ew"),
+                    (CatState.HELLO_KITTY, "s"),
+                    (CatState.PIROUETTE, "s"),
+                    (CatState.ROLLING_ON_BACK, "s"),
+                    (CatState.BOTHERED_BY_BEE, "s"),
+                    (CatState.BOTHERED_BY_FLY, "s"),
+                    (CatState.SLEEPING_BY_FIRE, "s"),
+                    (CatState.WALKING_IN_PUDDLE, "ew"),
+                ]
                 if self.mood.happiness < 20:
-                    pick = CatState.BANDAGED
-                    d = "south"
+                    pick, d = CatState.BANDAGED, "south"
                 else:
-                    rare_anims = [
-                        CatState.STRETCHING,
-                        CatState.YAWNING,
-                        CatState.POUNCING,
-                        CatState.SITTING_WITH_BIRD,
-                        CatState.FISHING,
-                        CatState.SNEAKING,
-                        CatState.HELLO_KITTY,
-                        CatState.PIROUETTE,
-                        CatState.ROLLING_ON_BACK,
-                        CatState.BOTHERED_BY_BEE,
-                        CatState.BOTHERED_BY_FLY,
-                        CatState.SLEEPING_BY_FIRE,
-                        CatState.WALKING_IN_PUDDLE,
-                    ]
-                    pick = random.choice(rare_anims)
-                    if pick in (CatState.POUNCING, CatState.SNEAKING,
-                                CatState.WALKING_IN_PUDDLE):
-                        d = random.choice(["east", "west"])
-                    else:
-                        d = "south"
+                    pick, dirs = random.choice(all_new)
+                    d = random.choice(["east", "west"]) if dirs == "ew" else "south"
                 self.state = pick
                 self.frame_index = 0
                 self.direction = d
