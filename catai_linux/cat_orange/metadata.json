@@ -579,6 +579,52 @@
           "animations/bothered-by-bee/south/frame_006.png",
           "animations/bothered-by-bee/south/frame_007.png"
         ]
+      },
+      "bothered-by-fly": {
+        "south": [
+          "animations/bothered-by-fly/south/frame_000.png",
+          "animations/bothered-by-fly/south/frame_001.png",
+          "animations/bothered-by-fly/south/frame_002.png",
+          "animations/bothered-by-fly/south/frame_003.png",
+          "animations/bothered-by-fly/south/frame_004.png",
+          "animations/bothered-by-fly/south/frame_005.png",
+          "animations/bothered-by-fly/south/frame_006.png",
+          "animations/bothered-by-fly/south/frame_007.png"
+        ]
+      },
+      "sleeping-by-fire": {
+        "south": [
+          "animations/sleeping-by-fire/south/frame_000.png",
+          "animations/sleeping-by-fire/south/frame_001.png",
+          "animations/sleeping-by-fire/south/frame_002.png",
+          "animations/sleeping-by-fire/south/frame_003.png",
+          "animations/sleeping-by-fire/south/frame_004.png",
+          "animations/sleeping-by-fire/south/frame_005.png",
+          "animations/sleeping-by-fire/south/frame_006.png",
+          "animations/sleeping-by-fire/south/frame_007.png"
+        ]
+      },
+      "walking-in-puddle": {
+        "east": [
+          "animations/walking-in-puddle/east/frame_000.png",
+          "animations/walking-in-puddle/east/frame_001.png",
+          "animations/walking-in-puddle/east/frame_002.png",
+          "animations/walking-in-puddle/east/frame_003.png",
+          "animations/walking-in-puddle/east/frame_004.png",
+          "animations/walking-in-puddle/east/frame_005.png",
+          "animations/walking-in-puddle/east/frame_006.png",
+          "animations/walking-in-puddle/east/frame_007.png"
+        ],
+        "west": [
+          "animations/walking-in-puddle/west/frame_000.png",
+          "animations/walking-in-puddle/west/frame_001.png",
+          "animations/walking-in-puddle/west/frame_002.png",
+          "animations/walking-in-puddle/west/frame_003.png",
+          "animations/walking-in-puddle/west/frame_004.png",
+          "animations/walking-in-puddle/west/frame_005.png",
+          "animations/walking-in-puddle/west/frame_006.png",
+          "animations/walking-in-puddle/west/frame_007.png"
+        ]
       }
     }
   }

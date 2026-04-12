@@ -66,6 +66,9 @@ class CatState(enum.Enum):
     PIROUETTE = "pirouette"
     ROLLING_ON_BACK = "rolling_on_back"
     BOTHERED_BY_BEE = "bothered_by_bee"
+    BOTHERED_BY_FLY = "bothered_by_fly"
+    SLEEPING_BY_FIRE = "sleeping_by_fire"
+    WALKING_IN_PUDDLE = "walking_in_puddle"
 
 
 ANIM_KEYS = {
@@ -106,6 +109,9 @@ ANIM_KEYS = {
     CatState.PIROUETTE: "pirouette",
     CatState.ROLLING_ON_BACK: "rolling-on-back",
     CatState.BOTHERED_BY_BEE: "bothered-by-bee",
+    CatState.BOTHERED_BY_FLY: "bothered-by-fly",
+    CatState.SLEEPING_BY_FIRE: "sleeping-by-fire",
+    CatState.WALKING_IN_PUDDLE: "walking-in-puddle",
 }
 
 ONE_SHOT_STATES = {
@@ -121,6 +127,8 @@ ONE_SHOT_STATES = {
     CatState.SITTING_WITH_BIRD, CatState.FISHING, CatState.SNEAKING,
     CatState.HELLO_KITTY, CatState.BANDAGED, CatState.PIROUETTE,
     CatState.ROLLING_ON_BACK, CatState.BOTHERED_BY_BEE,
+    CatState.BOTHERED_BY_FLY, CatState.SLEEPING_BY_FIRE,
+    CatState.WALKING_IN_PUDDLE,
 }
 
 

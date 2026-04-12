@@ -986,9 +986,13 @@ class CatInstance:
                         CatState.PIROUETTE,
                         CatState.ROLLING_ON_BACK,
                         CatState.BOTHERED_BY_BEE,
+                        CatState.BOTHERED_BY_FLY,
+                        CatState.SLEEPING_BY_FIRE,
+                        CatState.WALKING_IN_PUDDLE,
                     ]
                     pick = random.choice(rare_anims)
-                    if pick in (CatState.POUNCING, CatState.SNEAKING):
+                    if pick in (CatState.POUNCING, CatState.SNEAKING,
+                                CatState.WALKING_IN_PUDDLE):
                         d = random.choice(["east", "west"])
                     else:
                         d = "south"

@@ -193,6 +193,16 @@ MIT
 
 ## Changelog
 
+### v1.1.0 — Quake console + 17 animations (2026-04-12)
+
+- Quake-style drop-down console toggled with ² key (works from any app via XGrabKey, fallback right-click menu)
+- `catai-shell` CLI tool for scripting cat actions over the Unix API socket
+- Extended API socket with 6 new commands (state, mood, say, walk, animate, list)
+- 17 new sprite animations across 3 batches: chasing-butterfly, playing-ball, dancing, stretching, yawning, pouncing, sitting-with-bird, fishing, sneaking, hello-kitty, bandaged, pirouette, rolling-on-back, bothered-by-bee, bothered-by-fly, sleeping-by-fire, walking-in-puddle
+- Escape key closes chat bubble
+- Clean Ctrl+C exit handling
+- Console I/O logging for debugging
+
 ### v1.0.0 — Le grand ménage (2026-04-12)
 
 CATAI-Linux atteint la **v1.0** — le code est maintenant modulaire,

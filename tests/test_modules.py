@@ -1962,6 +1962,20 @@ def test_new_animations() -> None:
         test(f"{anim_key} key", ANIM_KEYS[cs] == anim_key)
         test(f"{enum_name} is one-shot", cs in ONE_SHOT_STATES)
 
+    # ── Batch 3 (3 new animations) ──────────────────────────────────────
+    batch3 = {
+        "BOTHERED_BY_FLY":  ("bothered_by_fly",  "bothered-by-fly"),
+        "SLEEPING_BY_FIRE": ("sleeping_by_fire",  "sleeping-by-fire"),
+        "WALKING_IN_PUDDLE": ("walking_in_puddle", "walking-in-puddle"),
+    }
+
+    for enum_name, (enum_val, anim_key) in batch3.items():
+        cs = getattr(CatState, enum_name)
+        test(f"CatState.{enum_name} exists", cs.value == enum_val)
+        test(f"{enum_name} in ANIM_KEYS", cs in ANIM_KEYS)
+        test(f"{anim_key} key", ANIM_KEYS[cs] == anim_key)
+        test(f"{enum_name} is one-shot", cs in ONE_SHOT_STATES)
+
     # Metadata includes all animations for all 6 cats
     import json
     from pathlib import Path
@@ -1969,6 +1983,7 @@ def test_new_animations() -> None:
     all_anim_keys = (
         ["chasing-butterfly", "playing-ball", "dancing"]
         + [v[1] for v in batch2.values()]
+        + [v[1] for v in batch3.values()]
     )
     for cat in ["cat_orange", "cat01", "cat02", "cat03", "cat04", "cat05"]:
         meta_path = cats_dir / cat / "metadata.json"
