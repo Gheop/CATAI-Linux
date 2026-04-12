@@ -2591,6 +2591,8 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
         self._canvas_y_offset = 0  # GNOME top bar height (detected at launch)
         self._apocalypse_active = False
         self._apocalypse_timer = None
+        self._apocalypse_queue: list = []
+        self._apocalypse_spawning = False
         # Voice chat state (push-to-talk microphone)
         self._voice_enabled = False
         self._voice_model = "base"
@@ -2615,6 +2617,7 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
         self._easter_menu_items = []  # list of ((x, y, w, h), key)
         # Matrix effect state
         self._matrix_columns = []
+        self._matrix_ticks = 0
         self._shake_amount = 0  # pixels — used by eg_shake
         # Seasonal overlay state — date-aware particles (snow, pumpkins,
         # hearts, fireworks, …). `_season_override` wins over the resolver

@@ -271,7 +271,7 @@ class ClaudeChat(ChatBackend):
         except Exception as e:
             if "401" in str(e) or "authentication" in str(e).lower():
                 log.warning("Auth failed, refreshing token via Claude CLI...")
-                if getattr(self, "_on_status", None):
+                if self._on_status:
                     GLib.idle_add(self._on_status, "refreshing")
                 _refresh_claude_token()
                 new_key = _read_claude_oauth()

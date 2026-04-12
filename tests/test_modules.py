@@ -1214,6 +1214,9 @@ def test_import_smoke() -> None:
         "catai_linux.mood",
         "catai_linux.activity",
         "catai_linux.wake_word",
+        "catai_linux.easter_eggs",
+        "catai_linux.config_schema",
+        "catai_linux.theme",
         "catai_linux.app",
     ]
     for m in modules:
