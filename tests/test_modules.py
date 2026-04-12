@@ -1915,6 +1915,44 @@ def test_shell() -> None:
     test("do_quit returns True", shell.do_quit("") is True)
 
 
+def test_new_animations() -> None:
+    print("\n[new_animations]", flush=True)
+    from catai_linux.constants import CatState, ANIM_KEYS, ONE_SHOT_STATES
+
+    # New states exist in the enum
+    test("CatState.CHASING_BUTTERFLY exists", CatState.CHASING_BUTTERFLY.value == "chasing_butterfly")
+    test("CatState.PLAYING_BALL exists", CatState.PLAYING_BALL.value == "playing_ball")
+    test("CatState.DANCING exists", CatState.DANCING.value == "dancing")
+
+    # New states are in ANIM_KEYS
+    test("CHASING_BUTTERFLY in ANIM_KEYS", CatState.CHASING_BUTTERFLY in ANIM_KEYS)
+    test("PLAYING_BALL in ANIM_KEYS", CatState.PLAYING_BALL in ANIM_KEYS)
+    test("DANCING in ANIM_KEYS", CatState.DANCING in ANIM_KEYS)
+
+    # Anim key values match the animation directory names
+    test("chasing-butterfly key", ANIM_KEYS[CatState.CHASING_BUTTERFLY] == "chasing-butterfly")
+    test("playing-ball key", ANIM_KEYS[CatState.PLAYING_BALL] == "playing-ball")
+    test("dancing key", ANIM_KEYS[CatState.DANCING] == "dancing")
+
+    # New states are one-shot
+    test("CHASING_BUTTERFLY is one-shot", CatState.CHASING_BUTTERFLY in ONE_SHOT_STATES)
+    test("PLAYING_BALL is one-shot", CatState.PLAYING_BALL in ONE_SHOT_STATES)
+    test("DANCING is one-shot", CatState.DANCING in ONE_SHOT_STATES)
+
+    # Metadata includes new animations for all cats
+    import json
+    from pathlib import Path
+    cats_dir = Path(__file__).resolve().parent.parent / "catai_linux"
+    for cat in ["cat_orange", "cat01", "cat02", "cat03", "cat04", "cat05"]:
+        meta_path = cats_dir / cat / "metadata.json"
+        with open(meta_path) as f:
+            meta = json.load(f)
+        anims = meta["frames"]["animations"]
+        test(f"{cat} has chasing-butterfly", "chasing-butterfly" in anims)
+        test(f"{cat} has playing-ball", "playing-ball" in anims)
+        test(f"{cat} has dancing", "dancing" in anims)
+
+
 def main() -> int:
     print("=== CATAI Unit Tests (headless) ===\n", flush=True)
     test_import_smoke()
@@ -1942,6 +1980,7 @@ def main() -> int:
     _run_section("sprite_cache", test_sprite_cache)
     _run_section("wake_word", test_wake_word)
     _run_section("shell", test_shell)
+    _run_section("new_animations", test_new_animations)
     print(f"\n=== Results: {PASS} passed, {FAIL} failed ===\n", flush=True)
     return 0 if FAIL == 0 else 1
 

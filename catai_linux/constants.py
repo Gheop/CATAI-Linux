@@ -52,6 +52,9 @@ class CatState(enum.Enum):
     LEDGEIDLE = "ledgeidle"
     WALLCLIMB = "wallclimb"
     WALLGRAB = "wallgrab"
+    CHASING_BUTTERFLY = "chasing_butterfly"
+    PLAYING_BALL = "playing_ball"
+    DANCING = "dancing"
 
 
 ANIM_KEYS = {
@@ -78,6 +81,9 @@ ANIM_KEYS = {
     CatState.LEDGEIDLE: "ledgeidle",
     CatState.WALLCLIMB: "wallclimb",
     CatState.WALLGRAB: "wallgrab",
+    CatState.CHASING_BUTTERFLY: "chasing-butterfly",
+    CatState.PLAYING_BALL: "playing-ball",
+    CatState.DANCING: "dancing",
 }
 
 ONE_SHOT_STATES = {
@@ -88,6 +94,7 @@ ONE_SHOT_STATES = {
     CatState.FALLING,
     CatState.LANDING, CatState.LEDGECLIMB_STRUGGLE, CatState.LEDGEGRAB,
     CatState.WALLCLIMB,
+    CatState.CHASING_BUTTERFLY, CatState.PLAYING_BALL, CatState.DANCING,
 }
 
 

@@ -955,6 +955,18 @@ class CatInstance:
                 self._start_sequence("dash_crash")
             elif r < 0.91:
                 self._start_sequence("full_jump")
+            elif r < 0.93:
+                self.state = CatState.CHASING_BUTTERFLY
+                self.frame_index = 0
+                self.direction = random.choice(["east", "west"])
+            elif r < 0.95:
+                self.state = CatState.PLAYING_BALL
+                self.frame_index = 0
+                self.direction = "south"
+            elif r < 0.97:
+                self.state = CatState.DANCING
+                self.frame_index = 0
+                self.direction = "south"
             # drama_queen no longer random — only triggered by wall crash or angry attack
         elif self.state == CatState.SLEEPING_BALL:
             self.idle_ticks += 1
@@ -3333,17 +3345,19 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
         target.send_chat(prompt)
 
     def _wake_action_dance(self, target) -> None:
-        """Verb 'danse' — mini disco loop on this single cat. Cycles
-        through the celebratory states (LOVE / ROLLING / GROOMING /
-        FLAT) every 500 ms for 5 seconds, then returns to IDLE.
+        """Verb 'danse' — mini disco loop on this single cat. Uses the
+        dedicated DANCING animation with occasional variation through
+        LOVE / ROLLING / GROOMING / FLAT every 500 ms for 5 seconds,
+        then returns to IDLE.
 
         Reuses the same state list as the global ``eg_disco`` easter
         egg but scoped to one cat so the others keep doing their own
         thing."""
-        dance_states = [CatState.LOVE, CatState.ROLLING,
+        dance_states = [CatState.DANCING, CatState.DANCING,
+                        CatState.LOVE, CatState.ROLLING,
                         CatState.GROOMING, CatState.FLAT]
         target.in_encounter = True
-        target.state = random.choice(dance_states)
+        target.state = CatState.DANCING
         target.frame_index = 0
         target.direction = "south"
         ticks = [10]  # 5 s at 500 ms per tick

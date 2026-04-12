@@ -381,6 +381,52 @@
           "animations/wallgrab/west/frame_006.png",
           "animations/wallgrab/west/frame_007.png"
         ]
+      },
+      "chasing-butterfly": {
+        "east": [
+          "animations/chasing-butterfly/east/frame_000.png",
+          "animations/chasing-butterfly/east/frame_001.png",
+          "animations/chasing-butterfly/east/frame_002.png",
+          "animations/chasing-butterfly/east/frame_003.png",
+          "animations/chasing-butterfly/east/frame_004.png",
+          "animations/chasing-butterfly/east/frame_005.png",
+          "animations/chasing-butterfly/east/frame_006.png",
+          "animations/chasing-butterfly/east/frame_007.png"
+        ],
+        "west": [
+          "animations/chasing-butterfly/west/frame_000.png",
+          "animations/chasing-butterfly/west/frame_001.png",
+          "animations/chasing-butterfly/west/frame_002.png",
+          "animations/chasing-butterfly/west/frame_003.png",
+          "animations/chasing-butterfly/west/frame_004.png",
+          "animations/chasing-butterfly/west/frame_005.png",
+          "animations/chasing-butterfly/west/frame_006.png",
+          "animations/chasing-butterfly/west/frame_007.png"
+        ]
+      },
+      "playing-ball": {
+        "south": [
+          "animations/playing-ball/south/frame_000.png",
+          "animations/playing-ball/south/frame_001.png",
+          "animations/playing-ball/south/frame_002.png",
+          "animations/playing-ball/south/frame_003.png",
+          "animations/playing-ball/south/frame_004.png",
+          "animations/playing-ball/south/frame_005.png",
+          "animations/playing-ball/south/frame_006.png",
+          "animations/playing-ball/south/frame_007.png"
+        ]
+      },
+      "dancing": {
+        "south": [
+          "animations/dancing/south/frame_000.png",
+          "animations/dancing/south/frame_001.png",
+          "animations/dancing/south/frame_002.png",
+          "animations/dancing/south/frame_003.png",
+          "animations/dancing/south/frame_004.png",
+          "animations/dancing/south/frame_005.png",
+          "animations/dancing/south/frame_006.png",
+          "animations/dancing/south/frame_007.png"
+        ]
       }
     }
   }
