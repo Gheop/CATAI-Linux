@@ -1020,7 +1020,11 @@ class CatInstance:
                     (CatState.SLEEPING_BY_FIRE, "s"),
                     (CatState.WALKING_IN_PUDDLE, "ew"),
                 ]
-                if self.mood.happiness < 20:
+                # BANDAGED rare even when VERY sad: threshold <10 (not <20)
+                # and 20% chance on those rolls. Prevents the loop bug
+                # where sad cats spent 100% of their new-anim rolls
+                # stuck in BANDAGED.
+                if self.mood.happiness < 10 and random.random() < 0.20:
                     pick, d = CatState.BANDAGED, "south"
                 else:
                     pick, dirs = random.choice(all_new)

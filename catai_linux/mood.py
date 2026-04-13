@@ -72,10 +72,16 @@ class CatMood:
 
     # Per-tick (1 s) deltas. Calibrated so a full day of neglect saturates
     # the stats to their extremes.
-    HAPPINESS_DECAY_PER_SEC = 60.0 / (6 * 3600)   # full decay in 6h
+    HAPPINESS_DECAY_PER_SEC = 40.0 / (24 * 3600)  # gentle decay, stabilizes around the floor
     ENERGY_DECAY_PER_SEC = 80.0 / (8 * 3600)      # 8h awake
     BORED_GROWTH_PER_SEC = 70.0 / (2 * 3600)      # peaks in 2h
     HUNGER_GROWTH_PER_SEC = 80.0 / (12 * 3600)    # 12h to hungry
+
+    # Soft floor for passive happiness decay — prevents cats from falling
+    # to happiness=0 through pure inactivity (which triggered the BANDAGED
+    # loop bug). Explicit events (easter eggs, drama_queen) can still push
+    # below this via direct subtraction.
+    HAPPINESS_PASSIVE_FLOOR = 15.0
 
     # Recovery rates when the cat is doing the right thing.
     ENERGY_RECOVERY_SLEEPING_PER_SEC = 80.0 / 300  # 5 min sleep → full
@@ -93,7 +99,12 @@ class CatMood:
             return
 
         # Base decay / growth (always active)
-        self.happiness = _clamp(self.happiness - self.HAPPINESS_DECAY_PER_SEC * dt)
+        # Happiness floors at HAPPINESS_PASSIVE_FLOOR on PASSIVE decay only
+        # — explicit events (e.g. drama_queen) can still subtract below it.
+        self.happiness = _clamp(
+            self.happiness - self.HAPPINESS_DECAY_PER_SEC * dt,
+            lo=self.HAPPINESS_PASSIVE_FLOOR,
+        )
         self.energy = _clamp(self.energy - self.ENERGY_DECAY_PER_SEC * dt)
         self.bored = _clamp(self.bored + self.BORED_GROWTH_PER_SEC * dt)
         self.hunger = _clamp(self.hunger + self.HUNGER_GROWTH_PER_SEC * dt)
