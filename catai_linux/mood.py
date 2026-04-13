@@ -77,11 +77,13 @@ class CatMood:
     BORED_GROWTH_PER_SEC = 70.0 / (2 * 3600)      # peaks in 2h
     HUNGER_GROWTH_PER_SEC = 80.0 / (12 * 3600)    # 12h to hungry
 
-    # Soft floor for passive happiness decay — prevents cats from falling
-    # to happiness=0 through pure inactivity (which triggered the BANDAGED
-    # loop bug). Explicit events (easter eggs, drama_queen) can still push
-    # below this via direct subtraction.
-    HAPPINESS_PASSIVE_FLOOR = 15.0
+    # Soft floor for passive happiness decay — kept ABOVE the is_grumpy()
+    # threshold (25) so a cat that's simply been left alone never drifts
+    # into permanent grumpy mood (which used to skew _roll_mood_adjusted
+    # 100% into the all_new bucket and stop walking entirely). Grumpiness
+    # is now event-driven only: drama_queen, easter eggs, etc. can still
+    # subtract below this floor explicitly.
+    HAPPINESS_PASSIVE_FLOOR = 30.0
 
     # Recovery rates when the cat is doing the right thing.
     ENERGY_RECOVERY_SLEEPING_PER_SEC = 80.0 / 300  # 5 min sleep → full

@@ -948,6 +948,8 @@ class CatInstance:
                         max_y * 0.2, max(max_y * 0.2 + 1, max_y))
                 else:
                     self.dest_y = self.y
+            # Mini-actions — 12 quick states at 2% each (24% total).
+            # Order matters: cumulative thresholds cascade from 0.35.
             elif r < 0.37:
                 self.state = CatState.EATING
                 self.frame_index = 0
@@ -966,34 +968,34 @@ class CatInstance:
                 self.state = CatState.GROOMING
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.36:
+            elif r < 0.47:
                 self.state = CatState.LOVE
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.39:
+            elif r < 0.49:
                 self.state = CatState.ROLLING
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.42:
+            elif r < 0.51:
                 self.state = CatState.SURPRISED
                 self.frame_index = 0
                 self.direction = random.choice(["east", "west"])
-            elif r < 0.45:
+            elif r < 0.53:
                 self.state = CatState.JUMPING
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.47:
+            elif r < 0.55:
                 self.state = CatState.ANGRY
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.49:
+            elif r < 0.57:
                 self._start_sequence("dash_crash")
-            elif r < 0.51:
+            elif r < 0.59:
                 self._start_sequence("full_jump")
             # Wall / climb behaviors — ONLY trigger when cats are NOT
             # near an edge. When already near a wall (< 150 px), force
             # a walk toward the center instead to escape edge pileups.
-            elif r < 0.54:
+            elif r < 0.62:
                 near_edge = (self.x < 150 or
                              self.x > self.screen_w - 150 - self.display_w)
                 if near_edge:
@@ -1013,8 +1015,9 @@ class CatInstance:
                     else:
                         self._start_sequence(pick)
             elif r < 1.0:
-                # All new animations get ~22% total (~1.2% each).
-                # Much more visible than before.
+                # All 16 new animations share the remaining ~38% (~2.4% each).
+                # Still the dominant bucket for visual variety, but no longer
+                # eats the walking budget the way the previous 46% did.
                 all_new = [
                     (CatState.CHASING_BUTTERFLY, "ew"),
                     (CatState.PLAYING_BALL, "s"),
@@ -1304,26 +1307,28 @@ class CatInstance:
         the IDLE branch of behavior_tick instead of a raw random.random()
         so the emergent behavior reflects the invisible stats.
 
-        Biases are layered: a single mood can only win (most extreme first).
-        The effect is visible but not overwhelming — ~50% of rolls are
-        still uniform when the cat is in the default 'neutral' zone.
+        Only two biases remain (kept aligned with the bucket layout in
+        behavior_tick):
+          - wants_rest → squeeze rolls into [0, 0.35) so only SLEEPING_BALL
+            (<0.05) or WALKING (<0.35) are eligible. Tired cats walk a bit,
+            then settle into sleep once idle_ticks builds past the gate.
+          - is_bored → squeeze rolls into [0, 0.6) so the cat lands in
+            walking + the 12 mini-actions (which include CHASE/JUMP/DASH).
+            Excludes the all_new bucket because bored cats want action,
+            not contemplation animations.
+
+        Grumpy/affectionate biases were removed: ANGRY and LOVE remain
+        reachable via the uniform path at 2% each, which is plenty.
+        Previously these biases pointed at stale bucket positions and
+        skewed sad cats 100% into all_new — the bug that made walking
+        observably 0.1% in monitoring.
         """
         r = random.random()
         m = self.mood
         if m.wants_rest():
-            # Halve the range so low-r branches (SLEEPING_BALL at 0.05,
-            # WALKING at 0.22) become much more likely, biasing toward rest.
-            return r * 0.5
+            return r * 0.35
         if m.is_bored():
-            # Map [0,1) → [0.28, 0.78) so CHASING_MOUSE (0.35), JUMPING
-            # (0.65), CLIMBING (0.75) dominate.
-            return 0.28 + r * 0.50
-        if m.is_grumpy():
-            # Narrow band around ANGRY (0.75–0.78).
-            return 0.70 + r * 0.10
-        if m.is_affectionate():
-            # Narrow band around LOVE (0.45–0.50).
-            return 0.35 + r * 0.20
+            return r * 0.60
         return r
 
     def _show_random_meow(self):
