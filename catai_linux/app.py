@@ -635,6 +635,16 @@ class CatInstance:
         self._clamp_to_screen()
 
         if self.state == CatState.WALKING:
+            # Hard cap: 25s walking without reaching dest → abort to IDLE.
+            # Guards against edge cases where the destination becomes
+            # unreachable (e.g. clamped off-screen after a resize).
+            start = getattr(self, "_walk_start_time", None)
+            if start is not None and time.monotonic() - start > 25.0:
+                self.state = CatState.IDLE
+                self.frame_index = 0
+                self.idle_ticks = 0
+                self._walk_start_time = None
+                return
             dest_y = self.dest_y
             dx = self.dest_x - self.x
             dy = dest_y - self.y
@@ -645,6 +655,7 @@ class CatInstance:
                 self.state = CatState.IDLE
                 self.frame_index = 0
                 self.idle_ticks = 0
+                self._walk_start_time = None
             else:
                 ratio = WALK_SPEED / dist
                 step_x = dx * ratio
@@ -933,78 +944,86 @@ class CatInstance:
                 self._sleep_tick = 0
                 self.direction = "south"  # only south frames available
                 self.idle_ticks = 0
-            elif r < 0.22:
-                # Walking — 22% probability. Higher than original 18%
-                # to keep cats moving, lower than the 35% experiment
-                # which made walking 79% of observed time (because each
-                # walk dwelled ~26s while other states dwelled ~3s).
+            elif r < 0.15:
+                # Walking — 15% probability. Each walk dwells ~5-8s
+                # (WALK_SPEED=32 px/s, dest range ~±250px).
+                # Observed time-share: ~22% of total, which is the
+                # sweet spot between "cats move enough" and "walking
+                # doesn't drown out the other animations."
                 self.state = CatState.WALKING
                 self.frame_index = 0
-                # Constrain destination to ±350px in x, ±200px in y so
-                # walks last ~3-6s instead of crossing the whole screen.
-                # Cats still migrate over time because each walk picks
-                # a fresh nearby destination.
+                self._walk_start_time = time.monotonic()
+                # Constrain dest_x to ±250px around current position.
                 self.dest_x = max(
                     self.display_w,
                     min(self.screen_w - self.display_w,
-                        self.x + random.uniform(-350, 350)))
-                # 50% of walks change y too — keeps vertical migration.
-                if random.random() < 0.50:
+                        self.x + random.uniform(-250, 250)))
+                # 60% of walks change y too — keeps vertical migration.
+                # Mean-revert toward screen middle so cats don't sink
+                # to the bottom or drift to the top.
+                if random.random() < 0.60:
                     top_offset = self._app._canvas_y_offset if self._app else 0
                     max_y = self.screen_h - self.display_h - top_offset - BOTTOM_MARGIN
+                    mid = max_y / 2
+                    if self.y > mid:
+                        # In the bottom half — bias upward: [-220, +80]
+                        dy = random.uniform(-220, 80)
+                    else:
+                        # In the top half — bias downward: [-80, +220]
+                        dy = random.uniform(-80, 220)
                     self.dest_y = max(
-                        max_y * 0.2,
-                        min(max_y, self.y + random.uniform(-200, 200)))
+                        max_y * 0.15,
+                        min(max_y, self.y + dy))
                 else:
                     self.dest_y = self.y
             # Mini-actions — 12 quick states at 2% each (24% total).
-            # Order matters: cumulative thresholds cascade from 0.22.
-            elif r < 0.24:
+            # Order matters: cumulative thresholds cascade from 0.15.
+            elif r < 0.17:
                 self.state = CatState.EATING
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.26:
+            elif r < 0.19:
                 self._show_random_meow()
-            elif r < 0.28:
+            elif r < 0.21:
                 self.state = CatState.CHASING_MOUSE
                 self.frame_index = 0
                 self.direction = random.choice(["east", "west"])
-            elif r < 0.30:
+            elif r < 0.23:
                 self.state = CatState.FLAT
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.32:
+            elif r < 0.25:
                 self.state = CatState.GROOMING
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.34:
+            elif r < 0.27:
                 self.state = CatState.LOVE
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.36:
+            elif r < 0.29:
                 self.state = CatState.ROLLING
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.38:
+            elif r < 0.31:
                 self.state = CatState.SURPRISED
                 self.frame_index = 0
                 self.direction = random.choice(["east", "west"])
-            elif r < 0.40:
+            elif r < 0.33:
                 self.state = CatState.JUMPING
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.42:
+            elif r < 0.35:
                 self.state = CatState.ANGRY
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.44:
+            elif r < 0.37:
                 self._start_sequence("dash_crash")
-            elif r < 0.46:
+            elif r < 0.39:
                 self._start_sequence("full_jump")
             # Wall / climb behaviors — ONLY trigger when cats are NOT
             # near an edge. When already near a wall (< 150 px), force
             # a walk toward the center instead to escape edge pileups.
-            elif r < 0.49:
+            elif r < 0.42:
                 near_edge = (self.x < 150 or
                              self.x > self.screen_w - 150 - self.display_w)
                 if near_edge:
@@ -1024,10 +1043,10 @@ class CatInstance:
                     else:
                         self._start_sequence(pick)
             elif r < 1.0:
-                # All 16 new animations share the remaining ~51% (~3.2% each).
+                # All 16 new animations share the remaining ~58% (~3.6% each).
                 # Dominant bucket for visual variety. Walking probability
-                # was reduced from 35% → 22% because each walk dwells
-                # ~5s vs ~3s for new anims, so equal probability would
+                # was reduced from 35% → 15% because each walk dwells
+                # ~5-8s vs ~3s for new anims, so equal probability would
                 # mean walking still wins the time-share.
                 all_new = [
                     (CatState.CHASING_BUTTERFLY, "ew"),
@@ -1320,10 +1339,10 @@ class CatInstance:
 
         Only two biases remain (kept aligned with the bucket layout in
         behavior_tick):
-          - wants_rest → squeeze rolls into [0, 0.22) so only SLEEPING_BALL
-            (<0.05) or WALKING (<0.22) are eligible. Tired cats walk a bit,
+          - wants_rest → squeeze rolls into [0, 0.15) so only SLEEPING_BALL
+            (<0.05) or WALKING (<0.15) are eligible. Tired cats walk a bit,
             then settle into sleep once idle_ticks builds past the gate.
-          - is_bored → squeeze rolls into [0, 0.46) so the cat lands in
+          - is_bored → squeeze rolls into [0, 0.39) so the cat lands in
             walking + the 12 mini-actions (which include CHASE/JUMP/DASH).
             Excludes the all_new bucket because bored cats want action,
             not contemplation animations.
@@ -1337,9 +1356,9 @@ class CatInstance:
         r = random.random()
         m = self.mood
         if m.wants_rest():
-            return r * 0.22
+            return r * 0.15
         if m.is_bored():
-            return r * 0.46
+            return r * 0.39
         return r
 
     def _show_random_meow(self):
