@@ -933,8 +933,18 @@ class CatInstance:
             elif r < 0.18:
                 self.state = CatState.WALKING
                 self.frame_index = 0
-                self.dest_x = random.uniform(self.display_w, max(self.display_w + 1, self.screen_w - self.display_w))
-                self.dest_y = self.y  # walk horizontally only — no vertical drift
+                self.dest_x = random.uniform(
+                    self.display_w,
+                    max(self.display_w + 1, self.screen_w - self.display_w))
+                # 30% of walks choose a new y too — makes cats migrate
+                # vertically instead of being locked on a horizontal band.
+                if random.random() < 0.30:
+                    top_offset = self._app._canvas_y_offset if self._app else 0
+                    max_y = self.screen_h - self.display_h - top_offset - BOTTOM_MARGIN
+                    self.dest_y = random.uniform(
+                        max_y * 0.2, max(max_y * 0.2 + 1, max_y))
+                else:
+                    self.dest_y = self.y
             elif r < 0.21:
                 self.state = CatState.EATING
                 self.frame_index = 0
