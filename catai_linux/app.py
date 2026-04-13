@@ -930,57 +930,57 @@ class CatInstance:
                 self._sleep_tick = 0
                 self.direction = "south"  # only south frames available
                 self.idle_ticks = 0
-            elif r < 0.22:
+            elif r < 0.18:
                 self.state = CatState.WALKING
                 self.frame_index = 0
                 self.dest_x = random.uniform(self.display_w, max(self.display_w + 1, self.screen_w - self.display_w))
                 self.dest_y = self.y  # walk horizontally only — no vertical drift
-            elif r < 0.27:
+            elif r < 0.21:
                 self.state = CatState.EATING
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.30:
+            elif r < 0.23:
                 self._show_random_meow()
-            elif r < 0.35:
+            elif r < 0.27:
                 self.state = CatState.CHASING_MOUSE
                 self.frame_index = 0
                 self.direction = random.choice(["east", "west"])
-            elif r < 0.40:
+            elif r < 0.30:
                 self.state = CatState.FLAT
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.45:
+            elif r < 0.33:
                 self.state = CatState.GROOMING
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.50:
+            elif r < 0.36:
                 self.state = CatState.LOVE
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.55:
+            elif r < 0.39:
                 self.state = CatState.ROLLING
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.60:
+            elif r < 0.42:
                 self.state = CatState.SURPRISED
                 self.frame_index = 0
                 self.direction = random.choice(["east", "west"])
-            elif r < 0.65:
+            elif r < 0.45:
                 self.state = CatState.JUMPING
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.68:
+            elif r < 0.47:
                 self.state = CatState.ANGRY
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.72:
+            elif r < 0.49:
                 self._start_sequence("dash_crash")
-            elif r < 0.76:
+            elif r < 0.51:
                 self._start_sequence("full_jump")
             # Wall / climb behaviors — ONLY trigger when cats are NOT
             # near an edge. When already near a wall (< 150 px), force
             # a walk toward the center instead to escape edge pileups.
-            elif r < 0.80:
+            elif r < 0.54:
                 near_edge = (self.x < 150 or
                              self.x > self.screen_w - 150 - self.display_w)
                 if near_edge:
