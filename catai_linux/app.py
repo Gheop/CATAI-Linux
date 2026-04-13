@@ -71,7 +71,10 @@ _LOOPING_ANIMS = frozenset({
     CatState.DANCING, CatState.PLAYING_BALL, CatState.FISHING,
     CatState.SITTING_WITH_BIRD, CatState.HELLO_KITTY,
     CatState.BOTHERED_BY_BEE, CatState.BOTHERED_BY_FLY,
-    CatState.SLEEPING_BY_FIRE, CatState.WALKING_IN_PUDDLE,
+    CatState.SLEEPING_BY_FIRE,
+    # WALKING_IN_PUDDLE deliberately NOT looped: the cat sprite shifts
+    # left→right across the 8 frames, so a 3× loop visually teleports
+    # the cat back to the puddle's left side twice. One-shot only.
     CatState.CHASING_BUTTERFLY, CatState.ROLLING_ON_BACK,
     CatState.STRETCHING, CatState.YAWNING,
 })
