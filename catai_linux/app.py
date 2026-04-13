@@ -930,36 +930,39 @@ class CatInstance:
                 self._sleep_tick = 0
                 self.direction = "south"  # only south frames available
                 self.idle_ticks = 0
-            elif r < 0.18:
+            elif r < 0.35:
+                # Walking — boosted from 18% to 35% so cats actually
+                # move around instead of standing still doing static
+                # new-anim loops.
                 self.state = CatState.WALKING
                 self.frame_index = 0
                 self.dest_x = random.uniform(
                     self.display_w,
                     max(self.display_w + 1, self.screen_w - self.display_w))
-                # 30% of walks choose a new y too — makes cats migrate
+                # 50% of walks choose a new y too — makes cats migrate
                 # vertically instead of being locked on a horizontal band.
-                if random.random() < 0.30:
+                if random.random() < 0.50:
                     top_offset = self._app._canvas_y_offset if self._app else 0
                     max_y = self.screen_h - self.display_h - top_offset - BOTTOM_MARGIN
                     self.dest_y = random.uniform(
                         max_y * 0.2, max(max_y * 0.2 + 1, max_y))
                 else:
                     self.dest_y = self.y
-            elif r < 0.21:
+            elif r < 0.37:
                 self.state = CatState.EATING
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.23:
+            elif r < 0.39:
                 self._show_random_meow()
-            elif r < 0.27:
+            elif r < 0.41:
                 self.state = CatState.CHASING_MOUSE
                 self.frame_index = 0
                 self.direction = random.choice(["east", "west"])
-            elif r < 0.30:
+            elif r < 0.43:
                 self.state = CatState.FLAT
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.33:
+            elif r < 0.45:
                 self.state = CatState.GROOMING
                 self.frame_index = 0
                 self.direction = "south"
