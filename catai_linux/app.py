@@ -837,9 +837,23 @@ class CatInstance:
         self._sequence_direction = None
         self._sequence_pause_ticks = 0
         self._sequence_loop_counter = 1
-        self.state = CatState.IDLE
-        self.frame_index = 0
-        self.idle_ticks = 0
+        # Anti-edge escape: if a cat just finished a wall/climb sequence
+        # and ended up near the edge, immediately start walking toward
+        # the center instead of going IDLE (IDLE would risk re-triggering
+        # another wall action and keeping the cat stuck at the edge).
+        near_edge = (self.x < 120 or
+                     self.x > self.screen_w - 120 - self.display_w)
+        if near_edge:
+            self.state = CatState.WALKING
+            self.frame_index = 0
+            self.direction = "east" if self.x < self.screen_w / 2 else "west"
+            self.dest_x = self.screen_w / 2 + random.uniform(-200, 200)
+            self.dest_y = self.y
+            self.idle_ticks = 0
+        else:
+            self.state = CatState.IDLE
+            self.frame_index = 0
+            self.idle_ticks = 0
 
     def _apply_sequence_offset_compensation(self):
         """Apply accumulated offset from all steps played."""
@@ -959,20 +973,32 @@ class CatInstance:
                 self.state = CatState.ANGRY
                 self.frame_index = 0
                 self.direction = "south"
-            elif r < 0.70:
-                # Climbing — rare (was 10%, pushed cats to bottom)
-                self.state = CatState.CLIMBING
-                self.frame_index = 0
-                self.direction = random.choice(["east", "west"])
             elif r < 0.72:
-                # Wall adventure — very rare
-                self._start_sequence("wall_adventure")
-            elif r < 0.74:
-                self._start_sequence("ledge_adventure")
-            elif r < 0.76:
                 self._start_sequence("dash_crash")
-            elif r < 0.78:
+            elif r < 0.76:
                 self._start_sequence("full_jump")
+            # Wall / climb behaviors — ONLY trigger when cats are NOT
+            # near an edge. When already near a wall (< 150 px), force
+            # a walk toward the center instead to escape edge pileups.
+            elif r < 0.80:
+                near_edge = (self.x < 150 or
+                             self.x > self.screen_w - 150 - self.display_w)
+                if near_edge:
+                    # Escape the edge — walk toward center
+                    self.state = CatState.WALKING
+                    self.frame_index = 0
+                    self.dest_x = self.screen_w / 2 + random.uniform(-300, 300)
+                    self.dest_y = self.y
+                else:
+                    # In the middle of the screen — wall adventure is fine
+                    pick = random.choice(["wall_adventure", "ledge_adventure",
+                                          "climbing_direct"])
+                    if pick == "climbing_direct":
+                        self.state = CatState.CLIMBING
+                        self.frame_index = 0
+                        self.direction = random.choice(["east", "west"])
+                    else:
+                        self._start_sequence(pick)
             elif r < 1.0:
                 # All new animations get ~22% total (~1.2% each).
                 # Much more visible than before.
