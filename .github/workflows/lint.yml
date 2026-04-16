@@ -16,3 +16,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: pip install ruff && ruff check catai_linux/
+
+      - name: Happy cat
+        if: success()
+        run: |
+          echo ""
+          echo "  /\_/\  ("
+          echo " ( ^.^ ) _)"
+          echo '   \"/  ('
+          echo " ( | | )"
+          echo "(__d b__)  Lint passed!"
+          echo ""

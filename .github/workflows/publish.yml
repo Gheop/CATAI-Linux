@@ -56,3 +56,14 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Happy cat
+        if: success()
+        run: |
+          echo ""
+          echo "  /\_/\  ("
+          echo " ( ^.^ ) _)"
+          echo '   \"/  ('
+          echo " ( | | )"
+          echo "(__d b__)  Published to PyPI!"
+          echo ""

@@ -193,6 +193,21 @@ MIT
 
 ## Changelog
 
+### v1.2.0 — Behavior tuning + animation polish (2026-04-16)
+
+- Fixed BANDAGED loop bug: cats no longer get stuck bandaged when happiness decays. Threshold tightened (<10, was <20) and triggers only 20% of the time
+- Rebuilt behavior_tick probability buckets: re-added LOVE, ROLLING, SURPRISED, JUMPING states that were unreachable (dead code), 12 mini-actions at 2% each
+- Simplified mood biasing to only rest/bored (removed grumpy/affectionate biases that pointed at stale bucket positions)
+- Happiness passive decay floor raised from 15 to 30 (above grumpy threshold) so idle cats don't drift into permanent grumpiness
+- Mean-reverting vertical movement: cats in the bottom half are biased upward when walking, prevents the "bottom-sink" pileup
+- Walking destinations constrained to ±250px (was full screen width), walks now last 5-8s instead of 26s
+- Hard 25s cap on walking to prevent stuck cats when destination becomes unreachable
+- Walking-in-puddle animation plays once (was 3× loop which caused the cat to visually teleport back to the puddle start)
+- Walking-in-puddle regenerated for all 6 cats: puddle stays fixed at canvas center while cat walks through it
+- Wall/climb behaviors only trigger when not near screen edges, with forced walk-to-center escape when at edges
+- ASCII cat added to CI workflow success output
+- All 17 new animations properly regenerated per-cat using each cat's own source sprites (was orange-only)
+
 ### v1.1.0 — Quake console + 17 animations (2026-04-12)
 
 - Quake-style drop-down console toggled with ² key (works from any app via XGrabKey, fallback right-click menu)

@@ -47,6 +47,17 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: python3 tests/test_modules.py
 
+      - name: Happy cat
+        if: success()
+        run: |
+          echo ""
+          echo "  /\_/\  ("
+          echo " ( ^.^ ) _)"
+          echo '   \"/  ('
+          echo " ( | | )"
+          echo "(__d b__)  All tests passed!"
+          echo ""
+
   build-check:
     runs-on: ubuntu-latest
     name: Build wheel + sanity checks
@@ -128,6 +139,17 @@ jobs:
           print(f"  \u2713 wheel size {size_mb:.2f} MB < 3.0 MB cap")
           '
 
+      - name: Happy cat
+        if: success()
+        run: |
+          echo ""
+          echo "  /\_/\  ("
+          echo " ( ^.^ ) _)"
+          echo '   \"/  ('
+          echo " ( | | )"
+          echo "(__d b__)  Build looks good!"
+          echo ""
+
   e2e-tests:
     runs-on: ubuntu-latest
     name: Full E2E via Xvfb + metacity
@@ -201,3 +223,14 @@ jobs:
           path: /tmp/catai_e2e/
           retention-days: 7
           if-no-files-found: ignore
+
+      - name: Happy cat
+        if: success()
+        run: |
+          echo ""
+          echo "  /\_/\  ("
+          echo " ( ^.^ ) _)"
+          echo '   \"/  ('
+          echo " ( | | )"
+          echo "(__d b__)  All tests passed!"
+          echo ""
