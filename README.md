@@ -193,6 +193,13 @@ MIT
 
 ## Changelog
 
+### v1.2.1 — Kitten rebalance + stuck-state watchdog (2026-04-17)
+
+- Kittens now share the adult distribution instead of being walking-dominated: walking 34.5% (was 57%), idle 8.7% (was 15.6%), with 11 distinct animations visible at >3% (grooming, love, wallgrab, eating, rolling, jumping, dashing, flat, angry, chasing_mouse, …)
+- Root cause: kittens have 17 anims vs adults' 44, so the 58% "new anims" probability bucket picked animations kittens don't have, falling through to an instant IDLE → walking dominated the time-share. New kitten-only branch picks from a pool of mini-actions the kitten actually owns
+- Kitten pool animations loop 3× (like adult decorative anims) so each dwells ~3s instead of 1s, preventing idle churn between short anims
+- Added a watchdog: any cat stuck in the same non-IDLE / non-WALKING / non-SLEEPING_BALL state for >60s is force-reset to IDLE. Catches future cases of stuck `dragging` or `in_encounter` flags before they freeze a cat for the session
+
 ### v1.2.0 — Behavior tuning + animation polish (2026-04-16)
 
 - Fixed BANDAGED loop bug: cats no longer get stuck bandaged when happiness decays. Threshold tightened (<10, was <20) and triggers only 20% of the time
