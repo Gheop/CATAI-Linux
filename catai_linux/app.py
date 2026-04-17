@@ -403,6 +403,7 @@ from catai_linux.drawing import (  # noqa: E402
     draw_sparkle as _draw_sparkle,
     draw_anger as _draw_anger,
     draw_speed_lines as _draw_speed_lines,
+    draw_food_bowl as _draw_food_bowl,
 )
 from catai_linux.theme import is_dark_mode as _is_dark_mode  # noqa: E402
 
@@ -446,6 +447,11 @@ class CatInstance:
         self._sprite_bottom_padding = 0 # px of empty rows between sprite feet and box bottom
         self.is_kitten: bool = False          # True for kittens born from love encounters
         self.is_apocalypse_clone: bool = False # True for clones spawned by apocalypse mode
+        # Feeding state — set to True while the user-triggered feed animation
+        # plays (EATING forced to loop 3×). The canvas draws a food bowl at
+        # the cat's feet only while this flag is True.
+        self._feeding: bool = False
+        self._feed_cooldown_until: float = 0.0  # monotonic time; 30s per-cat cooldown
         self._birth_progress = None     # None = fully visible; 0.0..1.0 = birth animation
         self._flip_h = False            # Horizontal flip (override for face-each-other in encounters)
         self._sequence = None           # list[SequenceStep] or None
@@ -815,14 +821,17 @@ class CatInstance:
                     # of 1 second). The _state_tick counter tracks loops.
                     # Kittens get extra anims looped (via _KITTEN_LOOPING_ANIMS)
                     # because their behavior pool is built from mini-actions
-                    # that otherwise end too fast.
+                    # that otherwise end too fast. EATING also loops while
+                    # the user-triggered feed is active.
                     loops = (self.state in _LOOPING_ANIMS
-                             or (self.is_kitten and self.state in _KITTEN_LOOPING_ANIMS))
+                             or (self.is_kitten and self.state in _KITTEN_LOOPING_ANIMS)
+                             or (self._feeding and self.state == CatState.EATING))
                     if loops and self._state_tick < 2:
                         self._state_tick += 1
                         self.frame_index = 0
                     else:
                         self._state_tick = 0
+                        self._feeding = False  # clear at end of any one-shot
                         self._end_current_step()
                 else:
                     self.frame_index += 1
@@ -1402,7 +1411,13 @@ class CatInstance:
     def _show_random_meow(self):
         if self.chat_visible:
             return
-        if self.is_kitten:
+        # Hungry cats occasionally show a fish emoji instead of a normal
+        # meow so the user notices they'd like to be fed. Threshold 70
+        # gives ~30% of a full hunger window (8h to max) before the cat
+        # starts asking.
+        if self.mood.hunger > 70 and random.random() < 0.5:
+            self.meow_text = "\U0001f41f"  # 🐟
+        elif self.is_kitten:
             self.meow_text = random.choice(BABY_MEOWS)
         else:
             self.meow_text = L10n.random_meow()
@@ -1410,6 +1425,29 @@ class CatInstance:
         if self._meow_timer_id:
             GLib.source_remove(self._meow_timer_id)
         self._meow_timer_id = GLib.timeout_add(random.randint(2000, 3000), self._hide_meow)
+
+    def feed(self) -> bool:
+        """User-triggered feed. Returns True if the cat actually ate,
+        False if on cooldown. Locks the cat into an EATING animation that
+        loops 3× (~3s), draws a food bowl at its feet via the canvas draw
+        hook, and drops hunger / bumps happiness."""
+        now = time.monotonic()
+        if now < self._feed_cooldown_until:
+            return False
+        if self.chat_visible or self.dragging or self.in_encounter:
+            return False
+        self._feed_cooldown_until = now + 30.0
+        self._feeding = True
+        self.state = CatState.EATING
+        self.direction = "south"
+        self.frame_index = 0
+        self._state_tick = 0
+        self._sequence = None
+        self._sequence_index = 0
+        self.idle_ticks = 0
+        self.mood.hunger = max(0.0, self.mood.hunger - 60.0)
+        self.mood.happiness = min(100.0, self.mood.happiness + 5.0)
+        return True
 
     def _hide_meow(self):
         self.meow_visible = False
@@ -2259,9 +2297,19 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
         if err:
             return err
         self._menu_visible = True
+        self._menu_cat = cat
         self._menu_x = int(cat.x + cat.display_w)
         self._menu_y = int(cat.y)
         return "OK menu shown"
+
+    def _cmd_click_menu_feed(self, parts):
+        """Simulate clicking 'Feed' in the right-click menu."""
+        cat = getattr(self, "_menu_cat", None)
+        if cat is None:
+            return "ERR: no active menu"
+        self._menu_visible = False
+        fed = cat.feed()
+        return f"OK feed cat {cat.config.get('name', '?')} (fed={fed})"
 
     def _cmd_click_menu_settings(self, parts):
         self._menu_visible = False
@@ -2666,6 +2714,7 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
                 "fake_chat": self._cmd_fake_chat,
                 "click_cat": self._cmd_click_cat,
                 "right_click_cat": self._cmd_right_click_cat,
+                "click_menu_feed": self._cmd_click_menu_feed,
                 "click_menu_settings": self._cmd_click_menu_settings,
                 "click_menu_quit": self._cmd_click_menu_quit,
                 "type_chat": self._cmd_type_chat,
@@ -2953,6 +3002,12 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
                 ctx.paint()
                 ctx.restore()
 
+            # Food bowl — drawn UNDER the cat's overlay layer so the
+            # cat sprite appears to lean over it. Only shows during a
+            # user-triggered feed, not for random EATING rolls.
+            if cat._feeding and cat.state == CatState.EATING:
+                _draw_food_bowl(ctx, cat.x, cat.y, cat.display_w, cat.display_h)
+
             # Draw overlays above cat
             if cat.state == CatState.SLEEPING_BALL:
                 _draw_zzz(ctx, cat.x, cat.y, cat.display_w)
@@ -2995,7 +3050,10 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
 
         # Draw context menu if visible
         if self._menu_visible:
-            _draw_context_menu(ctx, self._menu_x, self._menu_y, L10n.s("settings"), L10n.s("quit"))
+            _draw_context_menu(
+                ctx, self._menu_x, self._menu_y,
+                "\U0001f37d " + L10n.s("feed"),
+                L10n.s("settings"), L10n.s("quit"))
 
         # Draw easter egg menu (on top of everything)
         if self._easter_menu_visible:
@@ -4044,19 +4102,25 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
             self._menu_visible = False
             return
         if self._menu_visible:
-            # Click on "Réglages" zone?
-            if self._menu_x <= x <= self._menu_x + 120 and self._menu_y <= y <= self._menu_y + 25:
+            # Menu is 120×75 with 3 rows of 25px: [Feed][Settings][Quit]
+            target_cat = getattr(self, "_menu_cat", None) or cat
+            in_menu_x = self._menu_x <= x <= self._menu_x + 120
+            if in_menu_x and self._menu_y <= y <= self._menu_y + 25:
+                self._menu_visible = False
+                target_cat.feed()
+                return
+            if in_menu_x and self._menu_y + 25 <= y <= self._menu_y + 50:
                 self._menu_visible = False
                 self._open_settings()
                 return
-            # Click on "Quitter" zone?
-            if self._menu_x <= x <= self._menu_x + 120 and self._menu_y + 25 <= y <= self._menu_y + 50:
+            if in_menu_x and self._menu_y + 50 <= y <= self._menu_y + 75:
                 self._menu_visible = False
                 self.quit()
                 return
             self._menu_visible = False
         else:
             self._menu_visible = True
+            self._menu_cat = cat
             self._menu_x = int(cat.x + cat.display_w)
             self._menu_y = int(cat.y)
             # Auto-close after 5s

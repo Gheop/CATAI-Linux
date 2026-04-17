@@ -205,6 +205,15 @@ MAGIC_EGG_PHRASES = {
     "meditation": "zen",
     "calm": "zen",
     "breathe": "zen",
+    # Feed all
+    "feed": "feed_all",
+    "feed all": "feed_all",
+    "feed everyone": "feed_all",
+    "food": "feed_all",
+    "dinner": "feed_all",
+    "nourrir": "feed_all",
+    "nourris tout le monde": "feed_all",
+    "manger": "feed_all",
 }
 
 EASTER_EGGS = [
@@ -238,6 +247,7 @@ EASTER_EGGS = [
     ("konami",      "\U0001f3ae", "Konami code",   "eg_konami"),
     ("coffee",      "\u2615",     "Coffee rush",   "eg_coffee"),
     ("zen",         "\U0001f9d8", "Zen mode",      "eg_zen"),
+    ("feed_all",    "\U0001f41f", "Feed everyone", "eg_feed_all"),
 ]
 
 # ── Mixin ────────────────────────────────────────────────────────────────────
@@ -322,6 +332,20 @@ class EasterEggMixin:
     def eg_meow_party(self):
         for cat in self.cat_instances:
             cat._show_random_meow()
+
+    def eg_feed_all(self):
+        """Feed every cat at once. Each cat locks into an EATING loop
+        with a food bowl drawn at its feet (see CatInstance.feed). Skips
+        cats currently busy (chat, drag, encounter) so we don't yank
+        them out of their current state."""
+        fed = 0
+        for cat in self.cat_instances:
+            # Override the per-cat cooldown for the easter egg — the whole
+            # point is that the user summoned a feast, not a drip feed.
+            cat._feed_cooldown_until = 0.0
+            if cat.feed():
+                fed += 1
+        log.info("Feed all: fed %d/%d cats", fed, len(self.cat_instances))
 
     def eg_stampede(self):
         direction = random.choice(["east", "west"])

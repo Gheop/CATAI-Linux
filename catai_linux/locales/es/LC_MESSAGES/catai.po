@@ -28,6 +28,9 @@ msgstr "Salir"
 msgid "settings"
 msgstr "Ajustes..."
 
+msgid "feed"
+msgstr "Alimentar"
+
 msgid "talk"
 msgstr "Habla al gato..."
 

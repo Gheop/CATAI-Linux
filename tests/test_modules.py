@@ -321,7 +321,8 @@ def test_drawing() -> None:
         ("draw_meow_bubble", lambda: drawing.draw_meow_bubble(ctx, "Meow~", 100, 100, 80, 80)),
         ("draw_encounter_bubble", lambda: drawing.draw_encounter_bubble(ctx, "Hi there!", 100, 100, 80, 80)),
         ("draw_chat_bubble", lambda: drawing.draw_chat_bubble(ctx, "Bonjour mon petit chat", 100, 100, 80, 80)),
-        ("draw_context_menu", lambda: drawing.draw_context_menu(ctx, 10, 10, "Settings", "Quit")),
+        ("draw_context_menu", lambda: drawing.draw_context_menu(ctx, 10, 10, "\U0001f37d Feed", "Settings", "Quit")),
+        ("draw_food_bowl", lambda: drawing.draw_food_bowl(ctx, 100, 100, 80, 80)),
     ]:
         try:
             fn()
@@ -380,7 +381,8 @@ def test_drawing() -> None:
     try:
         drawing.draw_meow_bubble(ctx, "Dark~", 100, 100, 80, 80)
         drawing.draw_chat_bubble(ctx, "Dark bubble", 100, 100, 80, 80)
-        drawing.draw_context_menu(ctx, 10, 10, "Settings", "Quit")
+        drawing.draw_context_menu(ctx, 10, 10, "\U0001f37d Feed", "Settings", "Quit")
+        drawing.draw_food_bowl(ctx, 100, 100, 80, 80)
         test("drawing under dark theme doesn't crash", True)
     except Exception as e:
         test("drawing under dark theme doesn't crash", False, str(e))

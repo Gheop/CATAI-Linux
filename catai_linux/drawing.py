@@ -488,10 +488,13 @@ def draw_chat_bubble(ctx, text: str, cat_x: float, cat_y: float,
 
 
 def draw_context_menu(ctx, mx: float, my: float,
-                      label_settings: str, label_quit: str) -> None:
-    """Draw a right-click context menu on the canvas."""
-    bw, bh = 120, 50
+                      label_feed: str, label_settings: str, label_quit: str) -> None:
+    """Draw a right-click context menu on the canvas. 3 rows of 25px,
+    total 120×75. Feed row is on top (most common action), then settings,
+    then quit."""
+    bw, bh = 120, 75
     pad = 8
+    row_h = 25
     ctx.set_source_rgba(*THEME["bubble_bg_translucent"])
     ctx.rectangle(mx, my, bw, bh)
     ctx.fill()
@@ -500,18 +503,60 @@ def draw_context_menu(ctx, mx: float, my: float,
     ctx.set_line_width(2)
     ctx.rectangle(mx, my, bw, bh)
     ctx.stroke()
-    # Separator
-    ctx.move_to(mx + pad, my + 25)
-    ctx.line_to(mx + bw - pad, my + 25)
+    # Separators
+    ctx.move_to(mx + pad, my + row_h)
+    ctx.line_to(mx + bw - pad, my + row_h)
     ctx.stroke()
-    # Text
+    ctx.move_to(mx + pad, my + 2 * row_h)
+    ctx.line_to(mx + bw - pad, my + 2 * row_h)
+    ctx.stroke()
+    # Text — use Pango for the feed row (emoji support), Cairo for the rest
     ctx.set_source_rgba(*THEME["bubble_text"])
+    feed_lay = PangoCairo.create_layout(ctx)
+    feed_lay.set_font_description(Pango.FontDescription(BUBBLE_FONT))
+    feed_lay.set_text(label_feed, -1)
+    ctx.move_to(mx + pad, my + 5)
+    PangoCairo.show_layout(ctx, feed_lay)
     ctx.select_font_face("monospace", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
     ctx.set_font_size(11)
-    ctx.move_to(mx + pad, my + 17)
+    ctx.move_to(mx + pad, my + row_h + 17)
     ctx.show_text(label_settings)
-    ctx.move_to(mx + pad, my + 42)
+    ctx.move_to(mx + pad, my + 2 * row_h + 17)
     ctx.show_text(label_quit)
+
+
+def draw_food_bowl(ctx, cat_x: float, cat_y: float, cat_w: float, cat_h: float) -> None:
+    """Draw a pixel-art food bowl at the cat's feet with a few kibbles.
+    Placed just below-center of the cat so the cat's head appears to
+    lean toward it while EATING."""
+    # Bowl footprint — centered horizontally on the cat, low and small
+    bx = cat_x + cat_w / 2 - 14
+    by = cat_y + cat_h - 10
+    bw = 28
+    bh = 12
+    # Bowl outer rim (darker grey-blue)
+    ctx.set_source_rgba(0.35, 0.40, 0.50, 1.0)
+    ctx.rectangle(bx, by, bw, 2)
+    ctx.fill()
+    # Bowl body (mid grey)
+    ctx.set_source_rgba(0.55, 0.60, 0.68, 1.0)
+    ctx.move_to(bx + 2, by + 2)
+    ctx.line_to(bx + bw - 2, by + 2)
+    ctx.line_to(bx + bw - 5, by + bh - 1)
+    ctx.line_to(bx + 5, by + bh - 1)
+    ctx.close_path()
+    ctx.fill()
+    # Food (brown kibbles) on top of bowl
+    ctx.set_source_rgba(0.55, 0.35, 0.18, 1.0)  # warm brown
+    for dx, dy, r in [(4, 1, 2), (10, 0, 2.2), (16, 1, 2), (21, 1, 1.8),
+                      (7, -1, 1.5), (14, -1, 1.8), (19, -1, 1.5)]:
+        ctx.arc(bx + dx, by + dy, r, 0, 2 * math.pi)
+        ctx.fill()
+    # Highlight on kibbles (lighter brown)
+    ctx.set_source_rgba(0.72, 0.52, 0.32, 1.0)
+    for dx, dy, r in [(10, -0.5, 0.8), (16, 0.5, 0.7)]:
+        ctx.arc(bx + dx, by + dy, r, 0, 2 * math.pi)
+        ctx.fill()
 
 
 # ── Cat state overlays ────────────────────────────────────────────────────────

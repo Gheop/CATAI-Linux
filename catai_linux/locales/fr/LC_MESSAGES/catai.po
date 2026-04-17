@@ -29,6 +29,9 @@ msgstr "Quitter"
 msgid "settings"
 msgstr "Réglages..."
 
+msgid "feed"
+msgstr "Nourrir"
+
 msgid "talk"
 msgstr "Parle au chat..."
 

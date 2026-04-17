@@ -28,6 +28,9 @@ msgstr "Quit"
 msgid "settings"
 msgstr "Settings..."
 
+msgid "feed"
+msgstr "Feed"
+
 msgid "talk"
 msgstr "Talk to the cat..."
 
