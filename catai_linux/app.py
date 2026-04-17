@@ -79,6 +79,17 @@ _LOOPING_ANIMS = frozenset({
     CatState.STRETCHING, CatState.YAWNING,
 })
 
+# Kitten-specific loop-3× anims. Kittens have no "new anims" available
+# and their "pool" of mini-actions each last only 1s (8 frames × 125ms).
+# Looping them 3× (matching the adult _LOOPING_ANIMS dwell) brings their
+# time-share close to adults' distribution and drops the idle% between
+# short anims.
+_KITTEN_LOOPING_ANIMS = frozenset({
+    CatState.EATING, CatState.GROOMING, CatState.LOVE,
+    CatState.ROLLING, CatState.FLAT, CatState.JUMPING,
+    CatState.CHASING_MOUSE, CatState.ANGRY,
+})
+
 CONFIG_DIR = os.path.expanduser("~/.config/catai")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
@@ -802,7 +813,12 @@ class CatInstance:
                     # Decorative animations loop 3× so they're visible
                     # longer (8 frames × 3 = 3 seconds at 8 FPS instead
                     # of 1 second). The _state_tick counter tracks loops.
-                    if self.state in _LOOPING_ANIMS and self._state_tick < 2:
+                    # Kittens get extra anims looped (via _KITTEN_LOOPING_ANIMS)
+                    # because their behavior pool is built from mini-actions
+                    # that otherwise end too fast.
+                    loops = (self.state in _LOOPING_ANIMS
+                             or (self.is_kitten and self.state in _KITTEN_LOOPING_ANIMS))
+                    if loops and self._state_tick < 2:
                         self._state_tick += 1
                         self.frame_index = 0
                     else:
@@ -1048,36 +1064,58 @@ class CatInstance:
                 # was reduced from 35% → 15% because each walk dwells
                 # ~5-8s vs ~3s for new anims, so equal probability would
                 # mean walking still wins the time-share.
-                all_new = [
-                    (CatState.CHASING_BUTTERFLY, "ew"),
-                    (CatState.PLAYING_BALL, "s"),
-                    (CatState.DANCING, "s"),
-                    (CatState.STRETCHING, "s"),
-                    (CatState.YAWNING, "s"),
-                    (CatState.POUNCING, "ew"),
-                    (CatState.SITTING_WITH_BIRD, "s"),
-                    (CatState.FISHING, "s"),
-                    (CatState.SNEAKING, "ew"),
-                    (CatState.HELLO_KITTY, "s"),
-                    (CatState.PIROUETTE, "s"),
-                    (CatState.ROLLING_ON_BACK, "s"),
-                    (CatState.BOTHERED_BY_BEE, "s"),
-                    (CatState.BOTHERED_BY_FLY, "s"),
-                    (CatState.SLEEPING_BY_FIRE, "s"),
-                    (CatState.WALKING_IN_PUDDLE, "ew"),
-                ]
-                # BANDAGED rare even when VERY sad: threshold <10 (not <20)
-                # and 20% chance on those rolls. Prevents the loop bug
-                # where sad cats spent 100% of their new-anim rolls
-                # stuck in BANDAGED.
-                if self.mood.happiness < 10 and random.random() < 0.20:
-                    pick, d = CatState.BANDAGED, "south"
+                if self.is_kitten:
+                    # Kittens only have 17 animations (adults: 44), and
+                    # none of the "new anims" below. Without this branch
+                    # they'd fall into render_tick's missing-frames
+                    # fallback → instant IDLE → walking dominates their
+                    # time-share (observed 57% vs adults' 33%). Redirect
+                    # to a pool of mini-actions the kittens actually have.
+                    kitten_pool = [
+                        (CatState.EATING, "s"),
+                        (CatState.GROOMING, "s"),
+                        (CatState.LOVE, "s"),
+                        (CatState.ROLLING, "s"),
+                        (CatState.JUMPING, "s"),
+                        (CatState.CHASING_MOUSE, "ew"),
+                        (CatState.ANGRY, "s"),
+                        (CatState.FLAT, "s"),
+                    ]
+                    pick, dirs = random.choice(kitten_pool)
+                    self.state = pick
+                    self.frame_index = 0
+                    self.direction = random.choice(["east", "west"]) if dirs == "ew" else "south"
                 else:
-                    pick, dirs = random.choice(all_new)
-                    d = random.choice(["east", "west"]) if dirs == "ew" else "south"
-                self.state = pick
-                self.frame_index = 0
-                self.direction = d
+                    all_new = [
+                        (CatState.CHASING_BUTTERFLY, "ew"),
+                        (CatState.PLAYING_BALL, "s"),
+                        (CatState.DANCING, "s"),
+                        (CatState.STRETCHING, "s"),
+                        (CatState.YAWNING, "s"),
+                        (CatState.POUNCING, "ew"),
+                        (CatState.SITTING_WITH_BIRD, "s"),
+                        (CatState.FISHING, "s"),
+                        (CatState.SNEAKING, "ew"),
+                        (CatState.HELLO_KITTY, "s"),
+                        (CatState.PIROUETTE, "s"),
+                        (CatState.ROLLING_ON_BACK, "s"),
+                        (CatState.BOTHERED_BY_BEE, "s"),
+                        (CatState.BOTHERED_BY_FLY, "s"),
+                        (CatState.SLEEPING_BY_FIRE, "s"),
+                        (CatState.WALKING_IN_PUDDLE, "ew"),
+                    ]
+                    # BANDAGED rare even when VERY sad: threshold <10 (not <20)
+                    # and 20% chance on those rolls. Prevents the loop bug
+                    # where sad cats spent 100% of their new-anim rolls
+                    # stuck in BANDAGED.
+                    if self.mood.happiness < 10 and random.random() < 0.20:
+                        pick, d = CatState.BANDAGED, "south"
+                    else:
+                        pick, dirs = random.choice(all_new)
+                        d = random.choice(["east", "west"]) if dirs == "ew" else "south"
+                    self.state = pick
+                    self.frame_index = 0
+                    self.direction = d
             # drama_queen no longer random — only triggered by wall crash or angry attack
         elif self.state == CatState.SLEEPING_BALL:
             self.idle_ticks += 1
