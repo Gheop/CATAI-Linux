@@ -2126,6 +2126,22 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
                      for c in self.cat_instances]
         return "OK " + " ".join(positions)
 
+    def _cmd_cat_flags(self, parts):
+        """Dump diagnostic flags for one cat by index. Usage: cat_flags <idx>"""
+        cat, err = self._get_cat_at_idx(parts)
+        if err:
+            return err
+        seq = cat._sequence
+        seq_name = seq[0].state.value if seq else None
+        return (
+            f"OK state={cat.state.value} dir={cat.direction} "
+            f"frame={cat.frame_index} idle_ticks={cat.idle_ticks} "
+            f"state_tick={getattr(cat, '_state_tick', 0)} "
+            f"dragging={cat.dragging} in_encounter={cat.in_encounter} "
+            f"chat_visible={cat.chat_visible} birth_progress={cat._birth_progress} "
+            f"sequence={seq_name} seq_idx={cat._sequence_index}"
+        )
+
     def _cmd_force_state(self, parts):
         if len(parts) < 3:
             return "ERR: usage: force_state <idx> <state_name>"
@@ -2659,6 +2675,7 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
                 "settings_state": self._cmd_settings_state,
                 "egg_state": self._cmd_egg_state,
                 "kitten_count": self._cmd_kitten_count,
+                "cat_flags": self._cmd_cat_flags,
                 "pet_cat": self._cmd_pet_cat,
                 "unpet_cat": self._cmd_unpet_cat,
                 "petting_state": self._cmd_petting_state,
@@ -4410,6 +4427,44 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
                 cat.behavior_tick()
             except Exception:
                 log.exception("behavior_tick crashed for %s", cat.config.get("char_id", "?"))
+
+        # Stuck-state watchdog. Observed once: a cat froze in sleeping_by_fire
+        # for 10+ min despite that anim's 3-loop cap. Root cause not pinned
+        # (likely a stuck dragging / in_encounter flag, or a silent render_tick
+        # exception). Cheap safety net: if a cat's been in the same non-IDLE,
+        # non-WALKING, non-SLEEPING_BALL state for >60s — well past any legit
+        # anim or sequence — force reset.
+        now = time.monotonic()
+        _WATCHDOG_EXEMPT = {CatState.IDLE, CatState.WALKING, CatState.SLEEPING_BALL}
+        for cat in self.cat_instances:
+            last = getattr(cat, "_watchdog_last_state", None)
+            if last != cat.state:
+                cat._watchdog_last_state = cat.state
+                cat._watchdog_since = now
+                continue
+            if cat.state in _WATCHDOG_EXEMPT:
+                continue
+            if cat.chat_visible or cat._sequence is not None:
+                continue
+            dur = now - getattr(cat, "_watchdog_since", now)
+            if dur > 60.0:
+                log.warning(
+                    "WATCHDOG: %s stuck in %s for %.0fs — forcing IDLE "
+                    "(drag=%s enc=%s birth=%s)",
+                    cat.config.get("name", "?"), cat.state.value, dur,
+                    cat.dragging, cat.in_encounter, cat._birth_progress)
+                cat.state = CatState.IDLE
+                cat.frame_index = 0
+                cat.idle_ticks = 0
+                cat.dragging = False
+                cat.in_encounter = False
+                cat._state_tick = 0
+                cat._sequence = None
+                cat._sequence_index = 0
+                cat._sequence_pause_ticks = 0
+                cat._walk_start_time = None
+                cat._watchdog_last_state = cat.state
+                cat._watchdog_since = now
         return True
 
     def _apply_activity_signals(self) -> None:
