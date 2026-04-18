@@ -63,6 +63,7 @@ from catai_linux.constants import (  # noqa: E402
     CatState, ANIM_KEYS, ONE_SHOT_STATES,
     SEQUENCES,
     CATSET_PERSONALITIES,  # re-exported for catai_linux.reactions
+    NOCTURNAL_CHAR_IDS,
 )
 
 # Decorative one-shot animations that should loop 3× (3 seconds)
@@ -447,6 +448,9 @@ class CatInstance:
         self._sprite_bottom_padding = 0 # px of empty rows between sprite feet and box bottom
         self.is_kitten: bool = False          # True for kittens born from love encounters
         self.is_apocalypse_clone: bool = False # True for clones spawned by apocalypse mode
+        # Circadian trait: Ombre (cat02) and Minuit (cat05) are nocturnal,
+        # everyone else is diurnal. Drives is_night-dependent sleep bias.
+        self.is_nocturnal: bool = config.get("char_id") in NOCTURNAL_CHAR_IDS
         # Feeding state — set to True while the user-triggered feed animation
         # plays (EATING forced to loop 3×). The canvas draws a food bowl at
         # the cat's feet only while this flag is True.
@@ -963,7 +967,25 @@ class CatInstance:
         if self.state == CatState.IDLE:
             self.idle_ticks += 1
             r = self._roll_mood_adjusted()
-            if self.idle_ticks > 15 and r < 0.05:
+            # Circadian sleep bias: nocturnal cats (Ombre, Minuit) drift
+            # off during the day, diurnal cats at night. "Wrong-time"
+            # cats get a 8% chance to sleep on EVERY IDLE tick (no
+            # idle_ticks gate) — the gate was too slow to ever trigger
+            # given how actively mini-actions and new-anims compete.
+            # "Right-time" cats never spontaneously sleep (wrong-time is
+            # the *only* spontaneous sleep path when circadian info is
+            # available). When there's no _app (unit tests), fall back
+            # to the original 5%-after-15-ticks behavior.
+            app_activity = self._app._activity if self._app else None
+            sleepy = False
+            if app_activity is not None:
+                is_night = app_activity.is_night()
+                wrong_time = (self.is_nocturnal and not is_night) or (not self.is_nocturnal and is_night)
+                if wrong_time:
+                    sleepy = r < 0.08
+            elif self.idle_ticks > 15 and r < 0.05:
+                sleepy = True
+            if sleepy:
                 self.state = CatState.SLEEPING_BALL
                 self.frame_index = 0
                 self._sleep_tick = 0

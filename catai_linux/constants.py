@@ -194,6 +194,13 @@ CAT_TO_KITTEN = {
     "cat05":      "kitten05",
 }
 
+# Circadian trait: nocturnal cats are more active at night and sleepy during
+# the day; diurnal cats (everyone else) are the reverse. Picked from the
+# CATSET_PERSONALITIES traits — cat02 (Ombre = "shadow, mysterious") and
+# cat05 (Minuit = "midnight, nocturnal") are the two cats whose written
+# personality explicitly evokes the night.
+NOCTURNAL_CHAR_IDS = frozenset({"cat02", "cat05"})
+
 CATSET_PERSONALITIES = {
     "cat_orange": {
         "name": {"fr": "Mandarine", "en": "Tangerine", "es": "Mandarina"},
