@@ -3129,9 +3129,10 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
                 if enc_by < 4:
                     enc_by = cat.y + cat.display_h + 8
                 rects.append((enc_bx, enc_by, enc_bw, enc_bh))
-        # Include context menu if visible
+        # Include context menu if visible — 3 rows × 25 px = 75 px tall,
+        # matching draw_context_menu() and the hit-test in _on_canvas_drag_begin
         if self._menu_visible:
-            rects.append((self._menu_x, self._menu_y, 120, 50))
+            rects.append((self._menu_x, self._menu_y, 120, 75))
         # Include easter egg menu (covers whole screen so clicks anywhere dismiss)
         if self._easter_menu_visible:
             rects.append((0, 0, self.screen_w, self.screen_h))
