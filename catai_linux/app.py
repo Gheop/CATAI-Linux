@@ -999,7 +999,13 @@ class CatInstance:
                 self.frame_index = 0
                 self._walk_start_time = time.monotonic()
                 self._seeking_bowl = True
-                self.dest_x = app._food_bowl_x + _BOWL_W / 2 - self.display_w / 2
+                # Stand next to the bowl (not on top) — pick left or right
+                # side based on which is closer to the cat's current x.
+                bowl_cx = app._food_bowl_x + _BOWL_W / 2
+                if self.x + self.display_w / 2 < bowl_cx:
+                    self.dest_x = app._food_bowl_x - self.display_w + 4  # overlap 4px so cat looks close
+                else:
+                    self.dest_x = app._food_bowl_x + _BOWL_W - 4
                 self.dest_y = app._food_bowl_y + _BOWL_H - self.display_h
                 return
             r = self._roll_mood_adjusted()
@@ -2263,6 +2269,17 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
             f"y_offset={self._canvas_y_offset}"
         )
 
+    def _cmd_bowl_set_level(self, parts):
+        """Debug: force the bowl fill level. Usage: bowl_set_level <0.0-1.0>"""
+        if len(parts) < 2:
+            return "ERR: usage: bowl_set_level <0.0-1.0>"
+        try:
+            lvl = float(parts[1])
+        except ValueError:
+            return "ERR: level must be a number"
+        self._food_bowl_level = max(0.0, min(1.0, lvl))
+        return f"OK bowl level={self._food_bowl_level:.2f}"
+
     def _cmd_cat_flags(self, parts):
         """Dump diagnostic flags for one cat by index. Usage: cat_flags <idx>"""
         cat, err = self._get_cat_at_idx(parts)
@@ -2825,6 +2842,7 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
                 "kitten_count": self._cmd_kitten_count,
                 "cat_flags": self._cmd_cat_flags,
                 "bowl_state": self._cmd_bowl_state,
+                "bowl_set_level": self._cmd_bowl_set_level,
                 "pet_cat": self._cmd_pet_cat,
                 "unpet_cat": self._cmd_unpet_cat,
                 "petting_state": self._cmd_petting_state,
