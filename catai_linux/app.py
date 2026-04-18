@@ -4186,13 +4186,17 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
                           self._tts_enabled)
                 return
 
-        # Check context menu click (2 entries: Settings / Quit)
+        # Check context menu click (3 entries of 25px: Feed / Settings / Quit)
         if self._menu_visible:
             mx, my = self._menu_x, self._menu_y
-            if mx <= start_x <= mx + 120 and my <= start_y <= my + 50:
+            if mx <= start_x <= mx + 120 and my <= start_y <= my + 75:
                 gesture.set_state(Gtk.EventSequenceState.CLAIMED)
                 self._menu_visible = False
                 if start_y < my + 25:
+                    target = getattr(self, "_menu_cat", None)
+                    if target is not None:
+                        target.feed()
+                elif start_y < my + 50:
                     self._open_settings()
                 else:
                     self.quit()
