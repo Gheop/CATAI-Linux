@@ -201,6 +201,25 @@ CAT_TO_KITTEN = {
 # personality explicitly evokes the night.
 NOCTURNAL_CHAR_IDS = frozenset({"cat02", "cat05"})
 
+# Personality-driven "preferred animations" for the all_new bucket in
+# behavior_tick. When a cat rolls into that 58% bucket, there's a 40%
+# chance it picks from its own preferred set instead of the uniform
+# 16-entry list. Derived from each cat's written traits:
+#   - Mandarine "espiègle et joueur"       → bouncy/chasey
+#   - Tabby     "curieux et aventurier"    → exploration / chase
+#   - Ombre     "mystérieux et silencieux" → stealth / perches
+#   - Noisette  "doux et réconfortant"     → cuddly / relaxed
+#   - Brume     "sage et philosophe"       → contemplative / stillness
+#   - Minuit    "élégant et nocturne"      → graceful / composed
+PERSONALITY_PREFERRED_ANIMS = {
+    "cat_orange": ("chasing_butterfly", "playing_ball", "pouncing"),
+    "cat01":      ("chasing_butterfly", "sneaking", "pouncing"),
+    "cat02":      ("sneaking", "sitting_with_bird", "sleeping_by_fire"),
+    "cat03":      ("rolling_on_back", "sleeping_by_fire", "hello_kitty"),
+    "cat04":      ("stretching", "yawning", "sitting_with_bird", "fishing", "sleeping_by_fire"),
+    "cat05":      ("pirouette", "stretching", "sitting_with_bird"),
+}
+
 CATSET_PERSONALITIES = {
     "cat_orange": {
         "name": {"fr": "Mandarine", "en": "Tangerine", "es": "Mandarina"},

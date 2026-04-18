@@ -64,6 +64,7 @@ from catai_linux.constants import (  # noqa: E402
     SEQUENCES,
     CATSET_PERSONALITIES,  # re-exported for catai_linux.reactions
     NOCTURNAL_CHAR_IDS,
+    PERSONALITY_PREFERRED_ANIMS,
 )
 
 # Decorative one-shot animations that should loop 3× (3 seconds)
@@ -1142,7 +1143,24 @@ class CatInstance:
                     if self.mood.happiness < 10 and random.random() < 0.20:
                         pick, d = CatState.BANDAGED, "south"
                     else:
-                        pick, dirs = random.choice(all_new)
+                        # Personality bias: 40% of the time, pick from the
+                        # cat's preferred-anim list (derived from written
+                        # traits — Mandarine "playful" → bouncy, Noisette
+                        # "gentle" → cuddly, Brume "wise" → contemplative,
+                        # etc.). Remaining 60% uniform over the 16-entry
+                        # all_new list. Keeps each cat visibly in-character
+                        # without starving the full anim rotation.
+                        char_id = self.config.get("char_id")
+                        preferred = PERSONALITY_PREFERRED_ANIMS.get(char_id, ())
+                        if preferred and random.random() < 0.40:
+                            pick_state_value = random.choice(preferred)
+                            pick_tuple = next(
+                                (entry for entry in all_new if entry[0].value == pick_state_value),
+                                None,
+                            )
+                            pick, dirs = pick_tuple or random.choice(all_new)
+                        else:
+                            pick, dirs = random.choice(all_new)
                         d = random.choice(["east", "west"]) if dirs == "ew" else "south"
                     self.state = pick
                     self.frame_index = 0
