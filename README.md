@@ -193,6 +193,14 @@ MIT
 
 ## Changelog
 
+### v1.2.2 — Feeding mechanic + nocturnal cats (2026-04-18)
+
+- **Feeding mechanic**: right-click any cat → "🍽 Nourrir" → the cat eats from a pixel-art food bowl drawn at its feet. Drops hunger by 60, bumps happiness by 5, with a 30s per-cat cooldown
+- **Hungry signal**: when hunger > 70, cats show 🐟 as a random meow bubble so you notice they'd like to be fed
+- **"Feed everyone" easter egg**: triggered from the easter egg menu or by typing any of `feed`, `feed all`, `food`, `dinner`, `nourrir`, `manger` etc. in the chat — feeds all cats at once, bypassing cooldown
+- **Nocturnal behavior**: Ombre and Minuit (whose personalities explicitly evoke the night) now drift into `sleeping_ball` much more often during the day, while the four diurnal cats (Tabby, Mandarine, Noisette, Brume) sleep spontaneously only at night. Observed live: Minuit at 25.6% sleep during a 90s daytime monitor vs 0% for the diurnal cats
+- Fixed right-click context menu — after the bump from 2 rows to 3 rows (Feed/Settings/Quit), the left-click hit-test was still checking the old 50px layout, so "Nourrir" opened Settings, "Réglages" quit, and "Quitter" did nothing. Also fixed the cairo input region mask that was still 50px tall, causing the "Quitter" row to silently reject all mouse events
+
 ### v1.2.1 — Kitten rebalance + stuck-state watchdog (2026-04-17)
 
 - Kittens now share the adult distribution instead of being walking-dominated: walking 34.5% (was 57%), idle 8.7% (was 15.6%), with 11 distinct animations visible at >3% (grooming, love, wallgrab, eating, rolling, jumping, dashing, flat, angry, chasing_mouse, …)
