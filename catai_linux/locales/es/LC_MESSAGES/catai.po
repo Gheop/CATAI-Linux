@@ -31,6 +31,9 @@ msgstr "Ajustes..."
 msgid "feed"
 msgstr "Alimentar"
 
+msgid "refill"
+msgstr "Rellenar"
+
 msgid "talk"
 msgstr "Habla al gato..."
 

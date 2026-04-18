@@ -406,6 +406,10 @@ from catai_linux.drawing import (  # noqa: E402
     draw_anger as _draw_anger,
     draw_speed_lines as _draw_speed_lines,
     draw_food_bowl as _draw_food_bowl,
+    draw_persistent_food_bowl as _draw_persistent_food_bowl,
+    draw_bowl_refill_menu as _draw_bowl_refill_menu,
+    PERSISTENT_BOWL_W as _BOWL_W,
+    PERSISTENT_BOWL_H as _BOWL_H,
 )
 from catai_linux.theme import is_dark_mode as _is_dark_mode  # noqa: E402
 
@@ -457,6 +461,9 @@ class CatInstance:
         # the cat's feet only while this flag is True.
         self._feeding: bool = False
         self._feed_cooldown_until: float = 0.0  # monotonic time; 30s per-cat cooldown
+        # True while the cat is walking toward the persistent food bowl; on
+        # arrival render_tick triggers feed() and drops the bowl level.
+        self._seeking_bowl: bool = False
         self._birth_progress = None     # None = fully visible; 0.0..1.0 = birth animation
         self._flip_h = False            # Horizontal flip (override for face-each-other in encounters)
         self._sequence = None           # list[SequenceStep] or None
@@ -666,6 +673,7 @@ class CatInstance:
                 self.frame_index = 0
                 self.idle_ticks = 0
                 self._walk_start_time = None
+                self._seeking_bowl = False
                 return
             dest_y = self.dest_y
             dx = self.dest_x - self.x
@@ -678,6 +686,15 @@ class CatInstance:
                 self.frame_index = 0
                 self.idle_ticks = 0
                 self._walk_start_time = None
+                # Arrived at the food bowl → start eating + deplete bowl.
+                # Reset _feeding so feed() accepts (cooldown is cleared too).
+                if self._seeking_bowl:
+                    self._seeking_bowl = False
+                    if self._app and self._app._food_bowl_level > 0:
+                        self._feed_cooldown_until = 0.0  # let feed() proceed
+                        if self.feed():
+                            self._app._food_bowl_level = max(
+                                0.0, self._app._food_bowl_level - 0.15)
             else:
                 ratio = WALK_SPEED / dist
                 step_x = dx * ratio
@@ -967,6 +984,24 @@ class CatInstance:
 
         if self.state == CatState.IDLE:
             self.idle_ticks += 1
+            # Persistent bowl attractor: hungry cats with food in the bowl
+            # walk over to it instead of rolling the usual IDLE buckets.
+            # Guard with the cat's normal feed cooldown so a cat that just
+            # ate doesn't sprint back for another serving.
+            app = self._app
+            if (app is not None
+                    and app._food_bowl_placed
+                    and app._food_bowl_level > 0.0
+                    and self.mood.hunger > 70
+                    and time.monotonic() >= self._feed_cooldown_until
+                    and not self._feeding):
+                self.state = CatState.WALKING
+                self.frame_index = 0
+                self._walk_start_time = time.monotonic()
+                self._seeking_bowl = True
+                self.dest_x = app._food_bowl_x + _BOWL_W / 2 - self.display_w / 2
+                self.dest_y = app._food_bowl_y + _BOWL_H - self.display_h
+                return
             r = self._roll_mood_adjusted()
             # Circadian sleep bias: nocturnal cats (Ombre, Minuit) drift
             # off during the day, diurnal cats at night. "Wrong-time"
@@ -1565,6 +1600,20 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
         self._menu_y = 0
         self._active_chat_cat: CatInstance | None = None
         self._menu_timer = None
+        # Persistent food bowl — placed at a random x on the bottom of the
+        # screen at launch, draggable by the user. Cats walk to it when
+        # their hunger stat crosses 70. Filled by right-click on the bowl
+        # ("Remplir") and by the feed_all easter egg.
+        self._food_bowl_x: float = 0.0
+        self._food_bowl_y: float = 0.0
+        self._food_bowl_level: float = 1.0
+        self._food_bowl_placed: bool = False  # set True once we know screen size
+        self._y_offset_detected: bool = False  # True once _late_xid_check ran
+        self._food_bowl_dragging: bool = False
+        self._food_bowl_menu_visible = False  # "Remplir" context menu
+        self._food_bowl_menu_x = 0
+        self._food_bowl_menu_y = 0
+        self._food_bowl_menu_timer = None
         self._canvas_window = None
         self._canvas_area = None
         self._canvas_xid = None
@@ -2204,6 +2253,16 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
                      for c in self.cat_instances]
         return "OK " + " ".join(positions)
 
+    def _cmd_bowl_state(self, parts):
+        """Debug: return bowl position, level, and canvas geometry."""
+        return (
+            f"OK placed={self._food_bowl_placed} "
+            f"x={self._food_bowl_x:.0f} y={self._food_bowl_y:.0f} "
+            f"level={self._food_bowl_level:.2f} "
+            f"screen={self.screen_w}x{self.screen_h} "
+            f"y_offset={self._canvas_y_offset}"
+        )
+
     def _cmd_cat_flags(self, parts):
         """Dump diagnostic flags for one cat by index. Usage: cat_flags <idx>"""
         cat, err = self._get_cat_at_idx(parts)
@@ -2765,6 +2824,7 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
                 "egg_state": self._cmd_egg_state,
                 "kitten_count": self._cmd_kitten_count,
                 "cat_flags": self._cmd_cat_flags,
+                "bowl_state": self._cmd_bowl_state,
                 "pet_cat": self._cmd_pet_cat,
                 "unpet_cat": self._cmd_unpet_cat,
                 "petting_state": self._cmd_petting_state,
@@ -2912,6 +2972,7 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
                 except Exception:
                     log.debug("Y offset query failed", exc_info=True)
                     self._canvas_y_offset = 0
+            self._y_offset_detected = True
             return False
         GLib.timeout_add(500, _late_xid_check)
         GLib.idle_add(lambda: move_window(win, 0, 0) or False)
@@ -2937,6 +2998,22 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
                                        season=self._season_override)
             except Exception:
                 log.exception("seasonal overlay crashed")
+
+        # Place the food bowl at a random horizontal position on the first
+        # draw that has real width AND after _late_xid_check has settled the
+        # GNOME-top-bar Y offset. Placing earlier would put the bowl past
+        # the visible bottom (because y_offset starts at 0). Y matches the
+        # drag clamp so dragging down doesn't reveal a gap.
+        if not self._food_bowl_placed and width > _BOWL_W and self._y_offset_detected:
+            self._food_bowl_x = float(random.randint(50, max(51, width - _BOWL_W - 50)))
+            self._food_bowl_y = float(height - _BOWL_H - self._canvas_y_offset)
+            self._food_bowl_placed = True
+
+        # Draw the persistent food bowl (behind cats so a cat walking over
+        # it visually "stands in front").
+        if self._food_bowl_placed:
+            _draw_persistent_food_bowl(ctx, self._food_bowl_x, self._food_bowl_y,
+                                       self._food_bowl_level)
 
         # Global shake (eg_shake easter egg)
         if self._shake_amount > 0:
@@ -3095,6 +3172,11 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
                 "\U0001f37d " + L10n.s("feed"),
                 L10n.s("settings"), L10n.s("quit"))
 
+        # Draw bowl refill menu if visible — single row of 25px
+        if self._food_bowl_menu_visible:
+            _draw_bowl_refill_menu(ctx, self._food_bowl_menu_x, self._food_bowl_menu_y,
+                                   L10n.s("refill"))
+
         # Draw easter egg menu (on top of everything)
         if self._easter_menu_visible:
             self._draw_easter_menu(ctx)
@@ -3122,11 +3204,23 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
             box.get_margin_top() if box_visible else 0,
             self._voice_enabled,
             quake_visible,
+            self._food_bowl_placed,
+            round(self._food_bowl_x), round(self._food_bowl_y),
+            self._food_bowl_menu_visible,
+            self._food_bowl_menu_x, self._food_bowl_menu_y,
         )
 
     def _build_rects(self):
         """Build the list of input rectangles that should pass mouse events through."""
         rects = []
+        # Persistent food bowl — draggable and right-click refill, so its
+        # region must pass mouse events.
+        if self._food_bowl_placed:
+            rects.append((self._food_bowl_x, self._food_bowl_y,
+                          _BOWL_W, _BOWL_H))
+        # Bowl refill popup — single 100x25 row
+        if self._food_bowl_menu_visible:
+            rects.append((self._food_bowl_menu_x, self._food_bowl_menu_y, 100, 25))
         for cat in self.cat_instances:
             # Add some padding for easier clicking
             pad = 4
@@ -4138,6 +4232,24 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
         threading.Thread(target=_run, daemon=True).start()
 
     def _on_canvas_right_click(self, gesture, n_press, x, y):
+        # Bowl context menu handling — checked BEFORE cat hit-tests so a
+        # right-click on the bowl always lands the refill menu even if the
+        # bowl sits under a cat.
+        if self._food_bowl_menu_visible:
+            mx, my = self._food_bowl_menu_x, self._food_bowl_menu_y
+            if mx <= x <= mx + 100 and my <= y <= my + 25:
+                self._food_bowl_level = 1.0
+                self._food_bowl_menu_visible = False
+                return
+            self._food_bowl_menu_visible = False
+        if self._food_bowl_placed and self._hit_food_bowl(x, y):
+            self._food_bowl_menu_visible = True
+            self._food_bowl_menu_x = int(self._food_bowl_x + _BOWL_W + 4)
+            self._food_bowl_menu_y = int(self._food_bowl_y)
+            if getattr(self, "_food_bowl_menu_timer", None):
+                GLib.source_remove(self._food_bowl_menu_timer)
+            self._food_bowl_menu_timer = GLib.timeout_add(5000, self._close_bowl_menu)
+            return
         cat = self._find_cat_at(x, y)
         if not cat:
             self._menu_visible = False
@@ -4172,6 +4284,11 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
     def _close_menu(self):
         self._menu_visible = False
         self._menu_timer = None
+        return False
+
+    def _close_bowl_menu(self):
+        self._food_bowl_menu_visible = False
+        self._food_bowl_menu_timer = None
         return False
 
     def _on_canvas_drag_begin(self, gesture, start_x, start_y):
@@ -4227,6 +4344,16 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
                           self._tts_enabled)
                 return
 
+        # Bowl refill menu click (single "Remplir" row of 25px, 100 wide)
+        if self._food_bowl_menu_visible:
+            mx, my = self._food_bowl_menu_x, self._food_bowl_menu_y
+            if mx <= start_x <= mx + 100 and my <= start_y <= my + 25:
+                gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+                self._food_bowl_level = 1.0
+                self._food_bowl_menu_visible = False
+                return
+            self._food_bowl_menu_visible = False
+
         # Check context menu click (3 entries of 25px: Feed / Settings / Quit)
         if self._menu_visible:
             mx, my = self._menu_x, self._menu_y
@@ -4243,6 +4370,17 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
                     self.quit()
                 return
             self._menu_visible = False
+
+        # Persistent food bowl — check BEFORE cat hit-test so a bowl placed
+        # under a cat is still grabbable.
+        if self._food_bowl_placed and self._hit_food_bowl(start_x, start_y):
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+            self._food_bowl_dragging = True
+            self._food_bowl_drag_dx = start_x - self._food_bowl_x
+            self._food_bowl_drag_dy = start_y - self._food_bowl_y
+            self._food_bowl_drag_start_x = self._food_bowl_x
+            self._food_bowl_drag_start_y = self._food_bowl_y
+            return
 
         cat = self._find_cat_at(start_x, start_y)
         if not cat:
@@ -4262,6 +4400,16 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
         )
 
     def _on_canvas_drag_update(self, gesture, offset_x, offset_y):
+        if self._food_bowl_dragging:
+            new_x = self._food_bowl_drag_start_x + offset_x
+            new_y = self._food_bowl_drag_start_y + offset_y
+            max_x = max(0, self.screen_w - _BOWL_W)
+            max_y = max(0, self.screen_h - _BOWL_H - self._canvas_y_offset)
+            self._food_bowl_x = max(0, min(new_x, max_x))
+            self._food_bowl_y = max(0, min(new_y, max_y))
+            if self._canvas_area:
+                self._canvas_area.queue_draw()
+            return
         cat = self._drag_cat
         if not cat or not cat.dragging:
             return
@@ -4272,13 +4420,21 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
             # If we were already petting, a drag 'pulls out' of petting mode
             if getattr(cat, "_petting_active", False):
                 self._exit_petting(cat)
+        # Use the same clamp formula as _clamp_to_screen so dragged cats
+        # bottom out at the same position as idle ones (no gap gained by
+        # dragging past the normal bottom).
+        top_off = self._canvas_y_offset
+        cat_max_y = cat.screen_h - cat.display_h - top_off - BOTTOM_MARGIN + cat._sprite_bottom_padding
         cat.x = max(0, min(cat.drag_win_x + offset_x, cat.screen_w - cat.display_w))
-        cat.y = max(0, min(cat.drag_win_y + offset_y, cat.screen_h - cat.display_h))
+        cat.y = max(0, min(cat.drag_win_y + offset_y, cat_max_y))
         # Force immediate redraw for smooth drag
         if self._canvas_area:
             self._canvas_area.queue_draw()
 
     def _on_canvas_drag_end(self, gesture, offset_x, offset_y):
+        if self._food_bowl_dragging:
+            self._food_bowl_dragging = False
+            return
         cat = self._drag_cat
         self._cancel_petting_timer()
         if cat:
@@ -4291,6 +4447,10 @@ class CatAIApp(EasterEggMixin, Gtk.Application):
                 # Short press, no movement → treat as click → toggle chat
                 self._toggle_chat_for(cat)
         self._drag_cat = None
+
+    def _hit_food_bowl(self, x: float, y: float) -> bool:
+        return (self._food_bowl_x <= x <= self._food_bowl_x + _BOWL_W
+                and self._food_bowl_y <= y <= self._food_bowl_y + _BOWL_H)
 
     # ── Petting (long-press on a stationary cat) ─────────────────────────────
 

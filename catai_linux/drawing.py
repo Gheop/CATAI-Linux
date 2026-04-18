@@ -525,10 +525,30 @@ def draw_context_menu(ctx, mx: float, my: float,
     ctx.show_text(label_quit)
 
 
+def draw_bowl_refill_menu(ctx, mx: float, my: float, label: str) -> None:
+    """Tiny single-row refill menu anchored next to the food bowl."""
+    bw, bh = 100, 25
+    pad = 8
+    ctx.set_source_rgba(*THEME["bubble_bg_translucent"])
+    ctx.rectangle(mx, my, bw, bh)
+    ctx.fill()
+    ctx.set_source_rgba(*THEME["bubble_border"])
+    ctx.set_line_width(2)
+    ctx.rectangle(mx, my, bw, bh)
+    ctx.stroke()
+    ctx.set_source_rgba(*THEME["bubble_text"])
+    lay = PangoCairo.create_layout(ctx)
+    lay.set_font_description(Pango.FontDescription(BUBBLE_FONT))
+    lay.set_text(label, -1)
+    ctx.move_to(mx + pad, my + 5)
+    PangoCairo.show_layout(ctx, lay)
+
+
 def draw_food_bowl(ctx, cat_x: float, cat_y: float, cat_w: float, cat_h: float) -> None:
     """Draw a pixel-art food bowl at the cat's feet with a few kibbles.
     Placed just below-center of the cat so the cat's head appears to
-    lean toward it while EATING."""
+    lean toward it while EATING. Used during a user-triggered feed on
+    a specific cat — always fully stocked."""
     # Bowl footprint — centered horizontally on the cat, low and small
     bx = cat_x + cat_w / 2 - 14
     by = cat_y + cat_h - 10
@@ -557,6 +577,58 @@ def draw_food_bowl(ctx, cat_x: float, cat_y: float, cat_w: float, cat_h: float) 
     for dx, dy, r in [(10, -0.5, 0.8), (16, 0.5, 0.7)]:
         ctx.arc(bx + dx, by + dy, r, 0, 2 * math.pi)
         ctx.fill()
+
+
+# Persistent food bowl sizing — exposed so hit-tests in app.py match
+# what the draw function lays out.
+PERSISTENT_BOWL_W = 40
+PERSISTENT_BOWL_H = 18
+
+
+def draw_persistent_food_bowl(ctx, bx: float, by: float, level: float) -> None:
+    """Draw the persistent, draggable food bowl at (bx, by).
+    ``level`` ∈ [0, 1] controls the dome of kibbles piled on top:
+      - 0.0  → empty bowl (bowl outline only)
+      - 0.5  → 2 rows of kibbles
+      - 1.0  → 3-row dome
+    Sized to ~half a cat's width — visible companion but doesn't dominate.
+    """
+    bw = PERSISTENT_BOWL_W
+    bh = PERSISTENT_BOWL_H
+    # Bowl outer rim (darker grey-blue)
+    ctx.set_source_rgba(0.30, 0.35, 0.45, 1.0)
+    ctx.rectangle(bx, by, bw, 2)
+    ctx.fill()
+    # Bowl body — trapezoid
+    ctx.set_source_rgba(0.55, 0.60, 0.68, 1.0)
+    ctx.move_to(bx + 2, by + 2)
+    ctx.line_to(bx + bw - 2, by + 2)
+    ctx.line_to(bx + bw - 5, by + bh - 1)
+    ctx.line_to(bx + 5, by + bh - 1)
+    ctx.close_path()
+    ctx.fill()
+    # Subtle inner shadow on the bowl
+    ctx.set_source_rgba(0.40, 0.45, 0.53, 1.0)
+    ctx.rectangle(bx + 3, by + 2, bw - 6, 1)
+    ctx.fill()
+    if level <= 0.01:
+        return
+    # Dome of kibbles — 1-3 rows stacked, each narrower than the one below.
+    n_rows = max(1, int(round(3 * level)))
+    ctx.set_source_rgba(0.55, 0.35, 0.18, 1.0)  # warm brown
+    for row in range(n_rows):
+        y = by + 1 - row * 3
+        n = max(2, 5 - row)
+        inset = row * 3
+        for i in range(n):
+            x_frac = (i + 0.5) / n
+            kx = bx + 4 + inset + x_frac * (bw - 8 - 2 * inset)
+            ctx.arc(kx, y, 1.8, 0, 2 * math.pi)
+            ctx.fill()
+    # Highlight on the topmost kibble
+    ctx.set_source_rgba(0.72, 0.52, 0.32, 1.0)
+    ctx.arc(bx + bw / 2, by + 1 - (n_rows - 1) * 3 - 1, 0.7, 0, 2 * math.pi)
+    ctx.fill()
 
 
 # ── Cat state overlays ────────────────────────────────────────────────────────

@@ -32,6 +32,9 @@ msgstr "Réglages..."
 msgid "feed"
 msgstr "Nourrir"
 
+msgid "refill"
+msgstr "Remplir"
+
 msgid "talk"
 msgstr "Parle au chat..."
 

@@ -323,6 +323,10 @@ def test_drawing() -> None:
         ("draw_chat_bubble", lambda: drawing.draw_chat_bubble(ctx, "Bonjour mon petit chat", 100, 100, 80, 80)),
         ("draw_context_menu", lambda: drawing.draw_context_menu(ctx, 10, 10, "\U0001f37d Feed", "Settings", "Quit")),
         ("draw_food_bowl", lambda: drawing.draw_food_bowl(ctx, 100, 100, 80, 80)),
+        ("draw_persistent_food_bowl (empty)", lambda: drawing.draw_persistent_food_bowl(ctx, 100, 100, 0.0)),
+        ("draw_persistent_food_bowl (half)", lambda: drawing.draw_persistent_food_bowl(ctx, 100, 100, 0.5)),
+        ("draw_persistent_food_bowl (full)", lambda: drawing.draw_persistent_food_bowl(ctx, 100, 100, 1.0)),
+        ("draw_bowl_refill_menu", lambda: drawing.draw_bowl_refill_menu(ctx, 100, 100, "Remplir")),
     ]:
         try:
             fn()

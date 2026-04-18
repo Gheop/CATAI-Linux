@@ -337,7 +337,8 @@ class EasterEggMixin:
         """Feed every cat at once. Each cat locks into an EATING loop
         with a food bowl drawn at its feet (see CatInstance.feed). Skips
         cats currently busy (chat, drag, encounter) so we don't yank
-        them out of their current state."""
+        them out of their current state. Also tops up the persistent
+        floor bowl so hungry stragglers have somewhere to graze later."""
         fed = 0
         for cat in self.cat_instances:
             # Override the per-cat cooldown for the easter egg — the whole
@@ -345,7 +346,8 @@ class EasterEggMixin:
             cat._feed_cooldown_until = 0.0
             if cat.feed():
                 fed += 1
-        log.info("Feed all: fed %d/%d cats", fed, len(self.cat_instances))
+        self._food_bowl_level = 1.0
+        log.info("Feed all: fed %d/%d cats + refilled bowl", fed, len(self.cat_instances))
 
     def eg_stampede(self):
         direction = random.choice(["east", "west"])
