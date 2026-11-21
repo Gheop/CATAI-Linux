@@ -7,22 +7,17 @@ on:
 permissions:
   contents: read
 
-env:
-  # Opt into Node.js 24 for JavaScript-based actions (Node 20 is deprecated,
-  # will be removed from runners on 2026-09-16).
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - run: pip install build
       - run: python -m build
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
@@ -35,7 +30,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist/
@@ -51,7 +46,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist/
